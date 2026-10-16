@@ -1,0 +1,24 @@
+{
+  "name": "@lovelace/jira-client",
+  "version": "0.1.0",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "tsx --test \"src/**/*.test.ts\""
+  },
+  "dependencies": {
+    "@lovelace/adf-converter": "workspace:*",
+    "@lovelace/jira-platform-client": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "22.19.7",
+    "tsx": "4.19.4",
+    "typescript": "5.9.3"
+  }
+}

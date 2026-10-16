@@ -1,0 +1,28 @@
+{
+  "name": "@lovelace/jira-software-client",
+  "version": "0.1.0",
+  "type": "module",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "scripts": {
+    "refresh-spec": "curl -fsSL https://developer.atlassian.com/cloud/jira/software/swagger.v3.json -o openapi.json",
+    "generate": "kubb generate --config kubb.config.ts",
+    "build": "pnpm run generate && tsc"
+  },
+  "dependencies": {
+    "@kubb/plugin-client": "4.37.2",
+    "axios": "1.15.0"
+  },
+  "devDependencies": {
+    "@kubb/core": "4.37.2",
+    "@kubb/plugin-oas": "4.37.2",
+    "@kubb/plugin-ts": "4.37.2",
+    "@types/node": "^22.0.0",
+    "kubb": "3.0.256",
+    "typescript": "^5.8.0"
+  }
+}

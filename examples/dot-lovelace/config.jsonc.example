@@ -1,0 +1,44 @@
+{
+  // Copy to ~/.config/lovelace/config.jsonc.
+  // Tokens: macOS Keychain (service "lovelace", accounts github-token and
+  // jira-api-token) first, then op:// references, then plaintext; GitHub
+  // falls back to the GitHub CLI login of github.account. See readme.
+  // Where Lovelace keeps clones, worktrees and state (LOVELACE_ROOT overrides).
+  "domainRoot": "~/projects",
+  "logLevel": "info",
+  "syncIntervalMs": 300000,
+  "defaultAgent": "pi",
+  "tui": { "sidebarSide": "right" },
+
+  // Install and run Herdr yourself; Lovelace never starts it. Optional
+  // absolute paths select another binary or a named session's socket.
+  // "herdr": { "executable": "/opt/homebrew/bin/herdr", "socketPath": "/path/to/herdr.sock" },
+
+  "github": {
+    "host": "github.com",
+    "apiBaseUrl": "https://api.github.com",
+    "org": "your-org",
+    // GitHub CLI account to borrow when no token is configured (gh auth status).
+    "account": "your-login",
+    // Initial editable Jira repository topic filter; [] shows all topics.
+    "repositoryTopics": ["infra", "examplecom"]
+  },
+
+  "jira": {
+    // Scoped API tokens (read:jira-work) only work through the API gateway.
+    "baseUrl": "https://api.atlassian.com/ex/jira/<cloudId>",
+    "siteUrl": "https://your-company.atlassian.net",
+    "email": "you@example.com"
+    // Or: "apiToken": "op://Private/Lovelace Jira/credential"
+  },
+
+  // Optional user-owned release knowledge for attached PRs.
+  "pullRequestReleases": {
+    "environments": ["stage", "prod"],
+    "scriptTimeoutMs": 10000,
+    "script": "./release-checks/git-tags.mjs"
+  }
+
+  // Agent executables (pi/claude/codex) are auto-detected by the server.
+  // Override defaults with LOVELACE_DEFAULT_AGENT and LOVELACE_TUI_SIDEBAR.
+}

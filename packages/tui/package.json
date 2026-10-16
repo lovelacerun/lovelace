@@ -1,0 +1,26 @@
+{
+  "name": "@lovelace/tui",
+  "version": "0.1.0",
+  "type": "module",
+  "exports": {
+    ".": { "import": "./dist/src/index.js", "types": "./dist/src/index.d.ts" }
+  },
+  "bin": { "lovelace-tui": "./dist/bin/lovelace-tui.js" },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/bin/lovelace-tui.js",
+    "dev": "tsx watch bin/lovelace-tui.ts",
+    "test": "tsx --test \"src/**/*.test.ts\""
+  },
+  "dependencies": {
+    "@lovelace/client": "workspace:*",
+    "@lovelace/core": "workspace:*",
+    "@lovelace/tui-components": "workspace:*",
+    "@earendil-works/pi-tui": "1.0.4"
+  },
+  "devDependencies": {
+    "@types/node": "22.19.15",
+    "tsx": "4.19.4",
+    "typescript": "5.9.3"
+  }
+}

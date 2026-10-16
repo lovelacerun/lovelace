@@ -1,0 +1,41 @@
+{
+  "name": "@lovelace/server",
+  "version": "0.1.0",
+  "type": "module",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "bin": {
+    "lovelace-server": "./dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "tsx --test \"src/**/*.test.ts\"",
+    "dev": "tsx watch src/index.ts",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "@lovelace/cache": "workspace:*",
+    "@lovelace/cli": "workspace:*",
+    "@lovelace/core": "workspace:*",
+    "@lovelace/coriol": "workspace:*",
+    "@lovelace/github-client": "workspace:*",
+    "@lovelace/jira-client": "workspace:*",
+    "@lovelace/model-catalog": "workspace:*",
+    "@lovelace/secrets": "workspace:*",
+    "@nkzw/core": "1.3.1",
+    "fastify": "5.3.2",
+    "pac-resolver": "9.0.1",
+    "pino": "9.7.0",
+    "quickjs-wasi": "2.2.0"
+  },
+  "devDependencies": {
+    "@lovelace/client": "workspace:*",
+    "@types/node": "22.19.15",
+    "tsx": "4.19.4",
+    "typescript": "5.9.3"
+  }
+}

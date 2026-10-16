@@ -1,0 +1,31 @@
+{
+  "name": "lovelace",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "packageManager": "pnpm@10.12.2",
+  "volta": {
+    "node": "24.21.0",
+    "pnpm": "10.12.2"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": ["esbuild"]
+  },
+  "scripts": {
+    "build": "pnpm build:packages",
+    "build:packages": "pnpm -r --filter !@lovelace/jira-software-client build",
+    "build:jira-software-client": "pnpm --filter @lovelace/jira-software-client build",
+    "test": "pnpm -r --if-present test",
+    "test:tui-pty": "python3 scripts/test-tui-pty.py",
+    "tui": "pnpm --filter @lovelace/tui start",
+    "dev:tui": "pnpm --filter @lovelace/tui dev",
+    "dev:server": "pnpm --filter @lovelace/server dev",
+    "cli": "pnpm --filter @lovelace/cli dev",
+    "install:macos-service": "./scripts/install-macos-launch-agent.sh",
+    "restart:macos-service": "./scripts/restart-macos-launch-agent.sh",
+    "uninstall:macos-service": "./scripts/uninstall-macos-launch-agent.sh"
+  }
+}

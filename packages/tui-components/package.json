@@ -1,0 +1,21 @@
+{
+  "name": "@lovelace/tui-components",
+  "version": "0.1.0",
+  "type": "module",
+  "exports": {
+    ".": { "import": "./dist/index.js", "types": "./dist/index.d.ts" }
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "tsx --test \"src/**/*.test.ts\""
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-tui": "1.0.4"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-tui": "1.0.4",
+    "@types/node": "22.19.15",
+    "tsx": "4.19.4",
+    "typescript": "5.9.3"
+  }
+}
