@@ -13,7 +13,9 @@ test('editable context template appends without trimming exact user prompt or in
   const work = { id: 'fixture-work', title: 'Fixture', state: 'active' as const, notes: null, createdAt: '', updatedAt: '', startedAt: null, completedAt: null };
   const logger = { warn() {} };
   const prompt = '  Exact user prompt\n\n   ';
-  const rendered = appendAgentContext(prompt, work, { lovelaceDir: root, port: 27421 }, logger);
+  const config = { lovelaceDir: root, agentCli: { command: 'lovelace', skillPath: '/fixture/SKILL.md' } };
+  const rendered = appendAgentContext(prompt, work, config, logger);
   assert.equal(rendered, prompt + '\nContext for fixture-work');
-  assert.equal(appendAgentContext(null, work, { lovelaceDir: root, port: 27421 }, logger), '\nContext for fixture-work');
+  assert.equal(appendAgentContext(null, work, config, logger), '\nContext for fixture-work');
+  assert.equal(appendAgentContext(prompt, work, { lovelaceDir: root }, logger), prompt);
 });

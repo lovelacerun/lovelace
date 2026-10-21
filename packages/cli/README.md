@@ -5,6 +5,13 @@ Thin local-server CLI. No arguments prints help. TUI entry is explicit:
 noninteractive JSON; errors are JSON on stderr with a nonzero exit code.
 Providers and SDKs are accessed only by the local server.
 
+The same executable sets Lovelace up and runs it: `lovelace init` (interactive),
+`lovelace server` (foreground) and `lovelace service install|uninstall|restart|status`.
+The LaunchAgent runs `lovelace service run`, which starts `lovelace server` with
+the macOS system proxy and restarts it when that proxy changes. It records the
+installing shell's PATH so the server finds agents, and Homebrew's stable
+`opt` path (`LOVELACE_EXECUTABLE`) so it survives upgrades.
+
 ```sh
 lovelace work-items launch <id> <pi|codex|claude> (--prompt <text> | --prompt-file <path>)
 lovelace work-items open <id> <session-meta-id>

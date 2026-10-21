@@ -115,6 +115,14 @@ export interface LovelaceConfig {
   pullRequestReleases?: PullRequestReleaseConfig;
   github?: GitHubConfig;
   jira?: JiraConfig;
+  /** How agents call the CLI back; set by the process that starts the server, never read from the file. */
+  agentCli?: AgentCli;
+}
+
+export interface AgentCli {
+  /** Shell command prefix that runs the Lovelace CLI against this server. */
+  command: string;
+  skillPath: string;
 }
 
 export interface WorkItem {

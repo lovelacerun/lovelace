@@ -9,7 +9,8 @@ Lovelace is the local work orchestrator that launched this session. It manages
 *work items* (units of work), prepares git *worktrees* for the repositories a
 work item touches, and tracks agent sessions. Your launch prompt contains a
 "Lovelace context" section with the work item id and the exact command to
-invoke this CLI — the CLI is **not** on PATH.
+invoke this CLI. Use that command even if `lovelace` is on PATH: it targets the
+server that launched you.
 
 The CLI talks to the Lovelace daemon on `127.0.0.1` (default port 27421). All
 agent/work-item commands print JSON without prompts or a TUI. No arguments
@@ -18,7 +19,7 @@ fails with a connection error, the daemon is
 not running — report that to the user instead of retrying.
 
 Substitute `lovelace` below with the invocation command from your launch
-prompt (typically `node <lovelace-repo>/packages/cli/dist/index.js`).
+prompt (for example `LOVELACE_PORT=27421 /opt/homebrew/opt/lovelace/bin/lovelace`).
 
 ## Inspect the current work item
 
