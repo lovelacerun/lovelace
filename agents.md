@@ -63,13 +63,16 @@ Preserve these decisions:
 - `packages/core`: application types, config, paths and harness settings.
 - `packages/server`: HTTP API, SQLite, sync, prompts, work/session orchestration,
   provider cache wiring (`src/cached-providers.ts`) and the Herdr client
-  (`src/herdr`).
+  (`src/herdr`). A library: `startServer()` is started by the CLI.
 - `packages/client`: typed HTTP client, reusable by future frontends.
 - `packages/tui-components`: generic pi-tui components and text helpers;
   depends only on pi-tui, follows its `Component` and theme-function conventions.
 - `packages/tui`: pi-tui dashboard; no provider or persistence logic.
-- `packages/cli`: noninteractive scripting and agent callbacks. No-command
-  invocation prints help; TUI launch must be explicit.
+- `packages/cli`: the single `lovelace` executable: noninteractive scripting and
+  agent callbacks, plus `server`, `service` (the macOS LaunchAgent and its
+  system-proxy supervisor) and the interactive `init`. No-command invocation
+  prints help; TUI launch must be explicit. Homebrew installs its `pnpm deploy`
+  tarball from `lovelacerun/homebrew-tap`.
 
 Prefer small focused modules. Extract repetition, not speculative frameworks.
 Use trusted dependencies only; pin exact versions in modified/new package

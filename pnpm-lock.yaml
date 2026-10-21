@@ -38,9 +38,15 @@ importers:
       '@lovelace/core':
         specifier: workspace:*
         version: link:../core
+      '@lovelace/server':
+        specifier: workspace:*
+        version: link:../server
       '@lovelace/tui':
         specifier: workspace:*
         version: link:../tui
+      jsonc-parser:
+        specifier: 3.3.1
+        version: 3.3.1
     devDependencies:
       '@types/node':
         specifier: 22.19.15
@@ -228,9 +234,6 @@ importers:
       '@lovelace/cache':
         specifier: workspace:*
         version: link:../cache
-      '@lovelace/cli':
-        specifier: workspace:*
-        version: link:../cli
       '@lovelace/core':
         specifier: workspace:*
         version: link:../core

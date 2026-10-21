@@ -1,7 +1,6 @@
 import { readFileSync } from 'node:fs';
-import { createRequire } from 'node:module';
-import { dirname, join } from 'node:path';
-import type { WorkItem } from '@lovelace/core';
+import { join } from 'node:path';
+import type { AgentCli, WorkItem } from '@lovelace/core';
 
 interface ContextLogger {
   warn(...args: unknown[]): void;
@@ -22,7 +21,7 @@ const DEFAULT_TEMPLATE = `
 
 This session was launched by Lovelace for work item \`{{workItemId}}\` ("{{workItemTitle}}").
 
-The Lovelace CLI is available locally (it is NOT on PATH). Invoke it as:
+Invoke the Lovelace CLI as follows; it targets the server that launched this session:
 
     {{cliCommand}}
 
@@ -35,21 +34,19 @@ Read the usage guide at {{skillPath}} before first use. Most useful commands:
 - \`{{cliCommand}} repos\` — list repositories known to Lovelace
 `;
 
-const nodeRequire = createRequire(import.meta.url);
-
 /**
  * Appends the Lovelace agent context block to a launch prompt.
  *
- * Returns the prompt unchanged when the CLI package cannot be resolved so a
- * broken deployment never blocks a tool launch.
+ * Returns the prompt unchanged when the server was started without a CLI
+ * (e.g. in tests) so a missing callback never blocks a tool launch.
  */
 export function appendAgentContext(
   prompt: string | null,
   workItem: WorkItem,
-  serverConfig: { lovelaceDir: string; port: number },
+  serverConfig: { lovelaceDir: string; agentCli?: AgentCli },
   logger: ContextLogger,
 ): string | null {
-  const cli = resolveCliPaths(serverConfig.port, logger);
+  const cli = serverConfig.agentCli;
   if (!cli) return prompt;
 
   const context = loadTemplate(serverConfig.lovelaceDir, logger)
@@ -71,20 +68,5 @@ function loadTemplate(lovelaceDir: string, logger: ContextLogger): string {
       logger.warn({ err: error, overridePath }, 'Failed to read agent context template override, using default');
     }
     return DEFAULT_TEMPLATE;
-  }
-}
-
-function resolveCliPaths(port: number, logger: ContextLogger): { command: string; skillPath: string } | null {
-  try {
-    const packageDir = dirname(nodeRequire.resolve('@lovelace/cli/package.json'));
-    return {
-      // Pin the daemon port so the CLI reaches the daemon that launched the
-      // session even when the worktree's direnv sets a different LOVELACE_PORT.
-      command: `LOVELACE_PORT=${port} node ${join(packageDir, 'dist', 'index.js')}`,
-      skillPath: join(packageDir, 'SKILL.md'),
-    };
-  } catch (error) {
-    logger.warn({ err: error }, 'Could not resolve @lovelace/cli, launching agent without Lovelace context block');
-    return null;
   }
 }

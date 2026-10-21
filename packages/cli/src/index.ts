@@ -4,6 +4,7 @@ import { parseArgs } from 'node:util';
 import type { WorkItemDetails } from '@lovelace/core';
 import { client, request } from './http.js';
 import { launchTools, openTool } from './launch-tools.js';
+import { selfInvocation, shellQuote, skillPath, version } from './self.js';
 
 async function main() {
   const args = process.argv.slice(2).filter((value, index) => !(index === 0 && value === '--'));
@@ -14,6 +15,24 @@ async function main() {
       const { runTui } = await import('@lovelace/tui');
       return runTui(args.slice(1));
     }
+    case 'server': {
+      const { startServer } = await import('@lovelace/server');
+      return startServer({
+        // Pin the port so callbacks reach this server even when a worktree's direnv sets another.
+        agentCli: port => ({ command: `LOVELACE_PORT=${port} ${selfInvocation().map(shellQuote).join(' ')}`, skillPath }),
+      });
+    }
+    case 'service': {
+      const { service } = await import('./service.js');
+      return printJson(await service(args.slice(1)));
+    }
+    case 'init': {
+      const { init } = await import('./init.js');
+      return init();
+    }
+    case 'version':
+    case '--version':
+      return console.log(version);
     case 'dashboard':
       return printJson(await request('/dashboard'));
     case 'status':
@@ -415,6 +434,13 @@ function printJson(value: unknown) {
 
 function printHelp() {
   console.log(`lovelace <command>
+
+Setup:
+  init                Check dependencies, write ~/.config/lovelace/config.jsonc and start the server
+  server              Run the server in the foreground
+  service install|uninstall|restart|status
+                     Manage the macOS LaunchAgent that keeps the server running
+  version             Print the Lovelace version
 
 Commands:
   status              Show server status

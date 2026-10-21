@@ -1,6 +1,5 @@
 import { execFile as execFileCallback } from 'node:child_process';
 import { promisify } from 'node:util';
-import { fileURLToPath } from 'node:url';
 import { createPacResolver } from 'pac-resolver';
 import { QuickJS } from 'quickjs-wasi';
 
@@ -110,18 +109,4 @@ function parsePort(value: string | undefined): number | undefined {
   if (!value) return undefined;
   const port = Number.parseInt(value, 10);
   return Number.isInteger(port) && port > 0 && port <= 65_535 ? port : undefined;
-}
-
-async function main(): Promise<void> {
-  try {
-    console.log((await resolveMacOSSystemProxy(process.argv[2])) ?? 'DIRECT');
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    console.error(`Could not resolve the macOS system proxy: ${message}`);
-    console.log('DIRECT');
-  }
-}
-
-if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
-  await main();
 }

@@ -2,6 +2,10 @@
   "name": "@lovelace/coriol",
   "version": "0.1.0",
   "type": "module",
+  "files": [
+    "dist",
+    "!dist/**/*.test.*"
+  ],
   "exports": {
     ".": {
       "import": "./dist/index.js",

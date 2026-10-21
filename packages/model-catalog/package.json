@@ -2,6 +2,10 @@
   "name": "@lovelace/model-catalog",
   "version": "0.1.0",
   "type": "module",
+  "files": [
+    "dist",
+    "!dist/**/*.test.*"
+  ],
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",

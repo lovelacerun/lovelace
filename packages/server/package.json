@@ -2,24 +2,22 @@
   "name": "@lovelace/server",
   "version": "0.1.0",
   "type": "module",
+  "files": [
+    "dist",
+    "!dist/**/*.test.*"
+  ],
   "exports": {
     ".": {
       "import": "./dist/index.js",
       "types": "./dist/index.d.ts"
     }
   },
-  "bin": {
-    "lovelace-server": "./dist/index.js"
-  },
   "scripts": {
     "build": "tsc",
-    "test": "tsx --test \"src/**/*.test.ts\"",
-    "dev": "tsx watch src/index.ts",
-    "start": "node dist/index.js"
+    "test": "tsx --test \"src/**/*.test.ts\""
   },
   "dependencies": {
     "@lovelace/cache": "workspace:*",
-    "@lovelace/cli": "workspace:*",
     "@lovelace/core": "workspace:*",
     "@lovelace/coriol": "workspace:*",
     "@lovelace/github-client": "workspace:*",

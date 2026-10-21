@@ -22,10 +22,10 @@
     "test:tui-pty": "python3 scripts/test-tui-pty.py",
     "tui": "pnpm --filter @lovelace/tui start",
     "dev:tui": "pnpm --filter @lovelace/tui dev",
-    "dev:server": "pnpm --filter @lovelace/server dev",
+    "dev:server": "pnpm --filter @lovelace/cli exec tsx watch src/index.ts server",
     "cli": "pnpm --filter @lovelace/cli dev",
-    "install:macos-service": "./scripts/install-macos-launch-agent.sh",
-    "restart:macos-service": "./scripts/restart-macos-launch-agent.sh",
-    "uninstall:macos-service": "./scripts/uninstall-macos-launch-agent.sh"
+    "install:macos-service": "node packages/cli/dist/index.js service install",
+    "restart:macos-service": "node packages/cli/dist/index.js service restart",
+    "uninstall:macos-service": "node packages/cli/dist/index.js service uninstall"
   }
 }

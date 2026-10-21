@@ -1,8 +1,7 @@
-#!/usr/bin/env node
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { WorkspaceManager } from '@lovelace/coriol';
-import { loadConfig } from '@lovelace/core';
+import { loadConfig, type AgentCli } from '@lovelace/core';
 import { buildServer } from './app.js';
 import { createCacheStore } from '@lovelace/cache';
 import { createCachedGitHub, createCachedJira, createCachedModels } from './cached-providers.js';
@@ -18,10 +17,20 @@ import { refreshAttachedTrackerIssues } from './services/tracker-item-service.js
 import { refreshGitHubReviews, refreshJiraAssignedIssues, refreshJiraProjectCatalog, refreshRepoCache } from './sync.js';
 import { loadTools } from './tools/tool-loader.js';
 
+export { resolveMacOSSystemProxy } from './macos-system-proxy.js';
+export { findExecutable } from './tools/executables.js';
+
 const SESSION_SYNC_INTERVAL_MS = 3_000;
 
-async function main() {
+export interface StartServerOptions {
+  /** How launched agents call the CLI back; without it prompts get no Lovelace context. */
+  agentCli?: (port: number) => AgentCli;
+}
+
+/** Runs the server in this process until SIGTERM/SIGINT. */
+export async function startServer(options: StartServerOptions = {}): Promise<void> {
   const config = loadConfig();
+  config.agentCli = options.agentCli?.(config.port);
   mkdirSync(join(config.lovelaceDir, 'prompts'), { recursive: true });
 
   const logger = createLogger(config);
@@ -84,8 +93,3 @@ async function main() {
   await app.listen({ port: config.port, host: '127.0.0.1' });
   logger.info({ port: config.port }, 'Lovelace server listening');
 }
-
-main().catch((error) => {
-  console.error(error);
-  process.exitCode = 1;
-});

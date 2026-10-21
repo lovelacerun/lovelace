@@ -25,16 +25,38 @@ clients can use the same API.
   continues its exact conversation. No embedded emulator or replacement agent.
 - Mark work done locally, independently of whether its Jira issue or PR is closed.
 
-## Run locally
+## Install
 
-Requirements: **Node 24+**, **pnpm 10.12.2**, an installed agent CLI (`pi`,
-`claude` or `codex`) and a running **Herdr** with its integration for each agent
-(`herdr integration install pi|claude|codex`). You install and run Herdr
-yourself; Lovelace never starts it. Browsing work and using the scripting CLI
-work without Herdr.
+```sh
+brew install lovelacerun/tap/lovelace
+lovelace init
+```
 
-The repository pins Node 24.21.0 for Volta users. State uses Node's built-in
-`node:sqlite`; there are no native dependencies to rebuild.
+Homebrew brings Node 24 and [Herdr](https://herdr.dev). Install an agent CLI
+(`pi`, `claude` or `codex`) yourself, and optionally `gh` (to borrow its GitHub
+login) and the 1Password CLI `op`. You run Herdr yourself; Lovelace never starts
+it. Browsing work and using the scripting CLI work without Herdr.
+
+`lovelace init` checks these tools and each agent's Herdr integration
+(`herdr integration install <agent>`), writes `~/.config/lovelace/config.jsonc`
+(keeping comments and settings it does not ask about), stores tokens in the login
+Keychain (you type them into `security`, not into Lovelace) and finds your Jira
+cloud ID. It then installs a LaunchAgent that keeps the server running, which
+restarts the server when the macOS system proxy changes. Rerun it any time.
+
+```sh
+lovelace tui                     # open the dashboard, preferably inside Herdr
+lovelace service status          # restart | install | uninstall
+lovelace server                  # run the server in the foreground instead
+```
+
+After `brew upgrade lovelace`, run `lovelace service restart`.
+
+## Develop
+
+Requirements: **Node 24+** and **pnpm 10.12.2** (the repository pins Node
+24.21.0 for Volta users). State uses Node's built-in `node:sqlite`; there are no
+native dependencies to rebuild.
 
 ```sh
 pnpm install
@@ -44,9 +66,9 @@ pnpm dev:server
 pnpm tui
 ```
 
-For an existing macOS LaunchAgent, build then explicitly run
-`pnpm restart:macos-service` instead of starting a second server. Builds never
-install applications or restart services.
+`pnpm install:macos-service` points the LaunchAgent at the checkout instead.
+After a build, explicitly run `pnpm restart:macos-service` rather than starting
+a second server. Builds never install applications or restart services.
 
 ```sh
 pnpm cli                         # help, never an interactive UI
@@ -62,9 +84,15 @@ pnpm test:tui-pty                 # optional Python 3 PTY fixture smoke
 `lovelace` without a command prints help. Agent callbacks always use explicit
 CLI commands; only `lovelace tui` or `pnpm tui` opens the dashboard.
 
+Pushing a `v<version>` tag that matches `packages/cli/package.json` builds the
+release tarball (`pnpm deploy` of the CLI with its production dependencies)
+and attaches it to a GitHub release; then update the formula in
+[lovelacerun/homebrew-tap](https://github.com/lovelacerun/homebrew-tap).
+
 ## Configuration
 
-Copy `examples/dot-lovelace/config.jsonc.example` to
+`lovelace init` writes the essentials. For everything else, see
+`examples/dot-lovelace/config.jsonc.example`. The file lives at
 `~/.config/lovelace/config.jsonc` (`$XDG_CONFIG_HOME/lovelace/config.jsonc`
 when set; `LOVELACE_CONFIG` selects another file). Its `domainRoot` chooses
 where clones and state live (`~` is expanded); `LOVELACE_ROOT` overrides it, and

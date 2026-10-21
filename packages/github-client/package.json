@@ -2,6 +2,10 @@
   "name": "@lovelace/github-client",
   "version": "0.1.0",
   "type": "module",
+  "files": [
+    "dist",
+    "!dist/**/*.test.*"
+  ],
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
