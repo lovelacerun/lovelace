@@ -205,7 +205,7 @@ The server creates one Herdr workspace per work item and starts each agent in
 its own tab with `herdr agent start`, then submits the prompt. Launches never
 steal focus. An agent that opens blocked, for example on a folder trust dialog,
 gets its prompt once Herdr reports it idle. Herdr owns the running processes;
-Lovelace mirrors their state every few seconds. Done/cancelled work is not
+Lovelace follows their state through Herdr's event subscription. Done/cancelled work is not
 automatically activated or launched.
 
 Herdr's agent integrations report each agent's state and native conversation,

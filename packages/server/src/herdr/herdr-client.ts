@@ -107,6 +107,17 @@ export function createHerdrClient(config: HerdrConfig = {}, exec: HerdrExec = ex
   };
 }
 
+/** The socket of the Herdr session the CLI talks to: the configured one, else whatever Herdr reports. */
+export async function herdrSocketPath(config: HerdrConfig = {}, exec: HerdrExec = execHerdr): Promise<string> {
+  if (config.socketPath) return config.socketPath;
+  const executable = config.executable ?? findExecutable('herdr');
+  if (!executable) throw new HerdrError('herdr_unavailable', 'Herdr is not installed or not on the server search path.');
+  const { stdout } = await exec(executable, ['status', 'server'], { env: herdrEnvironment(process.env, config), timeoutMs: 5_000 });
+  const path = /^socket:\s*(\S.*)$/m.exec(stdout)?.[1]?.trim();
+  if (!path) throw new HerdrError('herdr_invalid_response', 'Herdr did not report its socket path.');
+  return path;
+}
+
 /** Explicit IDs only: never inherit the caller's pane context, e.g. when the dev server runs inside Herdr. */
 export function herdrEnvironment(base: NodeJS.ProcessEnv, config: HerdrConfig): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...base, PATH: executableSearchPath(base) };

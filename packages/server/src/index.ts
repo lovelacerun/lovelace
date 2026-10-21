@@ -8,19 +8,18 @@ import { createCachedGitHub, createCachedJira, createCachedModels } from './cach
 import { openDatabase } from './database.js';
 import { createGitHubClient } from './github.js';
 import { createJiraClient } from './jira.js';
-import { createHerdrClient } from './herdr/herdr-client.js';
+import { createHerdrClient, herdrSocketPath } from './herdr/herdr-client.js';
+import { watchHerdrEvents } from './herdr/herdr-events.js';
 import { createLogger } from './logger.js';
 import { resolveProviderSecrets } from './secrets.js';
 import { createPullRequestReleaseChecker } from './services/pull-request-release-service.js';
-import { syncSessions } from './services/session-service.js';
+import { startSessionSync } from './services/session-sync.js';
 import { refreshAttachedTrackerIssues } from './services/tracker-item-service.js';
 import { refreshGitHubReviews, refreshJiraAssignedIssues, refreshJiraProjectCatalog, refreshRepoCache } from './sync.js';
 import { loadTools } from './tools/tool-loader.js';
 
 export { resolveMacOSSystemProxy } from './macos-system-proxy.js';
 export { findExecutable } from './tools/executables.js';
-
-const SESSION_SYNC_INTERVAL_MS = 3_000;
 
 export interface StartServerOptions {
   /** How launched agents call the CLI back; without it prompts get no Lovelace context. */
@@ -85,13 +84,11 @@ export async function startServer(options: StartServerOptions = {}): Promise<voi
   setInterval(refreshGitHub, config.syncIntervalMs).unref();
   setInterval(refreshJira, config.syncIntervalMs).unref();
   setInterval(refreshJiraProjects, 24 * 60 * 60 * 1000).unref();
-  // Herdr owns agent state; mirror it often enough to catch native identities before agents exit.
-  let sessionSync: Promise<void> | null = null;
-  setInterval(() => {
-    sessionSync ??= syncSessions(database, herdr)
-      .catch((error) => logger.warn({ err: error }, 'Herdr session sync failed'))
-      .finally(() => { sessionSync = null; });
-  }, SESSION_SYNC_INTERVAL_MS).unref();
+  // Herdr owns agent state; follow its events so native identities are recorded before agents exit.
+  startSessionSync({
+    database, herdr, logger,
+    watch: ({ onChange }) => watchHerdrEvents({ socketPath: () => herdrSocketPath(config.herdr), onChange, logger }),
+  });
 
   await app.listen({ port: config.port, host: '127.0.0.1' });
   logger.info({ port: config.port }, 'Lovelace server listening');

@@ -19,9 +19,13 @@ workspaces, tabs or panes.
   `herdr agent start` with native flags only, then `herdr agent prompt`. A new
   shell that is not ready yet is retried briefly. An agent that opens blocked
   keeps its prompt pending until Herdr reports it idle.
-- Sync: every three seconds, mirror `herdr pane list` into running sessions:
-  agent state, native identity reported by Herdr's agent integrations, and the
-  end of the agent.
+- Sync: mirror `herdr pane list` into running sessions (agent state, native
+  identity reported by Herdr's agent integrations, and the end of the agent)
+  whenever Herdr's socket reports agent detection, a pane exit or a status
+  change of a running session's pane, coalesced to one sync at a time. Herdr
+  emits no event for a reported identity, so a 15 s poll remains, 3 s while the
+  subscription is down. Herdr rejects a subscription naming a missing pane, so
+  only panes listed at the last sync are subscribed.
 - Open: focus a running session's tab, or continue an ended session's exact
   native conversation (`claude --resume`, `codex resume`, `pi --session`) in
   the pane it left or a new tab. Never the latest conversation or the initial

@@ -185,6 +185,14 @@ export async function syncSessions(database: DatabaseState, herdr: HerdrClient, 
   }
 }
 
+/** Panes of sessions Lovelace still considers running, i.e. that Herdr listed at the last sync. */
+export function runningSessionPanes(database: DatabaseState): string[] {
+  return database.listWorkItemMeta().flatMap(meta => {
+    const session = meta.metaType === 'session' ? parseSession(meta) : null;
+    return session?.status === 'running' && session.terminalRef?.paneId ? [session.terminalRef.paneId] : [];
+  });
+}
+
 /**
  * Starts the harness; false when Herdr detected it but it opened blocked, for
  * example on a folder trust dialog the user has to answer in the pane.
