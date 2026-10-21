@@ -40,17 +40,24 @@ it. Browsing work and using the scripting CLI work without Herdr.
 `lovelace init` checks these tools and each agent's Herdr integration
 (`herdr integration install <agent>`), writes `~/.config/lovelace/config.jsonc`
 (keeping comments and settings it does not ask about), stores tokens in the login
-Keychain (you type them into `security`, not into Lovelace) and finds your Jira
-cloud ID. It then installs a LaunchAgent that keeps the server running, which
-restarts the server when the macOS system proxy changes. Rerun it any time.
+Keychain (you type them into `security`, not into Lovelace), finds your Jira
+cloud ID and starts the server. Rerun it any time.
 
 ```sh
 lovelace tui                     # open the dashboard, preferably inside Herdr
-lovelace service status          # restart | install | uninstall
+lovelace server status           # start | stop | restart
 lovelace server                  # run the server in the foreground instead
 ```
 
-After `brew upgrade lovelace`, run `lovelace service restart`.
+There is no login service. The first command that needs the server (the TUI, or
+an agent calling back) starts it in the background; it keeps running, detached
+from that terminal, until `lovelace server stop` or logout. It inherits only
+PATH, locale, `SSH_AUTH_SOCK`, CA settings and `LOVELACE_*` locations from the
+shell that started it, so provider settings belong in the config file. A
+supervisor restarts it when it exits or when the macOS system proxy changes
+(e.g. joining a VPN), and the CLI replaces a background server left over from
+another version, e.g. after `brew upgrade`. `LOVELACE_NO_AUTOSTART=1` turns
+autostart off. Logs: `<domainRoot>/.lovelace/logs/`.
 
 ## Develop
 
@@ -66,9 +73,9 @@ pnpm dev:server
 pnpm tui
 ```
 
-`pnpm install:macos-service` points the LaunchAgent at the checkout instead.
-After a build, explicitly run `pnpm restart:macos-service` rather than starting
-a second server. Builds never install applications or restart services.
+A CLI command from the checkout starts the background server from the checkout
+too. After a build, explicitly run `pnpm restart:server` rather than starting a
+second server. Builds never install applications or restart services.
 
 ```sh
 pnpm cli                         # help, never an interactive UI

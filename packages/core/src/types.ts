@@ -115,8 +115,9 @@ export interface LovelaceConfig {
   pullRequestReleases?: PullRequestReleaseConfig;
   github?: GitHubConfig;
   jira?: JiraConfig;
-  /** How agents call the CLI back; set by the process that starts the server, never read from the file. */
+  /** Set by the process that starts the server, never read from the file. */
   agentCli?: AgentCli;
+  version?: string;
 }
 
 export interface AgentCli {

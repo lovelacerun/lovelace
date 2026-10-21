@@ -18,7 +18,7 @@ test('no-argument CLI prints help; JSON agent/server commands never open TUI; ex
     return Response.json({ path: new URL(url).pathname, body: init?.body ? JSON.parse(init.body) : null });
   };\n`);
   const run = (args: string[]) => spawnSync(process.execPath, ['--import', loader, '--import', preload, entry, ...args], {
-    env: { ...process.env, LOVELACE_ROOT: root, LOVELACE_CONFIG: join(root, 'config.jsonc'), LOVELACE_PORT: '48999' }, encoding: 'utf8', timeout: 5_000,
+    env: { ...process.env, LOVELACE_ROOT: root, LOVELACE_CONFIG: join(root, 'config.jsonc'), LOVELACE_PORT: '48999', LOVELACE_NO_AUTOSTART: '1' }, encoding: 'utf8', timeout: 5_000,
   });
   for (const args of [[], ['--'], ['help'], ['--help']]) {
     const result = run(args);
@@ -57,7 +57,7 @@ test('work-items update sends only passed fields', async t => {
   const notesFile = join(root, 'notes.md');
   await writeFile(notesFile, 'From file\n');
   const run = (args: string[]) => spawnSync(process.execPath, ['--import', loader, '--import', preload, entry, ...args], {
-    env: { ...process.env, LOVELACE_ROOT: root, LOVELACE_CONFIG: join(root, 'config.jsonc'), LOVELACE_PORT: '48999' }, encoding: 'utf8', timeout: 5_000,
+    env: { ...process.env, LOVELACE_ROOT: root, LOVELACE_CONFIG: join(root, 'config.jsonc'), LOVELACE_PORT: '48999', LOVELACE_NO_AUTOSTART: '1' }, encoding: 'utf8', timeout: 5_000,
   });
   const cases: Array<[string[], { title?: string; notes?: string | null }]> = [
     [['--title', 'New title'], { title: 'New title' }],

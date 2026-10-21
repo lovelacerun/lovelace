@@ -25,12 +25,15 @@ const SESSION_SYNC_INTERVAL_MS = 3_000;
 export interface StartServerOptions {
   /** How launched agents call the CLI back; without it prompts get no Lovelace context. */
   agentCli?: (port: number) => AgentCli;
+  /** Reported by /status so clients notice a server left running across an upgrade. */
+  version?: string;
 }
 
 /** Runs the server in this process until SIGTERM/SIGINT. */
 export async function startServer(options: StartServerOptions = {}): Promise<void> {
   const config = loadConfig();
   config.agentCli = options.agentCli?.(config.port);
+  config.version = options.version;
   mkdirSync(join(config.lovelaceDir, 'prompts'), { recursive: true });
 
   const logger = createLogger(config);

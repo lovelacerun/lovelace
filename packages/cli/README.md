@@ -6,11 +6,14 @@ noninteractive JSON; errors are JSON on stderr with a nonzero exit code.
 Providers and SDKs are accessed only by the local server.
 
 The same executable sets Lovelace up and runs it: `lovelace init` (interactive),
-`lovelace server` (foreground) and `lovelace service install|uninstall|restart|status`.
-The LaunchAgent runs `lovelace service run`, which starts `lovelace server` with
-the macOS system proxy and restarts it when that proxy changes. It records the
-installing shell's PATH so the server finds agents, and Homebrew's stable
-`opt` path (`LOVELACE_EXECUTABLE`) so it survives upgrades.
+`lovelace server` (foreground) and `lovelace server start|stop|restart|status`.
+Commands that need the server start it on demand (`LOVELACE_NO_AUTOSTART=1`
+disables that, e.g. in tests): a detached `lovelace server supervise` process
+holds `<lovelaceDir>/server.pid`, runs `lovelace server` with the macOS system
+proxy and restarts it when that proxy changes or the server exits. It inherits
+an allowlisted environment only. A background server reporting another version
+is replaced. Homebrew's wrapper exports its stable `opt` path as
+`LOVELACE_EXECUTABLE`, which agent callbacks use.
 
 ```sh
 lovelace work-items launch <id> <pi|codex|claude> (--prompt <text> | --prompt-file <path>)
