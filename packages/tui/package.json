@@ -2,10 +2,19 @@
   "name": "@lovelace/tui",
   "version": "0.1.0",
   "type": "module",
+  "files": [
+    "dist",
+    "!dist/**/*.test.*"
+  ],
   "exports": {
-    ".": { "import": "./dist/src/index.js", "types": "./dist/src/index.d.ts" }
+    ".": {
+      "import": "./dist/src/index.js",
+      "types": "./dist/src/index.d.ts"
+    }
   },
-  "bin": { "lovelace-tui": "./dist/bin/lovelace-tui.js" },
+  "bin": {
+    "lovelace-tui": "./dist/bin/lovelace-tui.js"
+  },
   "scripts": {
     "build": "tsc",
     "start": "node dist/bin/lovelace-tui.js",
