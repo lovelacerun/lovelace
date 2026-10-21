@@ -6,6 +6,8 @@ export function registerSystemRoutes(app: FastifyInstance, deps: RouteDeps) {
 
   app.get('/status', async () => ({
     ok: true,
+    version: config.version ?? null,
+    pid: process.pid,
     config: {
       domainRoot: config.domainRoot,
       lovelaceDir: config.lovelaceDir,

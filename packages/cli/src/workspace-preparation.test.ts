@@ -39,7 +39,7 @@ test('work-items add-worktree polls after submission and preserves final JSON in
     };
   `);
   const result = spawnSync(process.execPath, ['--import', loader, '--import', preload, entry, 'work-items', 'add-worktree', 'work', 'a', '--branch', 'feature', '--base', 'parent'], {
-    env: { ...process.env, LOVELACE_ROOT: root, LOVELACE_CONFIG: join(root, 'config.jsonc'), LOVELACE_PORT: '48999' }, encoding: 'utf8', timeout: 5_000,
+    env: { ...process.env, LOVELACE_ROOT: root, LOVELACE_CONFIG: join(root, 'config.jsonc'), LOVELACE_PORT: '48999', LOVELACE_NO_AUTOSTART: '1' }, encoding: 'utf8', timeout: 5_000,
   });
   assert.equal(result.status, 0, result.stderr);
   assert.equal(result.stderr, '', 'non-TTY automation does not receive progress text');
@@ -62,7 +62,7 @@ test('Ctrl-C during workspace preparation emits a JSON interruption error with a
     return Response.json({ workItem: { id: 'work' }, metas: [{ id: 'a', metaType: 'repository', payloadJson: JSON.stringify({ repoId: 'a', repoName: 'a', sourceExternalId: null, status: 'preparing' }) }] });
   };`);
   const result = spawnSync(process.execPath, ['--import', loader, '--import', preload, entry, 'work-items', 'add-worktree', 'work', 'a'], {
-    env: { ...process.env, LOVELACE_ROOT: root, LOVELACE_CONFIG: join(root, 'config.jsonc'), LOVELACE_PORT: '48999' }, encoding: 'utf8', timeout: 5_000,
+    env: { ...process.env, LOVELACE_ROOT: root, LOVELACE_CONFIG: join(root, 'config.jsonc'), LOVELACE_PORT: '48999', LOVELACE_NO_AUTOSTART: '1' }, encoding: 'utf8', timeout: 5_000,
   });
   assert.equal(result.status, 1);
   assert.equal(result.stdout, '');

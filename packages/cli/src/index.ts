@@ -6,9 +6,16 @@ import { client, request } from './http.js';
 import { launchTools, openTool } from './launch-tools.js';
 import { selfInvocation, shellQuote, skillPath, version } from './self.js';
 
+/** Commands that talk to the server start it on demand. */
+const SERVER_COMMANDS = new Set(['tui', 'dashboard', 'status', 'repos', 'inbox', 'work-items', 'cleanup', 'doctor', 'cache', 'github', 'jira']);
+
 async function main() {
   const args = process.argv.slice(2).filter((value, index) => !(index === 0 && value === '--'));
   const [command = 'help', subcommand, ...rest] = args;
+  if (SERVER_COMMANDS.has(command) && !(command === 'tui' && args.includes('--url'))) {
+    const { ensureServer } = await import('./background.js');
+    await ensureServer();
+  }
 
   switch (command) {
     case 'tui': {
@@ -16,15 +23,20 @@ async function main() {
       return runTui(args.slice(1));
     }
     case 'server': {
+      if (subcommand === 'supervise') {
+        const { superviseServer } = await import('./background.js');
+        return superviseServer();
+      }
+      if (subcommand) {
+        const { serverCommand } = await import('./background.js');
+        return printJson(await serverCommand(subcommand));
+      }
       const { startServer } = await import('@lovelace/server');
       return startServer({
+        version,
         // Pin the port so callbacks reach this server even when a worktree's direnv sets another.
         agentCli: port => ({ command: `LOVELACE_PORT=${port} ${selfInvocation().map(shellQuote).join(' ')}`, skillPath }),
       });
-    }
-    case 'service': {
-      const { service } = await import('./service.js');
-      return printJson(await service(args.slice(1)));
     }
     case 'init': {
       const { init } = await import('./init.js');
@@ -438,8 +450,8 @@ function printHelp() {
 Setup:
   init                Check dependencies, write ~/.config/lovelace/config.jsonc and start the server
   server              Run the server in the foreground
-  service install|uninstall|restart|status
-                     Manage the macOS LaunchAgent that keeps the server running
+  server start|stop|restart|status
+                     Manage the background server; other commands start it when needed
   version             Print the Lovelace version
 
 Commands:

@@ -69,9 +69,10 @@ Preserve these decisions:
   depends only on pi-tui, follows its `Component` and theme-function conventions.
 - `packages/tui`: pi-tui dashboard; no provider or persistence logic.
 - `packages/cli`: the single `lovelace` executable: noninteractive scripting and
-  agent callbacks, plus `server`, `service` (the macOS LaunchAgent and its
-  system-proxy supervisor) and the interactive `init`. No-command invocation
-  prints help; TUI launch must be explicit. Homebrew installs its `pnpm deploy`
+  agent callbacks, plus `server` (foreground, or the on-demand background
+  server with its system-proxy supervisor; no login service) and the
+  interactive `init`. No-command invocation prints help; TUI launch must be
+  explicit. Commands that need the server start it in the background. Homebrew installs its `pnpm deploy`
   tarball from `lovelacerun/homebrew-tap`.
 
 Prefer small focused modules. Extract repetition, not speculative frameworks.

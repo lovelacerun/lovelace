@@ -9,14 +9,14 @@ import {
   DEPENDENCIES, editConfigText, jiraApiBaseUrl, jiraCloudId, normalizeJiraSite, parseIntegrationStatus, parseTopics,
   readConfigText, type ConfigEdits,
 } from './init-config.js';
-import { service } from './service.js';
+import { backgroundDeps, serverCommand } from './background.js';
 
 const KEYCHAIN_SERVICE = 'lovelace';
 
 /**
  * Interactive first-run setup: checks dependencies, writes
  * ~/.config/lovelace/config.jsonc (keeping existing comments and settings),
- * stores tokens in the login Keychain and starts the server's LaunchAgent.
+ * stores tokens in the login Keychain and (re)starts the background server.
  * Tokens are typed into `security`, never into this process.
  */
 export async function init(): Promise<void> {
@@ -111,13 +111,9 @@ export async function init(): Promise<void> {
     chmodSync(path, 0o600);
     console.log(`Wrote ${path}`);
 
-    if (process.platform === 'darwin' && await confirm('Start the Lovelace server now and at login?', true)) {
-      await service(['install']);
-      const port = loadConfig().port;
-      console.log(await waitForServer(port) ? `Lovelace is running on port ${port}. Open it with: lovelace tui` : 'The server did not answer yet; check lovelace service status and its logs.');
-    } else {
-      console.log('Start the server with: lovelace server');
-    }
+    // Any lovelace command starts the server on demand; restart it so it reads the new config.
+    const started = await serverCommand('restart', backgroundDeps({ log: message => console.log(message) })) as { port: number };
+    console.log(`Lovelace is running on port ${started.port}. Open it with: lovelace tui`);
   } finally {
     rl.close();
   }
@@ -136,16 +132,4 @@ export async function init(): Promise<void> {
 function tildePath(path: string): string {
   const home = homedir();
   return path === home ? '~' : path.startsWith(`${home}/`) ? join('~', path.slice(home.length + 1)) : path;
-}
-
-async function waitForServer(port: number): Promise<boolean> {
-  for (let attempt = 0; attempt < 20; attempt++) {
-    try {
-      if ((await fetch(`http://127.0.0.1:${port}/status`, { signal: AbortSignal.timeout(1_000) })).ok) return true;
-    } catch {
-      // Not listening yet.
-    }
-    await new Promise(resolve => setTimeout(resolve, 500));
-  }
-  return false;
 }
