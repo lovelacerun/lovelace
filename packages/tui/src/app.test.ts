@@ -636,7 +636,8 @@ describe('AppRoot real Editor submission over fixture HTTP', () => {
       });
       class DeadlineClient extends LovelaceClient {
         override quickStart(...args: Parameters<LovelaceClient['quickStart']>) {
-          args[5] = { ...args[5], timeoutMs: 35 };
+          // Only the timeout case races a deadline; slow runners must not turn a reply into one.
+          if (failure === 'timeout') args[5] = { ...args[5], timeoutMs: 35 };
           return super.quickStart(...args);
         }
       }
