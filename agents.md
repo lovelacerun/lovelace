@@ -129,9 +129,11 @@ idempotent. Preserve uncertain-write and cleanup protections.
   per work item (ID recorded as a `herdr-workspace` meta and tagged with a
   `lovelace` token, which Herdr forgets on restart), one tab per session,
   `agent start` for the harness and `agent prompt` for the prompt.
-- Herdr owns agent state and native conversation identity. The server mirrors
-  `pane list` every few seconds; never reimplement agent hooks or attention
-  reporting.
+- Herdr owns agent state and native conversation identity. The server
+  subscribes to Herdr's socket events (agent detection, pane exits, status of
+  running sessions' panes) and mirrors `pane list` on each; Herdr emits no
+  event for a reported identity, so a 15 s poll remains (3 s while the
+  subscription is down). Never reimplement agent hooks or attention reporting.
 - Auto-detect Pi, Claude Code and Codex executables on the server to offer
   them. No custom tool modules or editors-as-harnesses.
 - Keep per-harness model/thinking overrides with drafts and session metadata.
