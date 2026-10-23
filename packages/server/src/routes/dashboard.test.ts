@@ -132,6 +132,35 @@ test('a workspace the user closed or another owner tagged is replaced, not reuse
   assert.equal(herdr.workspaces.size, 2);
 });
 
+test('retitling work relabels its own Herdr workspace; attaching Jira keys the title', async (t) => {
+  const { app, herdr, providers } = await fixture(t);
+  const quick = (await app.inject({ method: 'POST', url: '/work-items/quick-start', payload: { prompt: 'First' } })).json<QuickStartResponse>();
+  const id = quick.details.workItem.id;
+  const [workspaceId] = herdr.workspaces.keys();
+  const renames = () => herdr.calls.filter(call => call.method === 'renameWorkspace').map(call => call.args);
+  const settled = () => new Promise(resolve => setImmediate(resolve));
+
+  await app.inject({ method: 'PATCH', url: `/work-items/${id}`, payload: { notes: 'Only notes' } });
+  await settled();
+  assert.deepEqual(renames(), [], 'unchanged titles leave the workspace alone');
+  await app.inject({ method: 'PATCH', url: `/work-items/${id}`, payload: { title: 'Renamed' } });
+  await settled();
+  assert.deepEqual(renames(), [{ workspaceId, label: 'Renamed' }]);
+
+  providers.jira.fetchIssue = async () => issue;
+  const attached = await app.inject({ method: 'POST', url: `/work-items/${id}/tracker-items`, payload: { key: 'PROJ-42' } });
+  assert.equal(attached.statusCode, 200);
+  await settled();
+  assert.equal((await app.inject(`/work-items/${id}`)).json<WorkItemDetails>().workItem.title, 'PROJ-42: Renamed');
+  assert.deepEqual(renames().at(-1), { workspaceId, label: 'PROJ-42: Renamed' });
+
+  herdr.workspaces.get(workspaceId!)!.tokens.lovelace = 'someone-else';
+  await app.inject({ method: 'DELETE', url: `/work-items/${id}/tracker-items/PROJ-42` });
+  await settled();
+  assert.equal((await app.inject(`/work-items/${id}`)).json<WorkItemDetails>().workItem.title, 'Renamed');
+  assert.equal(renames().length, 2, 'a workspace another owner tagged keeps its label');
+});
+
 test('an agent that opens blocked on a startup dialog gets its prompt once it is ready', async (t) => {
   const { app, database, herdr } = await fixture(t);
   herdr.startBlocked = true;

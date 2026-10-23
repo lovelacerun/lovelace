@@ -29,6 +29,10 @@ export class FakeHerdr implements HerdrClient {
     this.workspaces.set(workspaceId, { workspaceId, tokens: {} });
     return { workspaceId, ...this.addPane(workspaceId, input.cwd, '1') };
   }
+  async renameWorkspace(workspaceId: string, label: string) {
+    this.calls.push({ method: 'renameWorkspace', args: { workspaceId, label } });
+    if (!this.workspaces.has(workspaceId)) throw new HerdrError('workspace_not_found', 'missing workspace');
+  }
   async reportWorkspaceTokens(workspaceId: string, tokens: Record<string, string>) {
     this.calls.push({ method: 'reportWorkspaceTokens', args: { workspaceId, tokens } });
     const workspace = this.workspaces.get(workspaceId);

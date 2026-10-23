@@ -15,12 +15,25 @@ import {
 } from '../services/pull-request-service.js';
 import { attachJiraIssueToWorkItem, detachJiraIssueFromWorkItem, parseJiraIssueRef } from '../services/tracker-item-service.js';
 import { beginRepositoryPreparation } from '../services/work-start-service.js';
+import { renameWorkItemWorkspace } from '../herdr/work-item-workspace.js';
 import type { RouteDeps } from './deps.js';
 import { isNonEmptyString } from '../helpers.js';
 
 export function registerWorkItemRoutes(app: FastifyInstance, deps: RouteDeps) {
-  const { database, github, releaseChecker, jira, workspaceManager } = deps;
+  const { database, github, releaseChecker, jira, workspaceManager, herdr } = deps;
   const workStartDeps = { database, github, logger: app.log, workspaceManager };
+
+  /** Runs a work-item change and relabels its Herdr workspace in the background when the title changed. */
+  const retitling = async <T>(workItemId: string, change: () => T | Promise<T>): Promise<T> => {
+    const before = database.getWorkItem(workItemId)?.title;
+    const result = await change();
+    const after = database.getWorkItem(workItemId)?.title;
+    if (before !== undefined && after !== undefined && before !== after) {
+      renameWorkItemWorkspace(database, herdr, workItemId)
+        .catch((error: unknown) => app.log.warn({ err: error, workItemId }, 'Failed to rename Herdr workspace'));
+    }
+    return result;
+  };
 
   app.get('/work-items', async (request) => {
     const state = (request.query as { state?: WorkItemState }).state;
@@ -127,7 +140,7 @@ export function registerWorkItemRoutes(app: FastifyInstance, deps: RouteDeps) {
       return { ok: false, error: 'body must include a Jira issue key or browse url' };
     }
     try {
-      const meta = await attachJiraIssueToWorkItem(database, jira, params.id, ref);
+      const meta = await retitling(params.id, () => attachJiraIssueToWorkItem(database, jira, params.id, ref));
       if (!meta) {
         reply.code(404);
         return { ok: false, error: 'work item not found' };
@@ -142,7 +155,7 @@ export function registerWorkItemRoutes(app: FastifyInstance, deps: RouteDeps) {
 
   app.delete('/work-items/:id/tracker-items/:externalId', async (request, reply) => {
     const params = request.params as { id: string; externalId: string };
-    const ok = detachJiraIssueFromWorkItem(database, params.id, decodeURIComponent(params.externalId));
+    const ok = await retitling(params.id, () => detachJiraIssueFromWorkItem(database, params.id, decodeURIComponent(params.externalId)));
     if (!ok) {
       reply.code(404);
       return { ok: false, error: 'work item not found' };
@@ -177,7 +190,7 @@ export function registerWorkItemRoutes(app: FastifyInstance, deps: RouteDeps) {
       return { ok: false, error: 'title must be a non-empty string and notes a string or null' };
     }
 
-    const workItem = updateWorkItem(database, params.id, body as { title?: string; notes?: string | null });
+    const workItem = await retitling(params.id, () => updateWorkItem(database, params.id, body as { title?: string; notes?: string | null }));
     if (!workItem) {
       reply.code(404);
       return { ok: false, error: 'work item not found' };

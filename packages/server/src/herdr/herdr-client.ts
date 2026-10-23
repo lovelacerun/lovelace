@@ -32,6 +32,7 @@ export interface HerdrClient {
   getWorkspace(workspaceId: string): Promise<HerdrWorkspace | null>;
   /** Creates an unfocused workspace and returns its root shell pane. */
   createWorkspace(input: { cwd: string; label: string }): Promise<{ workspaceId: string; tabId: string; paneId: string }>;
+  renameWorkspace(workspaceId: string, label: string): Promise<void>;
   /** Display-only workspace tokens. Herdr forgets them on restart. */
   reportWorkspaceTokens(workspaceId: string, tokens: Record<string, string>): Promise<void>;
   /** Creates an unfocused tab and returns its root shell pane. */
@@ -82,6 +83,9 @@ export function createHerdrClient(config: HerdrConfig = {}, exec: HerdrExec = ex
       const result = await call(['workspace', 'create', '--cwd', cwd, '--label', label, '--no-focus']);
       const pane = asRecord(result.root_pane);
       return { workspaceId: text(asRecord(result.workspace).workspace_id), tabId: text(pane.tab_id), paneId: text(pane.pane_id) };
+    },
+    async renameWorkspace(workspaceId, label) {
+      await call(['workspace', 'rename', workspaceId, label]);
     },
     async reportWorkspaceTokens(workspaceId, tokens) {
       await call(['workspace', 'report-metadata', workspaceId, '--source', 'lovelace',
