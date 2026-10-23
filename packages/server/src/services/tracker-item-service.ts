@@ -13,6 +13,8 @@ interface JiraIssueRef {
 
 const ISSUE_KEY_PATTERN = /^[A-Za-z][A-Za-z0-9_]*-\d+$/;
 const ISSUE_ID_PATTERN = /^\d+$/;
+/** A title led by an issue key, as Jira-started work is titled (`PROJ-1: Title`). */
+const KEYED_TITLE_PATTERN = /^[A-Z][A-Z0-9]+-\d+(?::\s*|\s+[-–—]\s+|\s+)\S/;
 const DESCRIPTION_MAX_LENGTH = 4000;
 
 export function parseJiraIssueRef(input: { key?: string; url?: string }): JiraIssueRef | null {
@@ -46,7 +48,11 @@ export async function attachJiraIssueToWorkItem(
   const issue = await jira.fetchIssue(ref.key);
   if (!issue) throw new Error(`Jira issue not found: ${ref.key}`);
   database.deleteInboxMeta('tracker-item', 'jira', issue.id);
-  return upsertTrackerItemMeta(database, workItemId, issue);
+  return database.transaction(() => {
+    const meta = upsertTrackerItemMeta(database, workItemId, issue);
+    keyWorkItemTitle(database, workItemId);
+    return meta;
+  });
 }
 
 /** Detaches by the meta external id (Jira issue id) or by issue key. */
@@ -59,9 +65,30 @@ export function detachJiraIssueFromWorkItem(database: DatabaseState, workItemId:
     .filter((meta) => meta.externalId === needle || parsePayload(meta)?.key?.toUpperCase() === needle.toUpperCase())
     .map((meta) => meta.externalId as string);
   if (externalIds.length === 0) return true;
-  database.deleteWorkItemMetasByExternalIds(workItemId, 'tracker-item', 'jira', externalIds);
-  database.touchWorkItem(workItemId);
+  database.transaction(() => {
+    const keys = database.listWorkItemMeta(workItemId)
+      .filter((meta) => meta.metaType === 'tracker-item' && externalIds.includes(meta.externalId!))
+      .map((meta) => parsePayload(meta)?.key)
+      .filter(isNonEmptyString);
+    database.deleteWorkItemMetasByExternalIds(workItemId, 'tracker-item', 'jira', externalIds);
+    database.touchWorkItem(workItemId);
+    const title = database.getWorkItem(workItemId)!.title;
+    const key = keys.find((entry) => title.startsWith(`${entry}: `));
+    if (key) database.updateWorkItem(workItemId, { title: title.slice(key.length + 2).trim() || title });
+    keyWorkItemTitle(database, workItemId);
+  });
   return true;
+}
+
+/** Leads an unkeyed title with the first attached Jira issue key, as Jira-started work is titled. */
+function keyWorkItemTitle(database: DatabaseState, workItemId: string): void {
+  const title = database.getWorkItem(workItemId)?.title;
+  if (!title || KEYED_TITLE_PATTERN.test(title)) return;
+  const key = database.listWorkItemMeta(workItemId)
+    .filter((meta) => meta.metaType === 'tracker-item' && meta.provider === 'jira')
+    .map((meta) => parsePayload(meta)?.key)
+    .find(isNonEmptyString);
+  if (key) database.updateWorkItem(workItemId, { title: `${key}: ${title}` });
 }
 
 function upsertTrackerItemMeta(database: DatabaseState, workItemId: string, issue: JiraIssueSummary): WorkItemMeta {

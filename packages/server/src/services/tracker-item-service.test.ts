@@ -7,7 +7,7 @@ import type { JiraIssueSummary, LovelaceConfig } from '@lovelace/core';
 import { openDatabase } from '../database.js';
 import type { CachedJira } from '../cached-providers.js';
 import { createActiveWorkItemFromMetas } from '../repositories/work-item-repository.js';
-import { attachJiraIssueToWorkItem, refreshAttachedTrackerIssues } from './tracker-item-service.js';
+import { attachJiraIssueToWorkItem, detachJiraIssueFromWorkItem, refreshAttachedTrackerIssues } from './tracker-item-service.js';
 
 const logger = { info() {}, warn() {}, error() {} };
 function issue(id: string): JiraIssueSummary {
@@ -60,4 +60,22 @@ test('explicit Jira attachment records a local event but repeated upsert does no
   await attachJiraIssueToWorkItem(database, jira, work.id, { key: 'PROJ-1' });
   assert.equal(database.listWorkItemMeta(work.id).length, 1);
   assert.equal(database.listWorkActivity().filter((row) => row.kind === 'work-item.tracker-attached').length, 1);
+});
+
+test('attaching Jira leads an unkeyed title with the issue key; detaching removes only that key', async (t) => {
+  const database = await fixture(t);
+  const work = createActiveWorkItemFromMetas(database, { title: 'Fix the sync', metas: [] });
+  const keyed = createActiveWorkItemFromMetas(database, { title: 'OTHER-7: Started from Jira', metas: [] });
+  const jira = client(async (key) => issue(key.replace('PROJ-', '')));
+  await attachJiraIssueToWorkItem(database, jira, work.id, { key: 'PROJ-1' });
+  await attachJiraIssueToWorkItem(database, jira, work.id, { key: 'PROJ-2' });
+  await attachJiraIssueToWorkItem(database, jira, keyed.id, { key: 'PROJ-1' });
+  assert.equal(database.getWorkItem(work.id)!.title, 'PROJ-1: Fix the sync');
+  assert.equal(database.getWorkItem(keyed.id)!.title, 'OTHER-7: Started from Jira');
+  detachJiraIssueFromWorkItem(database, work.id, 'PROJ-1');
+  assert.equal(database.getWorkItem(work.id)!.title, 'PROJ-2: Fix the sync', 'the remaining issue keys the title');
+  detachJiraIssueFromWorkItem(database, work.id, 'PROJ-2');
+  detachJiraIssueFromWorkItem(database, keyed.id, 'PROJ-1');
+  assert.equal(database.getWorkItem(work.id)!.title, 'Fix the sync');
+  assert.equal(database.getWorkItem(keyed.id)!.title, 'OTHER-7: Started from Jira');
 });
