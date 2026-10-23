@@ -1,5 +1,5 @@
-import type { Component, TUI, TuiAltScreen, TuiMouseEvent, TuiMouseEventResult } from '@earendil-works/pi-tui';
-import { Editor, Input, isKeyRelease, matchesKey, stripTerminalSequences } from '@earendil-works/pi-tui';
+import type { Component, Editor, TuiAltScreen, TuiMouseEvent, TuiMouseEventResult } from '@earendil-works/pi-tui';
+import { Input, isKeyRelease, matchesKey, stripTerminalSequences } from '@earendil-works/pi-tui';
 import type { LovelaceClient } from '@lovelace/client';
 import type { DashboardJiraIssue, JiraIssueSummary, PromptTemplate, RepoRecord } from '@lovelace/core';
 import type { AppState } from './state.js';
@@ -7,8 +7,9 @@ import { filterRepositories } from './jira-start.js';
 import {
   Dropdown, fitEditorLines, linkCell, padRight, PasteTracker, replaceEditorText, safeText, SplitPane, truncate, wrap,
 } from '@lovelace/tui-components';
-import { bold, accent, canvas, cardBg, muted, editorTheme, icons, danger, reset, selectedBand, selectedBg, splitPaneTheme } from './theme.js';
+import { bold, accent, canvas, cardBg, muted, icons, danger, reset, selectedBand, selectedBg, splitPaneTheme } from './theme.js';
 import { clickable, type ClickTarget } from './clickable.js';
+import { dialogEditor } from './dialog-editor.js';
 import { LAUNCH_FIELDS, LaunchOptionsRow, selectTheme, type LaunchField } from './launch-options.js';
 
 const control = (text: string, data: string) => clickable(text, { kind: 'modal', data });
@@ -80,17 +81,7 @@ export class JiraStartModal implements Component {
     this.topicFilter.setValue((options.state.dashboardData?.settings.repositoryTopics ?? []).join(', '));
     this.topicFilter.handleInput('\x1b[F');
     this.launchOptions = new LaunchOptionsRow(options.state);
-    // Editor's native viewport is 30% of terminal rows. Size that viewport to
-    // this dialog's prompt box, without changing the real terminal or renderer.
-    const terminal = new Proxy(options.tui.terminal, {
-      get: (target, key) => key === 'rows' ? Math.ceil(this.promptRows / 0.3) : Reflect.get(target, key, target),
-    });
-    const editorTui = new Proxy(options.tui, {
-      get: (target, key) => key === 'terminal' ? terminal : typeof Reflect.get(target, key, target) === 'function'
-        ? Reflect.get(target, key, target).bind(target) : Reflect.get(target, key, target),
-    });
-    this.editor = new Editor(editorTui as TUI, editorTheme, { paddingX: 1 });
-    this.editor.disableSubmit = true;
+    this.editor = dialogEditor(options.tui, () => this.promptRows);
     this.editor.onChange = () => {
       if (this.active) this.setDraft({ text: this.editor.getExpandedText() });
     };
