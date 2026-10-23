@@ -34,7 +34,7 @@ export function isLaunchOptionsLink(data: string): boolean {
  * Agent, thinking and model select fields over the TUI-wide launch choice.
  * Each field expands into a filterable list; the model list comes from the
  * harness and also takes a typed name. Empty values keep the harness's own
- * defaults. Home's dock and the Jira overlay share the choice.
+ * defaults. Home's dock and both overlays share the choice.
  */
 export class LaunchOptionsRow {
   private readonly menus: Record<LaunchField, Dropdown>;

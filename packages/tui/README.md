@@ -64,7 +64,11 @@ keeps the harness's own setting. Narrow docks drop the labels and show a
 field's name in place of `default`. The choice, kept per harness, is shared
 with the Jira overlay and remembered until the TUI exits; `Enter` in the
 editor launches with it.
-Work-item details have no prompt input. Jira prompt editing is exclusively in its overlay.
+Work-item details have no inline prompt input. Jira prompt editing is
+exclusively in its overlay; another session on an active work item starts from
+the **New session** overlay (`n` or the row under Agent sessions), which takes a
+prompt and the shared agent/thinking/model choice and runs in the item's ready
+worktrees. `Ctrl+S` starts; failures stay in the dialog.
 
 ## Keyboard
 
@@ -73,7 +77,7 @@ Work-item details have no prompt input. Jira prompt editing is exclusively in it
 | `q` / Ctrl+C | Quit dashboard / quit anywhere |
 | `r` | Refresh dashboard and selected details |
 | `Tab` / `Shift+Tab` | Next/previous detail item, then sidebar; Home cycles content/sidebar/editor/agent/thinking/model |
-| `n` | Focus Home prompt, or open Jira start-work overlay |
+| `n` | Focus Home prompt, open Jira start-work overlay, or open a work item's new-session overlay |
 | `↑/↓` / `k/j` | Move selection outside editor |
 | `Enter` | Open selection (Jira/PR cards open the default browser), or launch from editor |
 | `Shift+Enter` / Ctrl+J | Insert newline |

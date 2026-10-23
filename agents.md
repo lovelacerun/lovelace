@@ -15,8 +15,9 @@ Preserve these decisions:
    only on Home, docked at the bottom with three visible input lines (one
    collapsed row on short terminals until focused) above a row of agent,
    thinking and model select fields; Jira prompt editing belongs to the
-   start-work overlay. Select fields expand into filterable lists and are
-   reached with Tab in reading order, like every other field. Both hosts share
+   start-work overlay, and another session on an existing work item to its
+   new-session overlay (prompt and launch fields, no repository choice). Select fields expand into filterable lists and are
+   reached with Tab in reading order, like every other field. All hosts share
    one choice, remembered for the TUI session.
 3. The sidebar defaults to the right (Herdr has its own left sidebar); its side
    is configurable. Active work comes before pending Jira. Narrow (phone)

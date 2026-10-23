@@ -45,9 +45,10 @@ for (const columns of [50, 80, 120]) {
     // Pollers use the fixture client only, never providers or live sessions.
     await new Promise(resolve => setImmediate(resolve));
     assert.equal(root.state.selectedWorkItemData?.workItem.id, 'work');
+    // The first action is the New session row above the attachments.
     for (const [index, label] of ['PROJ-1', 'PROJ-2', '#12', '#13'].entries()) {
-      if (index > 0) input('\t');
-      assert.equal(root.state.contentSelectedIndex, index);
+      input('\t');
+      assert.equal(root.state.contentSelectedIndex, index + 1);
       assert.equal(root.state.focus, 'content');
       const frame = root.render(columns).map(stripTerminalSequences).join('\n');
       assert.ok(frame.includes('› ' + label), frame);
@@ -57,7 +58,7 @@ for (const columns of [50, 80, 120]) {
       assert.equal(opened.at(-1), JSON.parse(details.metas[index]!.payloadJson!).url);
     }
     input('\x1b[Z');
-    assert.equal(root.state.contentSelectedIndex, 2);
+    assert.equal(root.state.contentSelectedIndex, 3);
     assert.ok(root.render(columns).map(stripTerminalSequences).join('\n').includes('› #12'));
     fail = true;
     input('\r');

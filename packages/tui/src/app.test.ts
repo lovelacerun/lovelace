@@ -11,6 +11,7 @@ import {
 } from '@lovelace/core';
 import { AppRoot } from './app.js';
 import { JiraStartModal } from './jira-start-modal.js';
+import { NewSessionModal } from './new-session-modal.js';
 
 // -- FakeTui --------------------------------------------------------------
 
@@ -293,6 +294,60 @@ describe('AppRoot Jira start-work overlay', () => {
     assert.equal(root.state.view, 'work-item');
     assert.equal(root.state.selectedWorkItemId, 'created');
     assert.equal(asFake(client).openCalls.length, 0);
+  });
+});
+
+describe('AppRoot new-session overlay', () => {
+  it('starts another session on the selected work item from n or its row', async (t) => {
+    const { root, tui, client } = makeRoot();
+    const done = root.start();
+    t.after(async () => { root.quit(); await done; });
+    root.state.navigateToWorkItem('w1');
+    root.state.setWorkItemData(withSession('w1'));
+    assert.match(stripTerminalSequences(root.render(80).join('\n')), /New session/);
+    tui.feedInput('n');
+    const overlay = tui.overlays[0]!;
+    const modal = overlay.component as NewSessionModal;
+    assert.equal(modal.focus, 'prompt');
+    for (const [cols, rows] of [[50, 12], [80, 24], [120, 36]]) {
+      tui.resize(cols!, rows!);
+      const lines = modal.render(cols! - 2);
+      assert.ok(lines.length <= rows! - 2);
+      assert.ok(lines.every(line => visibleWidth(line) <= cols! - 2));
+    }
+    tui.feedInput('Second pass');
+    asFake(client).launchQueue.push(new ApiError(404, 'Work item not found.'));
+    tui.feedInput('\x13');
+    await waitFor(() => !root.state.mutationInFlight && !modal.launching);
+    assert.equal(overlay.visible, true, 'a rejection stays in the dialog');
+    assert.match(stripTerminalSequences(modal.render(76).join('\n')), /Work item not found/);
+    asFake(client).launchQueue.push({ details: withSession('w1'), launch: { ok: true, error: null } });
+    tui.feedInput('\x13');
+    await waitFor(() => !overlay.visible);
+    assert.deepEqual(asFake(client).launchCalls.map(call => [call.endpoint, call.workItemId, call.prompt]),
+      [['newSession', 'w1', 'Second pass'], ['newSession', 'w1', 'Second pass']]);
+    assert.equal(root.state.view, 'work-item');
+    assert.equal(root.state.draft.text, '');
+    assert.equal(asFake(client).openCalls.length, 0);
+  });
+
+  it('refuses inactive work and keeps Escape inside the dialog', async (t) => {
+    const { root, tui } = makeRoot();
+    const done = root.start();
+    t.after(async () => { root.quit(); await done; });
+    root.state.navigateToWorkItem('w1');
+    root.state.setWorkItemData(withSession('w1', 'done'));
+    assert.doesNotMatch(stripTerminalSequences(root.render(80).join('\n')), /New session/);
+    tui.feedInput('n');
+    assert.equal(tui.overlays.length, 0);
+    assert.match(root.state.error!, /Reactivate/);
+    root.state.setWorkItemData(withSession('w1'));
+    tui.feedInput('n');
+    tui.feedInput('Draft');
+    tui.feedInput('\x1b');
+    assert.equal(tui.overlays[0]!.visible, false);
+    assert.equal(root.state.view, 'work-item', 'Escape closes the overlay, not the page');
+    assert.equal(root.state.draft.text, 'Draft');
   });
 });
 
@@ -905,11 +960,13 @@ describe('Home-only quick-start dock', () => {
     root.state.setWorkItemData(detailsOf('wi'));
     root.state.setDraft({ text: 'hidden session draft' });
     const output = root.render(120).join('\n');
-    assert.doesNotMatch(output, /Quick start|Session prompt|hidden session draft|New session|Edit a prompt/);
+    assert.doesNotMatch(output, /Quick start|Session prompt|hidden session draft|Edit a prompt/);
     assert.match(output, /Agent sessions/);
-    tui.feedInput('n');
+    tui.feedInput('n'); // Opens the new-session overlay, not the Home editor.
+    assert.equal(tui.overlays.length, 1);
     assert.equal(root.state.focus, 'content');
     assert.equal(root.editor.focused, false);
+    tui.feedInput('\x1b');
     for (let i = 0; i < 10; i++) {
       tui.feedInput('\t');
       assert.notEqual(root.state.focus, 'editor');

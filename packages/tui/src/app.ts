@@ -28,6 +28,7 @@ import { renderWorkItem } from './views/work-item.js';
 import { renderJira } from './views/jira.js';
 import type { Document } from './views/common.js';
 import { JiraStartModal } from './jira-start-modal.js';
+import { NewSessionModal } from './new-session-modal.js';
 import { launchField, launchFocus, LaunchOptionsRow } from './launch-options.js';
 
 interface AppRootOptions {
@@ -47,7 +48,8 @@ export class AppRoot implements Component {
   readonly tui: TuiAltScreen;
   readonly client: LovelaceClient;
   readonly editor: Editor;
-  private jiraStart?: { modal: JiraStartModal; handle: OverlayHandle };
+  /** The one open dialog: Jira start-work or a work item's new session. */
+  private overlay?: { modal: JiraStartModal | NewSessionModal; handle: OverlayHandle };
   private readonly dashboardPoller: RefreshPoller;
   private readonly detailsPoller: RefreshPoller;
   private detailLoadToken = 0;
@@ -126,7 +128,7 @@ export class AppRoot implements Component {
     this.removeInputListener?.();
     this.removeInputListener = undefined;
     this.editor.focused = false;
-    this.closeJiraStart();
+    this.closeOverlay();
     this.tui.stop({ preserveScreen });
   }
 
@@ -294,7 +296,7 @@ export class AppRoot implements Component {
   handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
     const { cols, height } = this.body;
     // The confirmation dialog is modal: only its own y/Esc links respond.
-    if (!height || this.stopped || this.jiraStart || this.state.pendingConfirm) return undefined;
+    if (!height || this.stopped || this.overlay || this.state.pendingConfirm) return undefined;
     // The body starts below the header; a captured divider drag continues outside it.
     const y = event.y - 1;
     if ((y < 0 || y >= height) && !this.split.dragging) return undefined;
@@ -330,8 +332,8 @@ export class AppRoot implements Component {
       });
       return;
     }
-    if (this.jiraStart) {
-      this.jiraStart.modal.openLink(link);
+    if (this.overlay) {
+      this.overlay.modal.openLink(link);
       return;
     }
     const field = link.kind === 'modal' && !this.state.pendingConfirm ? this.launchOptions.openLink(link.data) : undefined;
@@ -362,8 +364,8 @@ export class AppRoot implements Component {
 
   private handleRawInput(data: string): { consume?: boolean } | undefined {
     if (this.stopped) return { consume: true };
-    if (this.jiraStart && !matchesKey(data, 'ctrl+c')) {
-      this.jiraStart.modal.handleInput(data);
+    if (this.overlay && !matchesKey(data, 'ctrl+c')) {
+      this.overlay.modal.handleInput(data);
       return { consume: true };
     }
     // Paste chunks containing Enter/Esc/Tab are data, not application commands.
@@ -470,6 +472,10 @@ export class AppRoot implements Component {
       if (!this.state.draft.pendingLaunch) this.openJiraStart();
       return;
     }
+    if (this.state.view === 'work-item') {
+      this.openNewSession();
+      return;
+    }
     if (this.state.view !== 'dashboard') return;
     this.state.setFocus('editor');
     this.applyFocusToTui();
@@ -477,7 +483,7 @@ export class AppRoot implements Component {
 
   /** Keep pi-tui focus + the editor's `focused` flag in sync with AppState. */
   private applyFocusToTui(): void {
-    if (this.jiraStart) {
+    if (this.overlay) {
       this.editor.focused = false;
       return; // The native overlay remains the keyboard focus owner.
     }
@@ -492,14 +498,14 @@ export class AppRoot implements Component {
 
   /** Reconcile the Editor buffer with the active draft without re-entering onChange. */
   private syncEditor(): void {
-    if (this.jiraStart) return;
+    if (this.overlay) return;
     const text = this.state.draft.text;
     // Restored large drafts retain native paste-marker performance.
     if (this.editor.getExpandedText() !== text) replaceEditorText(this.editor, text, true);
   }
 
   private openJiraStart(): void {
-    if (this.jiraStart || this.state.view !== 'jira' || !this.state.selectedJira || this.state.mutationInFlight) return;
+    if (this.overlay || this.state.view !== 'jira' || !this.state.selectedJira || this.state.mutationInFlight) return;
     if (this.state.draft.pendingLaunch) {
       this.state.setError('Resolve or discard the pending launch before changing its template or repositories.');
       return;
@@ -507,22 +513,51 @@ export class AppRoot implements Component {
     const draftKey = this.state.draftKey;
     const modal = new JiraStartModal({
       tui: this.tui, state: this.state, client: this.client, signal: this.lifetime.signal,
-      onClose: () => this.closeJiraStart(),
+      onClose: () => this.closeOverlay(),
       onStart: async prompt => {
         await this.launchFromEditor(prompt);
-        if (this.state.draftKey !== draftKey) this.closeJiraStart();
+        if (this.state.draftKey !== draftKey) this.closeOverlay();
       },
     });
     const handle = this.tui.showOverlay(modal, { width: '96%', maxHeight: '96%', margin: 1, anchor: 'center' });
-    this.jiraStart = { modal, handle };
+    this.overlay = { modal, handle };
     this.editor.focused = false;
     void modal.load();
   }
 
-  private closeJiraStart(): void {
-    const overlay = this.jiraStart;
+  /** Another agent session on the selected work item, in its ready worktrees. */
+  private openNewSession(): void {
+    if (this.overlay || this.state.view !== 'work-item' || this.state.mutationInFlight) return;
+    const details = this.state.selectedWorkItemData;
+    if (!details) return;
+    if (details.workItem.state !== 'active') {
+      this.state.setError('Reactivate local work explicitly (press a, then y) before starting a session.');
+      return;
+    }
+    if (this.state.draft.pendingLaunch) {
+      this.state.setError('Retry or discard (x) the unresolved launch before starting another session.');
+      return;
+    }
+    const draftKey = this.state.draftKey;
+    const modal = new NewSessionModal({
+      tui: this.tui, state: this.state,
+      onClose: () => this.closeOverlay(),
+      onStart: async prompt => {
+        await this.launchFromEditor(prompt);
+        // Acceptance clears the draft; failures stay in the dialog to edit or retry.
+        const draft = this.state.drafts.get(draftKey);
+        if (!draft?.pendingLaunch && !this.state.error) this.closeOverlay();
+      },
+    });
+    const handle = this.tui.showOverlay(modal, { width: '96%', maxHeight: '96%', margin: 1, anchor: 'center' });
+    this.overlay = { modal, handle };
+    this.editor.focused = false;
+  }
+
+  private closeOverlay(): void {
+    const overlay = this.overlay;
     if (!overlay) return;
-    this.jiraStart = undefined;
+    this.overlay = undefined;
     overlay.modal.dispose();
     overlay.handle.hide();
     if (!this.stopped) {
