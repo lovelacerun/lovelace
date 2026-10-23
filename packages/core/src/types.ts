@@ -123,7 +123,6 @@ export interface LovelaceConfig {
 export interface AgentCli {
   /** Shell command prefix that runs the Lovelace CLI against this server. */
   command: string;
-  skillPath: string;
 }
 
 export interface WorkItem {
@@ -252,7 +251,6 @@ export interface RenderPromptInput {
   title: string;
   sources?: StartWorkSource[];
   workspacePaths?: string[];
-  context?: string;
 }
 
 export interface RenderedPrompt {

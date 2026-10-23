@@ -1,35 +1,51 @@
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
-import type { PromptTemplate, RenderPromptInput, RenderedPrompt, StartWorkSource } from '@lovelace/core';
+import type { AgentCli, PromptTemplate, RenderPromptInput, RenderedPrompt, StartWorkSource } from '@lovelace/core';
 import { asRecord, isNonEmptyString } from '../helpers.js';
+import { renderAgentContext } from './agent-context.js';
+
+interface PromptConfig {
+  lovelaceDir: string;
+  agentCli?: AgentCli;
+}
+
+interface PromptLogger {
+  warn(...args: unknown[]): void;
+}
 
 const BUILT_IN_PROMPTS: Array<Pick<PromptTemplate, 'id' | 'title' | 'content'>> = [
   {
     id: 'implement',
     title: 'Implement',
-    content: `You are helping to implement: {{title}}
+    content: `Implement: {{title}}
 {{tracker}}
 {{workspaces}}
 
-Please first summarize the task, identify the most relevant code areas, and propose a concrete implementation plan before making changes.`,
+Summarize the task and identify the relevant code first. If the task is ambiguous or touches more than a few areas, propose a plan and wait for my confirmation; otherwise implement it, run the relevant checks and summarize what changed.
+
+{{lovelace}}`,
   },
   {
     id: 'review',
     title: 'Review',
-    content: `You are helping to review changes related to: {{title}}
+    content: `Review the changes for: {{title}}
 {{changeRequests}}
 {{workspaces}}
 
-Please review the selected changes using the prepared local workspaces. Summarize risk, likely impact, anything suspicious, and the recommended review outcome.`,
+Review the selected changes in the prepared local workspaces. Report risks, likely impact, anything suspicious and your recommended outcome to me. Do not push commits, comment on the pull requests or change their state.
+
+{{lovelace}}`,
   },
   {
     id: 'refine',
     title: 'Refine',
-    content: `You are helping to refine: {{title}}
+    content: `Refine: {{title}}
 {{tracker}}
 {{workspaces}}
 
-Please analyze the problem, extract the key requirements and open questions, and propose a refined plan or technical approach.`,
+Analyze the problem, extract the key requirements and open questions, and propose a refined plan or technical approach. Do not change code.
+
+{{lovelace}}`,
   },
 ];
 
@@ -69,8 +85,8 @@ export function listPromptTemplates(lovelaceDir: string): PromptTemplate[] {
   return templates;
 }
 
-export function renderPrompt(lovelaceDir: string, input: RenderPromptInput): RenderedPrompt | null {
-  const template = listPromptTemplates(lovelaceDir).find((entry) => entry.id === input.promptId);
+export function renderPrompt(config: PromptConfig, input: RenderPromptInput, logger: PromptLogger): RenderedPrompt | null {
+  const template = listPromptTemplates(config.lovelaceDir).find((entry) => entry.id === input.promptId);
   if (!template) return null;
 
   const variables: Record<string, string> = {
@@ -78,9 +94,9 @@ export function renderPrompt(lovelaceDir: string, input: RenderPromptInput): Ren
     tracker: renderTracker(input.sources ?? []),
     changeRequests: renderChangeRequests(input.sources ?? []),
     workspaces: renderWorkspaces(input.workspacePaths ?? []),
-    context: input.context?.trim() ?? '',
+    lovelace: renderAgentContext(config, logger),
   };
-  const content = template.content.replace(/{{\s*(title|tracker|changeRequests|workspaces|context)\s*}}/g, (_, key: string) => variables[key] ?? '');
+  const content = template.content.replace(/{{\s*(title|tracker|changeRequests|workspaces|lovelace)\s*}}/g, (_, key: string) => variables[key] ?? '');
   return { promptId: template.id, content: content.replace(/\n{3,}/g, '\n\n').trim() };
 }
 

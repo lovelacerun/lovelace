@@ -176,16 +176,22 @@ Built-in prompt templates can be overridden or extended through
 `.lovelace/prompts/*.md`. Final prompts remain editable. Failure retains the
 work item and exact draft; an uncertain launch is never automatically replayed.
 
-Agent launches include the work-item ID and noninteractive CLI invocation.
-See [`packages/cli/SKILL.md`](packages/cli/SKILL.md).
+Built-in templates end with `{{lovelace}}`, a short context block (override
+it with `.lovelace/prompts/agent-context.md`) that stays visible and removable
+in the editable prompt. Free-text prompts get it appended at launch. It names
+the CLI invocation: plain `lovelace` when that is the server's executable on
+PATH, otherwise its absolute path, with `LOVELACE_PORT` only when an override
+chose the port. Inside a work item's workspaces, `lovelace work` resolves the
+work item from the working directory. `lovelace agent-guide` prints
+[`packages/cli/SKILL.md`](packages/cli/SKILL.md).
 
 ```sh
 lovelace repos
-lovelace work-items show <id>
-lovelace work-items add-worktree <id> <repo> [--branch <name>] [--base <branch>]
-lovelace work-items attach-jira <id> PROJ-123
-lovelace work-items attach-pr <id> https://github.com/owner/repo/pull/42
-lovelace work-items done <id>
+lovelace work show
+lovelace work add-worktree <repo> [--branch <name>] [--base <branch>]
+lovelace work attach-jira PROJ-123
+lovelace work attach-pr https://github.com/owner/repo/pull/42
+lovelace work done
 ```
 
 Work may span repositories. Every prepared workspace gets an isolated branch.

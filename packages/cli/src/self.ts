@@ -1,5 +1,4 @@
-import { readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
+import { readFileSync, realpathSync } from 'node:fs';
 
 /**
  * The argv that runs this same CLI again. Homebrew's wrapper exports its
@@ -11,7 +10,27 @@ export function selfInvocation(env: NodeJS.ProcessEnv = process.env): string[] {
   return [process.execPath, ...process.execArgv, process.argv[1]!];
 }
 
-export const skillPath = fileURLToPath(new URL('../SKILL.md', import.meta.url));
+/**
+ * How launched agents call this server back: plain `lovelace` when that is
+ * this executable on PATH, and the port only when an override chose it.
+ */
+export function agentCommand(port: number, onPath: string | null, env: NodeJS.ProcessEnv = process.env): string {
+  const argv = selfInvocation(env);
+  const executable = argv.length === 1 && onPath && sameFile(onPath, argv[0]!) ? 'lovelace' : argv.map(shellQuote).join(' ');
+  return env.LOVELACE_PORT ? `LOVELACE_PORT=${port} ${executable}` : executable;
+}
+
+function sameFile(a: string, b: string): boolean {
+  try {
+    return realpathSync(a) === realpathSync(b);
+  } catch {
+    return false;
+  }
+}
+
+export function agentGuide(): string {
+  return readFileSync(new URL('../SKILL.md', import.meta.url), 'utf8');
+}
 
 export const version: string = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version;
 

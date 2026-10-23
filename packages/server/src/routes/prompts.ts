@@ -12,7 +12,7 @@ export function registerPromptRoutes(app: FastifyInstance, deps: RouteDeps) {
       reply.code(400);
       return { ok: false, error: 'invalid prompt render payload' };
     }
-    const rendered = renderPrompt(deps.config.lovelaceDir, request.body);
+    const rendered = renderPrompt(deps.config, request.body, request.log);
     if (!rendered) {
       reply.code(404);
       return { ok: false, error: 'prompt not found' };
@@ -27,6 +27,5 @@ function isRenderPromptInput(value: unknown): value is RenderPromptInput {
   if (!isNonEmptyString(record.promptId) || !isNonEmptyString(record.title)) return false;
   if (record.sources !== undefined && !Array.isArray(record.sources)) return false;
   if (record.workspacePaths !== undefined && (!Array.isArray(record.workspacePaths) || !record.workspacePaths.every(isNonEmptyString))) return false;
-  if (record.context !== undefined && typeof record.context !== 'string') return false;
   return true;
 }

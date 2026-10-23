@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { dirname, resolve, sep } from 'node:path';
 import {
   CODING_HARNESSES, isCodingHarnessId,
-  type AgentSessionState, type CodingHarnessId, type RepositoryWorkspaceMetaPayload, type StartWorkLaunchInput,
+  type AgentCli, type AgentSessionState, type CodingHarnessId, type RepositoryWorkspaceMetaPayload, type StartWorkLaunchInput,
   type ToolSessionMetaPayload, type WorkItemMeta,
 } from '@lovelace/core';
 import safeParse from '@nkzw/core/safeParse.js';
@@ -28,7 +28,7 @@ interface SessionServiceDeps {
   herdr: HerdrClient;
   tools: LoadedTool[];
   logger: Logger;
-  config: { lovelaceDir: string; port: number };
+  config: { lovelaceDir: string; port: number; agentCli?: AgentCli };
 }
 
 export class SessionRequestError extends Error {
@@ -64,7 +64,8 @@ export async function launchSessions(deps: SessionServiceDeps, workItemId: strin
     const title = harnessTitle(toolId);
     try {
       emitActivity({ type: 'tool.launching', workItemId, message: `Launching ${title}` });
-      const prompt = input.prompt ? appendAgentContext(input.prompt, workItem, deps.config, logger) : null;
+      // Templates show the context in the editable prompt; free text gets it appended.
+      const prompt = !input.prompt ? null : input.promptId ? input.prompt : appendAgentContext(input.prompt, deps.config, logger);
       const options = input.toolOptions?.[toolId];
       const agentName = newAgentName();
       // Claude accepts a chosen conversation ID; the others report theirs through Herdr.

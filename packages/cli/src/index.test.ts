@@ -15,7 +15,9 @@ test('no-argument CLI prints help; JSON agent/server commands never open TUI; ex
   const preload = join(root, 'fake-http.mjs');
   await writeFile(preload, `globalThis.fetch = async (url, init) => {
     if (!String(url).startsWith('http://127.0.0.1:48999/')) throw new Error('Nonlocal fixture request');
-    return Response.json({ path: new URL(url).pathname, body: init?.body ? JSON.parse(init.body) : null });
+    const { pathname, searchParams } = new URL(url);
+    if (pathname === '/work-items/current') return Response.json({ workItem: { id: searchParams.get('path') === process.cwd() ? 'cwd-work' : 'wrong' } });
+    return Response.json({ path: pathname, body: init?.body ? JSON.parse(init.body) : null });
   };\n`);
   const run = (args: string[]) => spawnSync(process.execPath, ['--import', loader, '--import', preload, entry, ...args], {
     env: { ...process.env, LOVELACE_ROOT: root, LOVELACE_CONFIG: join(root, 'config.jsonc'), LOVELACE_PORT: '48999', LOVELACE_NO_AUTOSTART: '1' }, encoding: 'utf8', timeout: 5_000,
@@ -34,6 +36,12 @@ test('no-argument CLI prints help; JSON agent/server commands never open TUI; ex
     assert.equal(output.path, path);
     assert.equal(result.stderr, '');
   }
+  const guide = run(['agent-guide']);
+  assert.equal(guide.status, 0, guide.stderr);
+  assert.match(guide.stdout, /^---\nname: lovelace/);
+  const current = run(['work', 'done']);
+  assert.equal(current.status, 0, current.stderr);
+  assert.deepEqual(JSON.parse(current.stdout), { path: '/work-items/cwd-work/state', body: { state: 'done' } });
   const invalid = run(['work-items', 'launch']);
   assert.equal(invalid.status, 1);
   assert.equal(invalid.stdout, '');

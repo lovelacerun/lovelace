@@ -29,6 +29,8 @@ prompt templates; `POST /prompts/render` renders a template for final editing.
 TUI uses these routes in one Jira start-work overlay with repository selection
 and editable prompt preview side by side. Repository/Jira/PR
 attachment, work-state and agent callbacks also remain available through the CLI.
+`GET /work-items/current?path=` returns the work item whose task workspace
+contains `path`; `lovelace work` uses it with the working directory.
 No-command `lovelace` prints help;
 `lovelace tui` explicitly opens the dashboard. See
 [`packages/cli/SKILL.md`](../packages/cli/SKILL.md).
@@ -102,7 +104,8 @@ or losing a progress read does not cancel accepted work.
    Nothing is focused.
 4. `herdr agent start` runs the harness with native flags only (model/thinking
    overrides; Claude also gets a chosen `--session-id`), then `herdr agent
-   prompt` submits the prompt with the Lovelace context block.
+   prompt` submits the prompt. Prompts without a template ID get the Lovelace
+   context block appended; templates show it as `{{lovelace}}` instead.
 5. The session meta is recorded once Herdr detected the agent: `terminalRef`
    `{workspaceId,paneId}`, Herdr `agentName`, `status`/`agentState` and any
    native identity Herdr already reports. The draft is marked launched.

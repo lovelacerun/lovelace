@@ -7,24 +7,24 @@ description: Control the local Lovelace work orchestrator from an agent session 
 
 Lovelace is the local work orchestrator that launched this session. It manages
 *work items* (units of work), prepares git *worktrees* for the repositories a
-work item touches, and tracks agent sessions. Your launch prompt contains a
-"Lovelace context" section with the work item id and the exact command to
-invoke this CLI. Use that command even if `lovelace` is on PATH: it targets the
-server that launched you.
+work item touches, and tracks agent sessions.
+
+Run the commands below with the same command you used to print this guide
+(`lovelace agent-guide`); it targets the server that launched you. Inside any
+workspace of the work item, `lovelace work <command>` finds the work item from
+the working directory, so you never need its ID. Outside one, use
+`lovelace work-items <command> <work-item-id> ...` instead.
 
 The CLI talks to the Lovelace daemon on `127.0.0.1` (default port 27421). All
 agent/work-item commands print JSON without prompts or a TUI. No arguments
 prints help. Only explicit `lovelace tui` opens the dashboard. If a command
-fails with a connection error, the daemon is
-not running — report that to the user instead of retrying.
-
-Substitute `lovelace` below with the invocation command from your launch
-prompt (for example `LOVELACE_PORT=27421 /opt/homebrew/opt/lovelace/bin/lovelace`).
+fails with a connection error, the daemon is not running — report that to the
+user instead of retrying.
 
 ## Inspect the current work item
 
 ```sh
-lovelace work-items show <work-item-id>
+lovelace work show
 ```
 
 Returns the work item plus its metas: attached repositories (with
@@ -38,7 +38,7 @@ worktree next to your current one and installs dependencies automatically.
 
 ```sh
 lovelace repos                                     # discover repo names known to Lovelace
-lovelace work-items add-worktree <work-item-id> <repo-name> [--branch <name>] [--base <branch>]
+lovelace work add-worktree <repo-name> [--branch <name>] [--base <branch>]
 lovelace doctor                                    # inspect Coriol/COW capabilities
 ```
 
@@ -59,7 +59,7 @@ The path is a direct Git worktree prepared by Coriol. The call is idempotent:
 re-running it with the same repo and `--branch` reuses the existing workspace.
 Slow preparation is polled; the final output stays JSON. Concurrent retries
 join preparation rather than repeating it. Inspect state with
-`lovelace work-items workspaces <work-item-id>` (`pending`, `preparing`, `ready` or
+`lovelace work workspaces` (`pending`, `preparing`, `ready` or
 `failed`, with phase/error details). A timeout or interrupted wait does not
 cancel server preparation; inspect before retrying. Use only `ready` workspaces.
 A partial failure is returned as data; retrying keeps ready siblings.
@@ -70,7 +70,7 @@ catalog, then retry.
 ## Attach Jira issues
 
 ```sh
-lovelace work-items attach-jira <work-item-id> <issue-key-or-browse-url>
+lovelace work attach-jira <issue-key-or-browse-url>
 ```
 
 Jira links are optional and can be attached after an impromptu session starts.
@@ -83,8 +83,8 @@ After pushing a branch and opening a GitHub pull request (for example with
 PR status and CI/build status for the user.
 
 ```sh
-lovelace work-items attach-pr <work-item-id> <pr-url>
-lovelace work-items prs <work-item-id> --refresh
+lovelace work attach-pr <pr-url>
+lovelace work prs --refresh
 ```
 
 `attach-pr` also accepts `owner/repo#number` shorthand. Use `detach-pr` only if
@@ -93,8 +93,8 @@ a PR was attached to the wrong work item.
 ## Edit the work item title or notes
 
 ```sh
-lovelace work-items update <work-item-id> --title <text>
-lovelace work-items update <work-item-id> --notes-file <path>
+lovelace work update --title <text>
+lovelace work update --notes-file <path>
 ```
 
 Pass `--title`, and/or exactly one of `--notes <text>`, `--notes-file <path>`
@@ -104,13 +104,13 @@ are local only; they never change the Jira issue or pull request.
 ## Mark the work item done
 
 ```sh
-lovelace work-items done <work-item-id>
+lovelace work done
 ```
 
 Only do this when the work is actually complete or the user explicitly asks
 for it. Marking done makes the work item's worktrees eligible for explicit
 cleanup after a retention period, so never mark done while changes are
-unpushed or uncommitted. Other states are available via `work-items start` (active); a
+unpushed or uncommitted. Other states are available via `work start` (active); a
 work item can also be created ad hoc with `work-items create <title>` (it starts active).
 
 ## Other useful commands
@@ -127,14 +127,14 @@ pass an explicit command. Errors are JSON on stderr with a nonzero exit code.
 ## Agent sessions
 
 ```sh
-lovelace work-items launch <work-item-id> <pi|codex|claude> (--prompt <text> | --prompt-file <path>)
-lovelace work-items open <work-item-id> <session-meta-id>
+lovelace work launch <pi|codex|claude> (--prompt <text> | --prompt-file <path>)
+lovelace work open <session-meta-id>
 ```
 
 Launch starts a new agent session in the work item's Herdr workspace; pass
 exactly one of `--prompt` or `--prompt-file`. It never focuses the new tab.
 `open` focuses a running session in Herdr, or continues an ended session's
 exact native conversation; it fails if none is recorded for the session.
-Reactivate inactive work explicitly with `work-items start` first. Inspect
+Reactivate inactive work explicitly with `work start` first. Inspect
 work/session state after uncertain replies; never blindly re-run a launch.
 Use these only when the user asks.

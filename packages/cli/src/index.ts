@@ -4,10 +4,10 @@ import { parseArgs } from 'node:util';
 import type { WorkItemDetails } from '@lovelace/core';
 import { client, request } from './http.js';
 import { launchTools, openTool } from './launch-tools.js';
-import { selfInvocation, shellQuote, skillPath, version } from './self.js';
+import { agentCommand, agentGuide, version } from './self.js';
 
 /** Commands that talk to the server start it on demand. */
-const SERVER_COMMANDS = new Set(['tui', 'dashboard', 'status', 'repos', 'inbox', 'work-items', 'cleanup', 'doctor', 'cache', 'github', 'jira']);
+const SERVER_COMMANDS = new Set(['tui', 'dashboard', 'status', 'repos', 'inbox', 'work-items', 'cleanup', 'doctor', 'cache', 'github', 'jira', 'work']);
 
 async function main() {
   const args = process.argv.slice(2).filter((value, index) => !(index === 0 && value === '--'));
@@ -31,17 +31,18 @@ async function main() {
         const { serverCommand } = await import('./background.js');
         return printJson(await serverCommand(subcommand));
       }
-      const { startServer } = await import('@lovelace/server');
+      const { findExecutable, startServer } = await import('@lovelace/server');
       return startServer({
         version,
-        // Pin the port so callbacks reach this server even when a worktree's direnv sets another.
-        agentCli: port => ({ command: `LOVELACE_PORT=${port} ${selfInvocation().map(shellQuote).join(' ')}`, skillPath }),
+        agentCli: port => ({ command: agentCommand(port, findExecutable('lovelace')) }),
       });
     }
     case 'init': {
       const { init } = await import('./init.js');
       return init();
     }
+    case 'agent-guide':
+      return process.stdout.write(agentGuide());
     case 'version':
     case '--version':
       return console.log(version);
@@ -57,6 +58,8 @@ async function main() {
       return printJson(await request('/inbox'));
     case 'work-items':
       return handleWorkItems(subcommand, rest);
+    case 'work':
+      return handleCurrentWork(subcommand, rest);
     case 'cleanup':
       return printJson(await request('/workspaces/cleanup', { method: 'POST' }));
     case 'doctor':
@@ -218,6 +221,15 @@ async function handleWorkItems(subcommand: string | undefined, args: string[]) {
     default:
       return printJson(await request('/work-items'));
   }
+}
+
+/** Work-item commands that take the ID first; `work` resolves it from the current directory. */
+const CURRENT_WORK_COMMANDS = new Set(['show', 'update', 'start', 'done', 'attach-pr', 'detach-pr', 'attach-jira', 'detach-jira', 'prs', 'add-worktree', 'workspaces', 'launch', 'open']);
+
+async function handleCurrentWork(subcommand = 'show', args: string[]) {
+  if (!CURRENT_WORK_COMMANDS.has(subcommand)) throw new Error(`Usage: lovelace work [${[...CURRENT_WORK_COMMANDS].join('|')}] ...`);
+  const current = (await request(`/work-items/current?path=${encodeURIComponent(process.cwd())}`)) as { workItem: { id: string } };
+  return handleWorkItems(subcommand, [current.workItem.id, ...args]);
 }
 
 const UPDATE_USAGE = 'Usage: lovelace work-items update <id> [--title <text>] [--notes <text> | --notes-file <path> | --clear-notes]';
@@ -453,6 +465,11 @@ Setup:
   server start|stop|restart|status
                      Manage the background server; other commands start it when needed
   version             Print the Lovelace version
+  agent-guide         Print the usage guide for agents that Lovelace launched
+
+Current work item (resolved from the working directory inside a Lovelace workspace):
+  work [show]         Show the work item with its workspaces, sessions and pull requests
+  work <command> ...  Any work-items command below that takes <id>, without the <id>
 
 Commands:
   status              Show server status

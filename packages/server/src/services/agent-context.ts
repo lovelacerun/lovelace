@@ -1,62 +1,39 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import type { AgentCli, WorkItem } from '@lovelace/core';
+import type { AgentCli } from '@lovelace/core';
 
 interface ContextLogger {
   warn(...args: unknown[]): void;
 }
 
+interface ContextConfig {
+  lovelaceDir: string;
+  agentCli?: AgentCli;
+}
+
 /**
- * Appended to agent prompts at launch so the agent can call back into
- * Lovelace (add repos to the work item, mark it done, ...).
+ * Tells the agent how to call back into Lovelace. Built-in templates show it
+ * as `{{lovelace}}` so the user sees and may remove it; free-text prompts get
+ * it appended at launch.
  *
  * Users can override this template at `<lovelaceDir>/prompts/agent-context.md`.
- * Available variables: {{workItemId}}, {{workItemTitle}}, {{cliCommand}}, {{skillPath}}.
+ * Available variables: {{cli}}.
  */
-const DEFAULT_TEMPLATE = `
+const DEFAULT_TEMPLATE = `## Lovelace
 
----
+This session belongs to a Lovelace work item. Run \`{{cli}} agent-guide\` before your first Lovelace command. From any of its workspaces, \`{{cli}} work show\` prints the work item, its repositories and sessions. Attach pull requests you open with \`{{cli}} work attach-pr <url>\`.`;
 
-## Lovelace context
+/** The rendered context block, or '' when the server was started without a CLI (e.g. in tests). */
+export function renderAgentContext(config: ContextConfig, logger: ContextLogger): string {
+  const cli = config.agentCli;
+  if (!cli) return '';
+  return loadTemplate(config.lovelaceDir, logger).replaceAll('{{cli}}', cli.command).trim();
+}
 
-This session was launched by Lovelace for work item \`{{workItemId}}\` ("{{workItemTitle}}").
-
-Invoke the Lovelace CLI as follows; it targets the server that launched this session:
-
-    {{cliCommand}}
-
-Read the usage guide at {{skillPath}} before first use. Most useful commands:
-
-- \`{{cliCommand}} work-items show {{workItemId}}\` — inspect this work item and its prepared workspaces
-- \`{{cliCommand}} work-items add-worktree {{workItemId}} <repo-name> [--branch <name>] [--base <branch>]\` — attach another repository, or another branch of one (e.g. stacked on --base); Lovelace prepares a warm worktree and reports its path
-- \`{{cliCommand}} work-items attach-pr {{workItemId}} <pr-url>\` — after opening a pull request, attach it so Lovelace tracks its status
-- \`{{cliCommand}} work-items done {{workItemId}}\` — mark this work item as done
-- \`{{cliCommand}} repos\` — list repositories known to Lovelace
-`;
-
-/**
- * Appends the Lovelace agent context block to a launch prompt.
- *
- * Returns the prompt unchanged when the server was started without a CLI
- * (e.g. in tests) so a missing callback never blocks a tool launch.
- */
-export function appendAgentContext(
-  prompt: string | null,
-  workItem: WorkItem,
-  serverConfig: { lovelaceDir: string; agentCli?: AgentCli },
-  logger: ContextLogger,
-): string | null {
-  const cli = serverConfig.agentCli;
-  if (!cli) return prompt;
-
-  const context = loadTemplate(serverConfig.lovelaceDir, logger)
-    .replaceAll('{{workItemId}}', workItem.id)
-    .replaceAll('{{workItemTitle}}', workItem.title)
-    .replaceAll('{{cliCommand}}', cli.command)
-    .replaceAll('{{skillPath}}', cli.skillPath);
-
-  const base = prompt ?? '';
-  return `${base}${context}`;
+/** Appends the context block to a free-text launch prompt, keeping the prompt exact. */
+export function appendAgentContext(prompt: string, config: ContextConfig, logger: ContextLogger): string {
+  const context = renderAgentContext(config, logger);
+  return context ? `${prompt}\n\n${context}` : prompt;
 }
 
 function loadTemplate(lovelaceDir: string, logger: ContextLogger): string {
