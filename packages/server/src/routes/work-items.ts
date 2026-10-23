@@ -14,6 +14,7 @@ import {
   refreshPullRequestsForWorkItem,
 } from '../services/pull-request-service.js';
 import { attachJiraIssueToWorkItem, detachJiraIssueFromWorkItem, parseJiraIssueRef } from '../services/tracker-item-service.js';
+import { workItemIdForPath } from '../services/task-workspace-service.js';
 import { beginRepositoryPreparation } from '../services/work-start-service.js';
 import { renameWorkItemWorkspace } from '../herdr/work-item-workspace.js';
 import type { RouteDeps } from './deps.js';
@@ -38,6 +39,21 @@ export function registerWorkItemRoutes(app: FastifyInstance, deps: RouteDeps) {
   app.get('/work-items', async (request) => {
     const state = (request.query as { state?: WorkItemState }).state;
     return database.listWorkItems(isWorkItemState(state) ? state : undefined);
+  });
+
+  app.get('/work-items/current', async (request, reply) => {
+    const path = (request.query as { path?: unknown }).path;
+    if (!isNonEmptyString(path)) {
+      reply.code(400);
+      return { ok: false, error: 'path query parameter required' };
+    }
+    const id = workItemIdForPath(workspaceManager.workspacesDirectory, path, database.listWorkItems().map(workItem => workItem.id));
+    const details = id ? getWorkItemDetails(database, id) : null;
+    if (!details) {
+      reply.code(404);
+      return { ok: false, error: `${path} is not inside a Lovelace work item workspace` };
+    }
+    return details;
   });
 
   app.get('/work-items/:id', async (request, reply) => {
