@@ -109,7 +109,7 @@ async function inspectWorktree(repositoryPath: string, workspacePath: string): P
     git(repositoryPath, ['rev-parse', '--path-format=absolute', '--git-common-dir']),
   ]);
   if (!topLevel || !candidateCommonDir || !repositoryCommonDir) return null;
-  if (!samePath(topLevel, workspacePath) || !samePath(candidateCommonDir, repositoryCommonDir)) return null;
+  if (!(await samePath(topLevel, workspacePath)) || !(await samePath(candidateCommonDir, repositoryCommonDir))) return null;
   return { branchName: await git(workspacePath, ['symbolic-ref', '--quiet', '--short', 'HEAD']) };
 }
 

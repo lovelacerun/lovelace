@@ -235,6 +235,30 @@ test('repairs the origin URL of an existing managed clone', async () => {
   }
 });
 
+test('refuses to adopt a checkout of another repository at the workspace path', async () => {
+  const fixture = await createRemoteFixture();
+  const manager = new WorkspaceManager({ root: fixture.managerRoot, toolchains: [] });
+
+  try {
+    const path = join(manager.workspacesDirectory, 'task-1234', 'repository');
+    await mkdir(join(path, '..'), { recursive: true });
+    await git(fixture.root, ['clone', fixture.originPath, path]);
+    await git(path, ['switch', '-c', 'work/task-1234']);
+
+    await assert.rejects(
+      manager.createWorkspace({
+        workspaceId: 'task-1234',
+        repository: { ...repository, cloneUrl: fixture.originPath },
+        directoryName: 'repository',
+        branchName: 'work/task-1234',
+      }),
+      /not a worktree of the managed repository/,
+    );
+  } finally {
+    await rm(fixture.root, { recursive: true, force: true });
+  }
+});
+
 function concurrencyProbe() {
   let active = 0;
   const probe = {
