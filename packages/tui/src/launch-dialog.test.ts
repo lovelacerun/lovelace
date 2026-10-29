@@ -78,9 +78,6 @@ test('loads full Jira context and a default template in the same dialog; selecti
   assert.equal(f.modal.visibleRepositories.length, 3, 'archived repos can explicitly be included');
   await f.modal.chooseTemplate('refine');
   assert.deepEqual(f.state.draft.repoIds, ['0', '1']);
-  await f.modal.chooseTemplate();
-  assert.equal(f.state.draft.promptId, undefined);
-  assert.equal(f.state.draft.text, '  Editable preview\n', 'manual prompt preserves edits');
   f.modal.dispose();
 });
 

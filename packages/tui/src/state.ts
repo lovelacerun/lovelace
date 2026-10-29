@@ -4,14 +4,7 @@ import type {
   SidebarSide, WorkItemDetails, WorkItemState, WorkItemSummary,
 } from '@lovelace/core';
 
-/** Home's agent, thinking and model fields below the quick-start editor, in Tab order. */
-export const LAUNCH_FOCUS = ['launch-agent', 'launch-thinking', 'launch-model'] as const;
-export type LaunchFocus = (typeof LAUNCH_FOCUS)[number];
-export type FocusTarget = 'content' | 'sidebar' | 'editor' | LaunchFocus;
-
-export function isLaunchFocus(focus: FocusTarget): focus is LaunchFocus {
-  return (LAUNCH_FOCUS as readonly string[]).includes(focus);
-}
+export type FocusTarget = 'content' | 'sidebar';
 
 export interface NavigationEntry { kind: Route['kind']; id: string }
 type SidebarEntry = NavigationEntry & { label: string };
@@ -212,8 +205,7 @@ export class AppState {
   }
 
   setFocus(target: FocusTarget): void {
-    const homeOnly = target === 'editor' || isLaunchFocus(target);
-    this.focus = homeOnly && this.route.kind !== 'home' ? 'content' : target;
+    this.focus = target;
     this.changed();
   }
 
@@ -322,9 +314,7 @@ export class AppState {
         return;
       }
     }
-    const order: FocusTarget[] = this.route.kind === 'home' ? ['content', 'sidebar', 'editor', ...LAUNCH_FOCUS] : ['content', 'sidebar'];
-    if (!this.layout.sidebar) order.splice(1, 1);
-    this.focus = order[(order.indexOf(this.focus) + direction + order.length) % order.length]!;
+    if (this.layout.sidebar) this.focus = this.focus === 'content' ? 'sidebar' : 'content';
     if (this.route.kind !== 'home' && this.focus === 'content') {
       this.contentSelectedIndex = direction === 1 ? 0 : Math.max(0, contentCount - 1);
     }

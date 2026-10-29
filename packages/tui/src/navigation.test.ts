@@ -51,8 +51,8 @@ it('Home preserves focus-group navigation; empty detail views and stale indices 
   assert.equal(state.pendingConfirm, null);
 });
 
-it('decodes Shift+Tab in content, sidebar and editor without stealing pasted text', () => {
-  for (const focus of ['content', 'sidebar', 'editor'] as const) {
+it('decodes Shift+Tab in content and sidebar', () => {
+  for (const focus of ['content', 'sidebar'] as const) {
     assert.deepEqual(decode('\x1b[Z', { focus }), { kind: 'tab', direction: -1 });
     assert.deepEqual(decode('\t', { focus }), { kind: 'tab' });
   }

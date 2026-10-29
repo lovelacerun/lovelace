@@ -1,14 +1,14 @@
 import type { Component, OverlayHandle, TuiAltScreen, TuiMouseEvent, TuiMouseEventResult } from '@earendil-works/pi-tui';
-import { compositeTuiLine, Editor, isKeyRelease, matchesKey, visibleWidth } from '@earendil-works/pi-tui';
+import { compositeTuiLine, isKeyRelease, matchesKey, visibleWidth } from '@earendil-works/pi-tui';
 import type { LovelaceClient } from '@lovelace/client';
 import type { SidebarSide } from '@lovelace/core';
 
 import { AppState } from './state.js';
 import { openBrowser } from './browser.js';
-import { band, barBg, canvas, bold, accent, muted, editorTheme, faint, icons, panelBg, danger, reset, splitPaneTheme } from './theme.js';
-import { LINK_END, padRight, PasteTracker, replaceEditorText, safeText, SplitPane, truncate } from '@lovelace/tui-components';
+import { band, barBg, canvas, bold, accent, muted, faint, icons, panelBg, danger, reset, splitPaneTheme } from './theme.js';
+import { LINK_END, padRight, safeText, SplitPane, truncate } from '@lovelace/tui-components';
 import {
-  COMPACT_ROWS, CONTENT_MIN_WIDTH, contentGutter, DOCK_MIN_ROWS, MIN_HEIGHT, MIN_WIDTH, responsiveSidebarWidth,
+  COMPACT_ROWS, CONTENT_MIN_WIDTH, contentGutter, MARGIN_MIN_ROWS, MIN_HEIGHT, MIN_WIDTH, responsiveSidebarWidth,
   SIDEBAR_MIN_WIDTH,
 } from './layout.js';
 import { parseClickTarget } from './clickable.js';
@@ -16,14 +16,12 @@ import { connectionStatus, fitChips, helpChips, renderConfirmDialog } from './co
 import { keyChip } from './key-hints.js';
 import { splitIssueKey } from './views/common.js';
 import { decode } from './keymap.js';
-import { handleKey, handleAction, startReview, submitLaunch, type ControllerDeps } from './controller.js';
+import { handleKey, handleAction, submitLaunch, type ControllerDeps } from './controller.js';
 import { errorMessage } from './errors.js';
 import { renderPage } from './views/page.js';
 import { renderSidebar } from './views/sidebar.js';
 import type { Document } from './views/common.js';
 import { LaunchDialog, type LaunchSubject } from './launch-dialog.js';
-import { launchField, launchFocus } from './launch-options.js';
-import { QuickStartDock } from './quick-start-dock.js';
 import { AppRefresh } from './refresh.js';
 
 interface AppRootOptions {
@@ -37,24 +35,21 @@ interface AppRootOptions {
 }
 
 /**
- * Root component. Composes sidebar, the current route's page and the Home
- * dock into the terminal viewport, and owns input routing and the launch dialog.
+ * Root component. Composes sidebar and the current route's page into the
+ * terminal viewport, and owns input routing and the launch dialog.
  */
 export class AppRoot implements Component {
   readonly state: AppState;
   readonly tui: TuiAltScreen;
   readonly client: LovelaceClient;
   private readonly serverUrl: string;
-  readonly editor: Editor;
   /** The open launch dialog, if any. */
   private overlay?: { dialog: LaunchDialog; handle: OverlayHandle };
   private readonly refresh: AppRefresh;
-  private readonly dock: QuickStartDock;
   private removeInputListener?: () => void;
   private quitResolver?: () => void;
   private stopped = false;
   private readonly lifetime = new AbortController();
-  private readonly paste = new PasteTracker();
   private readonly openUrl: (url: string) => Promise<void>;
   /** Size of the last frame's sidebar/content body; 0 while the terminal is too small. */
   private body = { cols: 0, height: 0 };
@@ -71,14 +66,12 @@ export class AppRoot implements Component {
       onInvalidate: () => { if (!this.stopped) this.tui.requestRender(); },
     });
 
-    this.editor = new Editor(this.tui, editorTheme);
-    this.dock = new QuickStartDock(this.state, this.editor, prompt => void this.launch(prompt));
     this.refresh = new AppRefresh(this.state, this.client, this.lifetime.signal);
     this.split = new SplitPane(
       {
         render: width => this.renderContent(width),
         handleMouse: event => this.handleContentMouse(event),
-        invalidate: () => this.editor.invalidate(),
+        invalidate() {},
       },
       {
         render: width => this.renderSidebarPane(width),
@@ -108,7 +101,6 @@ export class AppRoot implements Component {
     this.refresh.stop();
     this.removeInputListener?.();
     this.removeInputListener = undefined;
-    this.editor.focused = false;
     this.closeOverlay();
     this.tui.stop({ preserveScreen });
   }
@@ -120,7 +112,6 @@ export class AppRoot implements Component {
   }
 
   invalidate(): void {
-    this.editor.invalidate();
     this.tui.requestRender();
   }
 
@@ -143,12 +134,6 @@ export class AppRoot implements Component {
     const sidebar = this.split.layout(cols).secondaryWidth > 0;
     this.state.layout = { sidebar, compact: this.body.height < COMPACT_ROWS };
     if (!sidebar && this.state.focus === 'sidebar') this.state.focus = 'content';
-
-    // Sync editor contents against the active draft before every render so
-    // navigation across drafts is always reflected visually. No-op when the
-    // text already matches.
-    this.syncEditor();
-    this.applyFocusToTui();
 
     this.split.setSide(this.state.sidebarSide === 'left' ? 'start' : 'end');
     // Every row is painted with the theme, independent of the terminal's own colours.
@@ -189,19 +174,16 @@ export class AppRoot implements Component {
     return left + right;
   }
 
-  /** The current view, scrolled to its selection, above the Home dock. */
+  /** The current page, scrolled to its selection. */
   private renderContent(width: number): string[] {
     const height = this.body.height;
     // Breathing room: a top margin and a generous gutter, dropped first on small screens.
-    const roomy = !this.state.layout.compact;
     const gutter = contentGutter(width);
-    const top = height >= DOCK_MIN_ROWS ? [''] : [];
-    const panelWidth = Math.max(1, width - gutter * 2);
-    const document = renderPage(this.state, panelWidth);
-    const editorLines = this.dock.render(panelWidth, roomy, height);
-    const viewportHeight = Math.max(0, height - editorLines.length - top.length);
-    const contentLines = padColumn(this.applyScroll(document, viewportHeight), viewportHeight);
-    return padColumn([...top, ...contentLines, ...editorLines].map(line => ' '.repeat(gutter) + line), height);
+    const top = height >= MARGIN_MIN_ROWS ? [''] : [];
+    const document = renderPage(this.state, Math.max(1, width - gutter * 2));
+    const viewportHeight = Math.max(0, height - top.length);
+    const contentLines = this.applyScroll(document, viewportHeight);
+    return padColumn([...top, ...contentLines].map(line => ' '.repeat(gutter) + line), height);
   }
 
   /** Navigation remains a stable landmark during first load and disconnection. */
@@ -219,7 +201,7 @@ export class AppRoot implements Component {
       const status = `${danger}Offline (${this.state.dashboardData ? 'last-known' : 'no'} data)${reset}`;
       return ' ' + fitChips({ status, chips: [keyChip('r', 'retry'), keyChip('q', 'quit')] }, width);
     }
-    return ' ' + fitChips(helpChips(this.state, this.dock.launchOptions.openField !== undefined), width);
+    return ' ' + fitChips(helpChips(this.state), width);
   }
 
   private applyScroll(document: Document, viewportHeight: number): string[] {
@@ -254,11 +236,6 @@ export class AppRoot implements Component {
 
   private handleContentMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
     if (event.type !== 'click' || event.button !== 'left') return this.handleWheel(event, 'content');
-    const hit = this.dock.hit(event.y);
-    if (hit === 'options') this.state.setFocus(launchField(this.state.focus) ? this.state.focus : launchFocus('agent'));
-    else if (hit === 'editor') this.startNew();
-    else if (this.state.focus === 'editor' || launchField(this.state.focus)) this.state.setFocus('content');
-    this.applyFocusToTui();
     return { handled: true };
   }
 
@@ -267,7 +244,6 @@ export class AppRoot implements Component {
     if (event.type !== 'wheel') return undefined;
     if (this.state.focus !== focus) this.state.setFocus(focus);
     this.state.move(Math.sign(event.wheelDelta ?? 0), this.contentActionCount());
-    this.applyFocusToTui();
     return { handled: true };
   }
 
@@ -286,12 +262,6 @@ export class AppRoot implements Component {
       this.overlay.dialog.openLink(link);
       return;
     }
-    const field = link.kind === 'modal' && !this.state.pendingConfirm ? this.dock.launchOptions.openLink(link.data) : undefined;
-    if (field) {
-      this.state.setFocus(launchFocus(field));
-      this.applyFocusToTui();
-      return;
-    }
     if (link.kind === 'key') {
       this.handleRawInput(link.data);
       return;
@@ -306,7 +276,6 @@ export class AppRoot implements Component {
     }
     this.state.contentSelectedIndex = link.index;
     this.state.setFocus('content');
-    this.applyFocusToTui();
     void this.dispatchContentEnter();
   }
 
@@ -318,36 +287,18 @@ export class AppRoot implements Component {
       this.overlay.dialog.handleInput(data);
       return { consume: true };
     }
-    // Paste chunks containing Enter/Esc/Tab are data, not application commands.
-    if (this.state.focus === 'editor' && this.paste.feed(data)) {
-      this.editor.handleInput(data);
-      this.tui.requestRender();
-      return { consume: true };
-    }
     // Kitty-protocol hosts (e.g. Herdr) also report key releases; only presses act.
     if (isKeyRelease(data)) return { consume: true };
-    // A launch field takes its keys first; Tab, Esc and keys of a closed field fall through.
-    const field = launchField(this.state.focus);
-    if (field && !this.state.pendingConfirm && this.dock.launchOptions.handleInput(field, data)) {
-      this.tui.requestRender();
-      return { consume: true };
-    }
     const intent = decode(data, {
       focus: this.state.focus,
       pendingConfirm: this.state.pendingConfirm !== null,
     });
 
     if (intent.kind === 'ignored') return undefined;
-    if (intent.kind === 'editor-input') {
-      this.dock.handleInput(intent.data);
-      this.tui.requestRender();
+    if (intent.kind === 'new') {
+      this.openLaunchDialog();
       return { consume: true };
     }
-    if (intent.kind === 'focus-editor') {
-      this.startNew();
-      return { consume: true };
-    }
-    // The editor owns its Enter; elsewhere Enter opens the selection.
     if (intent.kind === 'enter' && this.state.focus !== 'sidebar') {
       void this.dispatchContentEnter();
       return { consume: true };
@@ -358,11 +309,7 @@ export class AppRoot implements Component {
       this.refresh.refreshDetails();
     } else {
       handleKey(this.state, intent, this.makeDeps(), this.contentActionCount());
-      if (this.stopped) return { consume: true };
     }
-    // Keep editor focus state and text synced with any navigation side-effect.
-    this.applyFocusToTui();
-    this.syncEditor();
     return { consume: true };
   }
 
@@ -371,9 +318,6 @@ export class AppRoot implements Component {
     const action = doc.actions[this.state.contentSelectedIndex];
     if (!action) return;
     await handleAction(this.state, action, this.makeDeps());
-    if (this.stopped) return;
-    this.syncEditor();
-    this.applyFocusToTui();
   }
 
   private contentActionCount(): number {
@@ -391,72 +335,21 @@ export class AppRoot implements Component {
       openLaunchDialog: () => this.openLaunchDialog(),
       submitLaunch: prompt => this.launch(prompt),
       openUrl: this.openUrl,
-      resetEditor: () => {
-        replaceEditorText(this.editor, '');
-        this.state.setDraft({ text: '' });
-      },
-      focusEditor: () => this.startNew(),
       invalidate: () => { if (!this.stopped) this.tui.requestRender(); },
       quit: () => this.quit(),
     };
   }
 
-  /** `n`: Home focuses the dock, Jira and work items open the launch dialog, reviews start. */
-  private startNew(): void {
-    const route = this.state.route;
-    if (route.kind === 'review') {
-      if (!this.state.draft.requestId) void startReview(this.state, this.makeDeps());
-    } else if (route.kind === 'home') {
-      this.state.setFocus('editor');
-      this.applyFocusToTui();
-    } else if (route.kind === 'jira' && this.state.draft.requestId) {
-      return;
-    } else {
-      this.openLaunchDialog();
-    }
-  }
-
-  /** Keep pi-tui focus + the editor's `focused` flag in sync with AppState. */
-  private applyFocusToTui(): void {
-    if (this.overlay) {
-      this.editor.focused = false;
-      return; // The native overlay remains the keyboard focus owner.
-    }
-    if (this.state.focus === 'editor' && this.state.route.kind === 'home') {
-      this.tui.setFocus(this.editor);
-      this.editor.focused = true;
-    } else {
-      this.tui.setFocus(null);
-      this.editor.focused = false;
-    }
-  }
-
-  private syncEditor(): void {
-    if (!this.overlay) this.dock.sync();
-  }
-
-  /** Starting work on the open Jira issue, or another session on the open work item. */
+  /**
+   * `n` on any page: new work from Home, work on a Jira issue, a review of a
+   * pull request, or another session on an active work item.
+   */
   private openLaunchDialog(): void {
     if (this.overlay || this.state.mutationInFlight) return;
-    const route = this.state.route;
-    let subject: LaunchSubject;
-    if (route.kind === 'jira') {
-      if (this.state.draft.requestId) {
-        this.state.setError('Resend or discard (x) the unanswered launch before changing its template or repositories.');
-        return;
-      }
-      subject = { kind: 'issue', issue: route.details ?? route.issue };
-    } else if (route.kind === 'work' && route.details) {
-      if (route.details.workItem.state !== 'active') {
-        this.state.setError('Reactivate local work explicitly (press a, then y) before starting a session.');
-        return;
-      }
-      if (this.state.draft.requestId) {
-        this.state.setError('Resend or discard (x) the unanswered launch before starting another session.');
-        return;
-      }
-      subject = { kind: 'session', title: route.details.workItem.title };
-    } else {
+    const subject = this.launchSubject();
+    if (!subject) return;
+    if (this.state.draft.requestId) {
+      this.state.setError('Resend or discard (x) the unanswered launch before starting another.');
       return;
     }
     const dialog = new LaunchDialog({
@@ -467,8 +360,24 @@ export class AppRoot implements Component {
     });
     const handle = this.tui.showOverlay(dialog, { width: '96%', maxHeight: '96%', margin: 1, anchor: 'center' });
     this.overlay = { dialog, handle };
-    this.editor.focused = false;
     void dialog.load();
+  }
+
+  private launchSubject(): LaunchSubject | undefined {
+    const route = this.state.route;
+    if (route.kind === 'home') return { kind: 'home' };
+    if (route.kind === 'jira') return { kind: 'issue', issue: route.details ?? route.issue };
+    if (route.kind === 'review') {
+      if (route.review.repoId) return { kind: 'review', review: route.review, repoId: route.review.repoId };
+      this.state.setError(`${route.review.repository} is not in the repository catalog.`);
+      return undefined;
+    }
+    if (!route.details) return undefined;
+    if (route.details.workItem.state !== 'active') {
+      this.state.setError('Reactivate local work explicitly (press a, then y) before starting a session.');
+      return undefined;
+    }
+    return { kind: 'work', details: route.details };
   }
 
   private closeOverlay(): void {
@@ -478,8 +387,7 @@ export class AppRoot implements Component {
     overlay.dialog.dispose();
     overlay.handle.hide();
     if (!this.stopped) {
-      this.syncEditor();
-      this.applyFocusToTui();
+      this.tui.setFocus(null);
       this.tui.requestRender();
     }
   }
@@ -493,9 +401,6 @@ export class AppRoot implements Component {
     // Accepted launches poll on their work item; no completion callback can
     // navigate away from another draft or task the operator opens meanwhile.
     this.refresh.refreshDetails();
-    // Reflect state back onto the editor contents.
-    this.syncEditor();
-    this.applyFocusToTui();
     return accepted;
   }
 

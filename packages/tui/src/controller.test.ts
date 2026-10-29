@@ -57,8 +57,6 @@ function makeDeps(overrides: Partial<Omit<ControllerDeps, 'client'>> & { handler
     refreshDetails: () => {},
     submitLaunch: async () => true,
     openUrl: async () => {},
-    resetEditor: () => {},
-    focusEditor: () => {},
     invalidate: () => {},
     quit: () => {},
     ...rest,
@@ -79,13 +77,6 @@ describe('handleKey focus routing', () => {
     assert.equal(state.focus, 'content');
     handleKey(state, { kind: 'tab' }, makeDeps(), 0);
     assert.equal(state.focus, 'sidebar');
-    handleKey(state, { kind: 'tab' }, makeDeps(), 0);
-    assert.equal(state.focus, 'editor');
-    // The agent, thinking and model fields sit below the editor, in that order.
-    for (const field of ['launch-agent', 'launch-thinking', 'launch-model']) {
-      handleKey(state, { kind: 'tab' }, makeDeps(), 0);
-      assert.equal(state.focus, field);
-    }
     handleKey(state, { kind: 'tab' }, makeDeps(), 0);
     assert.equal(state.focus, 'content');
   });

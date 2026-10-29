@@ -18,7 +18,7 @@ export function renderJira(state: AppState, route: Extract<Route, { kind: 'jira'
   b.line();
   gap();
   if (state.draft.requestId) b.action(accent + icons.retry + reset + '  Resend unanswered launch', { kind: 'launch-retry' });
-  else b.action(accent + icons.start + reset + '  Start work', { kind: 'jira-setup' }, faint + 'Enter' + reset);
+  else b.action(accent + icons.start + reset + '  Start work', { kind: 'launch' }, faint + 'Enter' + reset);
   if (url) b.action(accent + icons.link + reset + '  Open in browser', { kind: 'open-url', url });
   if (state.draft.promptId || state.draft.repoIds?.length) b.line();
   if (state.draft.promptId) b.line(muted + '  Template  ' + reset + safeText(state.draft.promptId));

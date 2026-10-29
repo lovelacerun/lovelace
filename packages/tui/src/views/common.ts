@@ -6,8 +6,9 @@ import { padRight, safeText, truncate } from '@lovelace/tui-components';
 import { clickable } from '../clickable.js';
 
 export type Action = { kind: 'navigate'; entry: NavigationEntry } | { kind: 'session'; sessionId: string } |
-  { kind: 'jira-setup' } | { kind: 'review-start' } | { kind: 'launch-retry'; launchId?: string } | { kind: 'open-url'; url: string } |
-  { kind: 'edit' } | { kind: 'state'; state: WorkItemState };
+  /** Opens the launch dialog for the current page. */
+  { kind: 'launch' } | { kind: 'launch-retry'; launchId?: string } | { kind: 'open-url'; url: string } |
+  { kind: 'state'; state: WorkItemState };
 
 export interface Document { lines: string[]; actions: Action[]; selectedRow: number }
 

@@ -1,7 +1,7 @@
 import type { Component, Editor, TuiAltScreen, TuiMouseEvent, TuiMouseEventResult } from '@earendil-works/pi-tui';
 import { Input, isKeyRelease, matchesKey, stripTerminalSequences } from '@earendil-works/pi-tui';
 import type { LovelaceClient } from '@lovelace/client';
-import type { DashboardIssue, TrackerIssue, PromptTemplate, Repository } from '@lovelace/core';
+import { attachmentsOfType, type DashboardIssue, type DashboardReview, type PromptTemplate, type Repository, type StartWorkSource, type TrackerIssue, type WorkItemDetails } from '@lovelace/core';
 import type { AppState } from './state.js';
 import { filterRepositories } from './jira-start.js';
 import {
@@ -23,12 +23,22 @@ const repositoryFocus: DialogFocus[] = ['name', 'topics', 'selection', 'reposito
 const SPLIT_MIN_WIDTH = 56;
 
 /**
- * What the dialog starts: work on an issue, in repositories and from a
- * template chosen here, or another session in a work item's ready worktrees.
+ * What the dialog starts: new work from Home, work on an issue, a review of a
+ * pull request in its repository, or another session on an active work item.
  */
 export type LaunchSubject =
+  | { kind: 'home' }
   | { kind: 'issue'; issue: DashboardIssue | TrackerIssue }
-  | { kind: 'session'; title: string };
+  | { kind: 'review'; review: DashboardReview; repoId: string }
+  | { kind: 'work'; details: WorkItemDetails };
+
+/** Each subject's heading, start button and the template a blank prompt starts from. */
+const SUBJECTS: Record<LaunchSubject['kind'], { title: string; start: string; template: string }> = {
+  home: { title: 'New work', start: 'Start work', template: 'default' },
+  issue: { title: 'Start work', start: 'Start work', template: 'implement' },
+  review: { title: 'Start review', start: 'Start review', template: 'review' },
+  work: { title: 'New session', start: 'Start session', template: 'default' },
+};
 
 interface LaunchDialogOptions {
   tui: TuiAltScreen;
@@ -41,9 +51,10 @@ interface LaunchDialogOptions {
 }
 
 /**
- * The one launch dialog: a prompt above the shared agent, thinking and model
- * fields, plus repositories and templates when starting work on an issue. A
- * native overlay; its controls never navigate or dispatch dashboard shortcuts.
+ * The one launch dialog: repositories beside a template, an editable prompt
+ * and the shared agent, thinking and model fields. A review's repository and a
+ * work item's attached ones stay selected. A native overlay; its controls
+ * never navigate or dispatch dashboard shortcuts.
  */
 export class LaunchDialog implements Component {
   focused = true;
@@ -52,10 +63,10 @@ export class LaunchDialog implements Component {
   readonly topicFilter = new Input({ prompt: 'Topic: ', placeholder: 'infra, examplecom' });
   readonly editor: Editor;
   readonly launchOptions: LaunchOptionsRow;
-  readonly templateMenu = new Dropdown(selectTheme('template'), value => void this.chooseTemplate(value || undefined));
+  readonly templateMenu = new Dropdown(selectTheme('template'), value => void this.chooseTemplate(value));
   repositories: Repository[];
   templates: PromptTemplate[];
-  loading: boolean;
+  loading = true;
   renderingPrompt = false;
   refreshing = false;
   launching = false;
@@ -82,16 +93,21 @@ export class LaunchDialog implements Component {
   private readonly lifetime = new AbortController();
   private readonly draftKey: string;
   private subject: LaunchSubject;
-  private readonly focusOrder: DialogFocus[];
+  private readonly focusOrder: DialogFocus[] = ['name', 'topics', 'selection', 'repositories', 'template', 'prompt', ...LAUNCH_FIELDS, 'actions'];
+  /** Repositories that stay selected: the review's, or those the work item already has. */
+  private readonly fixedRepoIds: ReadonlySet<string>;
   private readonly abort = () => this.lifetime.abort();
 
   constructor(private readonly options: LaunchDialogOptions) {
     this.draftKey = options.state.draftKey;
-    this.subject = options.subject;
-    const issue = this.subject.kind === 'issue';
-    this.focus = issue ? 'repositories' : 'prompt';
-    this.focusOrder = [...(issue ? ['name', 'topics', 'selection', 'repositories', 'template'] as const : []), 'prompt', ...LAUNCH_FIELDS, 'actions'];
-    this.loading = issue;
+    const subject = this.subject = options.subject;
+    this.focus = subject.kind === 'issue' ? 'repositories' : 'prompt';
+    this.fixedRepoIds = new Set(subject.kind === 'review' ? [subject.repoId]
+      : subject.kind === 'work' ? attachmentsOfType(subject.details.attachments, 'worktree').filter(({ payload }) => payload.status !== 'cleaned').map(({ payload }) => payload.repoId)
+      : []);
+    // A review prepares its repository; a work item already has its own.
+    const draftRepoIds = options.state.draft.repoIds ?? [];
+    if (subject.kind === 'review' && !draftRepoIds.includes(subject.repoId)) this.setDraft({ repoIds: [subject.repoId, ...draftRepoIds] });
     this.repositories = options.state.repositories ?? [];
     this.templates = options.state.promptTemplates ?? [];
     this.templateId = options.state.draft.promptId;
@@ -122,15 +138,15 @@ export class LaunchDialog implements Component {
 
   private changed(): void { if (this.active) this.options.tui.requestRender(); }
 
-  /** Templates, repositories and the full issue for starting work; nothing for a session. */
+  /** Templates, repositories, harnesses and, for an issue, its full description. */
   async load(): Promise<void> {
     const subject = this.subject;
-    if (subject.kind !== 'issue') return;
     this.loading = true;
     const { client, state } = this.options;
     const signal = this.lifetime.signal;
     const [templates, repositories, issues, tools] = await Promise.allSettled([
-      client.prompts.list.query(undefined, { signal }), client.repositories.list.query(undefined, { signal }), client.tracker.issues.query(undefined, { signal }), client.tools.list.query(undefined, { signal }),
+      client.prompts.list.query(undefined, { signal }), client.repositories.list.query(undefined, { signal }),
+      subject.kind === 'issue' ? client.tracker.issues.query(undefined, { signal }) : Promise.resolve([]), client.tools.list.query(undefined, { signal }),
     ]);
     if (!this.active) return;
     let loadError: string | null = null;
@@ -140,9 +156,9 @@ export class LaunchDialog implements Component {
     }
     if (templates.status === 'fulfilled') state.promptTemplates = this.templates = templates.value;
     if (repositories.status === 'fulfilled') state.repositories = this.repositories = repositories.value;
-    if (issues.status === 'fulfilled') this.subject = { kind: 'issue', issue: issues.value.find(issue => issue.id === subject.issue.id) ?? subject.issue };
+    if (subject.kind === 'issue' && issues.status === 'fulfilled') this.subject = { kind: 'issue', issue: issues.value.find(issue => issue.id === subject.issue.id) ?? subject.issue };
     if (!state.draft.text.trim()) {
-      const template = this.templates.find(template => template.id === (state.draft.promptId ?? 'implement')) ?? this.templates[0];
+      const template = this.templates.find(template => template.id === (state.draft.promptId ?? SUBJECTS[subject.kind].template)) ?? this.templates[0];
       if (template) await this.chooseTemplate(template.id);
     }
     if (!this.active) return;
@@ -151,25 +167,15 @@ export class LaunchDialog implements Component {
     this.changed();
   }
 
-  async chooseTemplate(promptId?: string): Promise<void> {
-    const subject = this.subject;
-    if (!this.active || this.locked || subject.kind !== 'issue') return;
+  async chooseTemplate(promptId: string): Promise<void> {
+    if (!this.active || this.locked) return;
     const request = ++this.templateRequest;
     this.templateId = promptId;
-    if (!promptId) {
-      this.renderingPrompt = false;
-      this.setDraft({ promptId: undefined });
-      this.changed();
-      return;
-    }
     this.renderingPrompt = true;
     this.error = null;
     this.changed();
     try {
-      const rendered = await this.options.client.prompts.render.mutate({
-        promptId, title: `${subject.issue.key}: ${subject.issue.title}`,
-        sources: [{ sourceType: 'tracker-item', provider: 'jira', externalId: subject.issue.id, payload: subject.issue }],
-      }, { signal: this.lifetime.signal });
+      const rendered = await this.options.client.prompts.render.mutate({ promptId, ...this.templateInput }, { signal: this.lifetime.signal });
       if (!this.active || request !== this.templateRequest) return;
       // Rendered prompts embed provider text; it must not carry terminal links or controls.
       const content = stripTerminalSequences(rendered.content);
@@ -186,8 +192,34 @@ export class LaunchDialog implements Component {
     }
   }
 
+  /** The title and upstream records a template renders from. */
+  private get templateInput(): { title: string; sources: StartWorkSource[] } {
+    const subject = this.subject;
+    if (subject.kind === 'issue') {
+      return { title: `${subject.issue.key}: ${subject.issue.title}`,
+        sources: [{ sourceType: 'tracker-item', provider: 'jira', externalId: subject.issue.id, payload: subject.issue }] };
+    }
+    if (subject.kind === 'review') {
+      const { review } = subject;
+      return { title: `${review.repository}#${review.number}: ${review.title}`,
+        sources: [{ sourceType: 'change-request', provider: 'github', externalId: review.id, payload: review }] };
+    }
+    if (subject.kind === 'work') {
+      const { workItem, attachments } = subject.details;
+      const sources = attachments.flatMap((attachment): StartWorkSource[] => attachment.type === 'tracker-item' || attachment.type === 'change-request'
+        ? [{ sourceType: attachment.type, provider: attachment.provider, externalId: attachment.externalId, payload: attachment.payload }] : []);
+      return { title: workItem.title, sources };
+    }
+    return { title: SUBJECTS.home.title, sources: [] };
+  }
+
   private syncTemplateMenu(): void {
-    this.templateMenu.setItems([{ value: '', label: 'Manual prompt' }, ...this.templates.map(template => ({ value: template.id, label: template.title }))], this.templateId ?? '');
+    this.templateMenu.setItems(this.templates.map(template => ({ value: template.id, label: template.title })), this.templateId ?? SUBJECTS[this.subject.kind].template);
+  }
+
+  /** Chosen repositories, including those that stay selected. */
+  get selectedRepoIds(): Set<string> {
+    return new Set([...this.fixedRepoIds, ...this.options.state.draft.repoIds ?? []]);
   }
 
   get visibleRepositories(): Repository[] {
@@ -198,6 +230,11 @@ export class LaunchDialog implements Component {
 
   toggleRepository(repoId: string): void {
     if (this.locked || !this.repositories.some(repo => repo.id === repoId)) return;
+    if (this.fixedRepoIds.has(repoId)) {
+      this.error = this.subject.kind === 'review' ? "The pull request's repository stays selected." : 'Repositories already in the work item stay selected.';
+      this.changed();
+      return;
+    }
     const selected = this.options.state.draft.repoIds ?? [];
     if (!selected.includes(repoId) && selected.length >= 100) {
       this.error = 'Select at most 100 repositories.';
@@ -212,7 +249,7 @@ export class LaunchDialog implements Component {
   selectAll(): void {
     if (!this.active || this.locked) return;
     const selected = new Set(this.options.state.draft.repoIds ?? []);
-    for (const repo of this.visibleRepositories) selected.add(repo.id);
+    for (const repo of this.visibleRepositories) if (!this.fixedRepoIds.has(repo.id) || selected.has(repo.id)) selected.add(repo.id);
     if (selected.size > 100) {
       this.error = 'Select at most 100 repositories. Narrow the filters before selecting all.';
     } else {
@@ -224,7 +261,7 @@ export class LaunchDialog implements Component {
 
   unselectAll(): void {
     if (!this.active || this.locked) return;
-    this.setDraft({ repoIds: [] });
+    this.setDraft({ repoIds: this.subject.kind === 'review' ? [this.subject.repoId] : [] });
     this.error = null;
     this.changed();
   }
@@ -252,7 +289,7 @@ export class LaunchDialog implements Component {
   async start(): Promise<void> {
     if (!this.active || this.launching || this.loading || this.renderingPrompt) return;
     if (!this.editor.getExpandedText().trim()) {
-      this.error = `Write a prompt before starting ${this.subject.kind === 'issue' ? 'work' : 'the session'}.`;
+      this.error = 'Write a prompt before starting.';
       this.focus = 'prompt';
       this.changed();
       return;
@@ -370,7 +407,7 @@ export class LaunchDialog implements Component {
         if (this.selectionActionIndex) this.unselectAll();
         else this.selectAll();
       } else if (matchesKey(data, 'down')) this.focus = 'repositories';
-    } else if (this.focus === 'repositories' && this.subject.kind === 'issue') {
+    } else if (this.focus === 'repositories') {
       if (matchesKey(data, 'down') || data === 'j') this.selectedIndex = Math.min(this.visibleRepositories.length - 1, this.selectedIndex + 1);
       else if (matchesKey(data, 'up') || data === 'k') this.selectedIndex = Math.max(0, this.selectedIndex - 1);
       else if (matchesKey(data, 'space') || matchesKey(data, 'enter')) {
@@ -410,9 +447,8 @@ export class LaunchDialog implements Component {
     this.changed();
   }
 
-  /** The only pane shown for a session or on narrow terminals, or undefined when both fit. */
+  /** The only pane shown on narrow terminals, or undefined when both fit. */
   private get single(): 'repositories' | 'prompt' | undefined {
-    if (this.subject.kind !== 'issue') return 'prompt';
     if (this.body.width >= SPLIT_MIN_WIDTH) return undefined;
     return repositoryFocus.includes(this.focus) ? 'repositories' : 'prompt';
   }
@@ -423,25 +459,24 @@ export class LaunchDialog implements Component {
     const compact = height < 16;
     this.body = { width: innerWidth, height: height - (compact ? 5 : 7), compact };
     const { secondaryWidth: leftWidth, primaryWidth: rightWidth } = this.split.layout(innerWidth);
-    const issue = this.subject.kind === 'issue' ? this.subject.issue : undefined;
+    const text = SUBJECTS[this.subject.kind];
     this.editor.focused = this.focused && this.focus === 'prompt';
     this.nameFilter.focused = this.focused && this.focus === 'name';
     this.topicFilter.focused = this.focused && this.focus === 'topics';
     this.editor.borderColor = text => (this.focus === 'prompt' ? accent : muted) + text + reset;
-    const selected = this.options.state.draft.repoIds?.length ?? 0;
+    const selected = this.selectedRepoIds.size;
     const lines = [
       muted + '╭' + '─'.repeat(Math.max(0, width - 2)) + '╮' + reset,
-      this.row(bold + (issue ? 'Start work' : 'New session') + reset + '  ' + safeText(issue ? `${issue.key}: ${issue.title}` : this.subject.kind === 'session' ? this.subject.title : ''), innerWidth),
+      this.row(bold + text.title + reset + '  ' + safeText(this.subject.kind === 'home' ? '' : this.templateInput.title), innerWidth),
       ...(compact ? [] : [this.separator(leftWidth, rightWidth, '┬')]),
-      ...(this.single === 'repositories' ? this.renderRepositoryPane(innerWidth)
-        : this.single === 'prompt' ? this.renderPromptPane(innerWidth) : this.split.render(innerWidth))
+      ...(this.single === 'repositories' ? this.renderRepositoryPane(innerWidth) : this.split.render(innerWidth))
         .map(line => this.row(line, innerWidth)),
     ];
     const action = (label: string, index: number) =>
       button(`[ ${label} ]`, this.focus === 'actions' && this.actionIndex === index, index ? 'cancel' : 'start');
     if (!compact) lines.push(this.separator(leftWidth, rightWidth, '┴'));
-    const start = this.launching ? 'Starting…' : this.locked ? 'Retry start' : issue ? 'Start work' : 'Start session';
-    lines.push(this.row(action(start, 0) + '  ' + action('Cancel', 1) + (issue ? muted + `  ${selected} repositories · r refresh · a archived` + reset : ''), innerWidth));
+    const start = this.launching ? 'Starting…' : this.locked ? 'Retry start' : text.start;
+    lines.push(this.row(action(start, 0) + '  ' + action('Cancel', 1) + muted + `  ${selected} repositories · r refresh · a archived` + reset, innerWidth));
     const status = this.error ?? (this.launching ? 'Saving the launch request…' : this.refreshing ? 'Refreshing GitHub repositories…' : this.loading ? 'Loading templates and repositories…' : this.help(innerWidth));
     lines.push(this.row((this.error ? danger : muted) + safeText(status) + reset, innerWidth));
     lines.push(muted + '╰' + '─'.repeat(Math.max(0, width - 2)) + '╯' + reset);
@@ -451,7 +486,7 @@ export class LaunchDialog implements Component {
 
   private renderRepositoryPane(width: number): string[] {
     const { height, compact } = this.body;
-    const selected = new Set(this.options.state.draft.repoIds ?? []);
+    const selected = this.selectedRepoIds;
     const repositories = this.visibleRepositories;
     const selectionAction = (label: string, index: number) => button(width >= 31 ? `[ ${label} ]` : `[${label}]`,
       this.focus === 'selection' && this.selectionActionIndex === index, index ? 'none' : 'all');
@@ -469,7 +504,8 @@ export class LaunchDialog implements Component {
     if (this.selectedIndex >= this.scrollOffset + pageSize) this.scrollOffset = this.selectedIndex - pageSize + 1;
     for (const [index, repo] of repositories.slice(this.scrollOffset, this.scrollOffset + pageSize).entries()) {
       const active = this.focus === 'repositories' && this.scrollOffset + index === this.selectedIndex;
-      const label = (selected.has(repo.id) ? accent + icons.checkboxOn : muted + icons.checkboxOff) + reset + ' ' + safeText(repo.name);
+      // Repositories that stay selected show their check without the accent.
+      const label = (this.fixedRepoIds.has(repo.id) ? muted + icons.checkboxOn : selected.has(repo.id) ? accent + icons.checkboxOn : muted + icons.checkboxOff) + reset + ' ' + safeText(repo.name);
       lines.push(control(active ? selectedBand(accent + label, width) : padRight(label, width), 'repo:' + (this.scrollOffset + index)));
       const owner = repo.fullName.split('/')[0] ?? '';
       if (listRows > 1) lines.push(muted + safeText(`  ${owner} · ${repo.isArchived ? 'archived' : repo.topics.join(', ') || 'no topics'}`) + reset);
@@ -482,7 +518,7 @@ export class LaunchDialog implements Component {
 
   /** Template above the prompt, the less important agent/thinking/model fields below it. */
   private renderPromptPane(width: number): string[] {
-    const template = this.subject.kind === 'issue' ? this.renderTemplate(width) : [];
+    const template = this.renderTemplate(width);
     const launch = this.launchOptions.render(width, this.focused && isLaunchField(this.focus) ? this.focus : undefined);
     const promptHeight = Math.max(3, this.body.height - 1 - template.length - launch.length);
     return [

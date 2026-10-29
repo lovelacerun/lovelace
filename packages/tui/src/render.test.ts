@@ -126,7 +126,7 @@ describe('renderJira', () => {
     state.applyDashboardResponse(makeDashboard());
     state.navigate({ kind: 'jira', id: 'J-1' });
     const doc = renderPage(state, 80);
-    assert.deepEqual(doc.actions, [{ kind: 'jira-setup' }, { kind: 'open-url', url: 'https://x/' }]);
+    assert.deepEqual(doc.actions, [{ kind: 'launch' }, { kind: 'open-url', url: 'https://x/' }]);
     state.setDraft({ text: 'saved prompt', requestId: 'retry-id' });
     assert.deepEqual(renderPage(state, 80).actions, [{ kind: 'launch-retry' }, { kind: 'open-url', url: 'https://x/' }]);
     checkWidth(doc.lines, 80);
@@ -150,6 +150,6 @@ describe('dashboard columns', () => {
     }
     state.contentSelectedIndex = 2;
     const doc = renderDashboard(state, 110);
-    assert.match(strip(doc.lines[doc.selectedRow]!), /▌ \+  New repository-free work/);
+    assert.match(strip(doc.lines[doc.selectedRow]!), /▌ \+  New work/);
   });
 });

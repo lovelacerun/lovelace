@@ -17,10 +17,10 @@ export function renderReview(state: AppState, { review }: Extract<Route, { kind:
   b.line();
   gap();
   if (state.draft.requestId) b.action(accent + icons.retry + reset + '  Resend unanswered launch', { kind: 'launch-retry' });
-  else if (review.repoId) b.action(accent + icons.start + reset + '  Start review', { kind: 'review-start' }, faint + 'Enter' + reset);
+  else if (review.repoId) b.action(accent + icons.start + reset + '  Start review', { kind: 'launch' }, faint + 'Enter' + reset);
   else b.line(muted + '  ' + safeText(review.repository) + ' is not in the repository catalog.' + reset);
   if (url) b.action(accent + icons.link + reset + '  Open in browser', { kind: 'open-url', url });
   b.line();
-  b.line(faint + 'Start review checks out the pull request branch and starts an agent with the review template.' + reset);
+  b.line(faint + 'Start review opens the review template with the pull request\'s repository, checked out at its branch.' + reset);
   return b.build();
 }

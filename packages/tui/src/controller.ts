@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { LovelaceClient } from '@lovelace/client';
 import type { LaunchResponse, WorkItemState } from '@lovelace/core';
-import { isLaunchFocus, type AppState } from './state.js';
+import type { AppState } from './state.js';
 import type { Action } from './views/common.js';
 import type { KeyIntent } from './keymap.js';
 import { errorMessage, errorStatus, isAborted, isOffline } from './errors.js';
@@ -12,24 +12,20 @@ export interface ControllerDeps {
   /** Called after state mutations when the AppRoot should also re-fetch details. */
   refreshDetails: () => void;
   refreshDashboard: () => void;
-  /** Open the launch dialog for the open Jira issue or work item, without navigating. */
+  /** Open the launch dialog for the current page, without navigating. */
   openLaunchDialog: () => void;
   /** Submit a prompt for the current draft; true once the server accepted it. */
   submitLaunch: (prompt: string) => Promise<boolean>;
   /** Open a provider link using the client machine's default browser. */
   openUrl: (url: string) => Promise<void>;
-  /** Clear editor contents + focus elsewhere. */
-  resetEditor: () => void;
-  /** Focus the Editor component. */
-  focusEditor: () => void;
   /** Request a re-render after mutations. */
   invalidate: () => void;
   /** Request a shutdown of the application. */
   quit: () => void;
 }
 
-/** Editor input, Enter and `n` are routed by the AppRoot before commands reach here. */
-type CommandIntent = Exclude<KeyIntent, { kind: 'editor-input' | 'ignored' | 'enter' | 'focus-editor' }>;
+/** Enter and `n` are routed by the AppRoot before commands reach here. */
+type CommandIntent = Exclude<KeyIntent, { kind: 'ignored' | 'enter' | 'new' }>;
 
 export function handleKey(state: AppState, intent: CommandIntent, deps: ControllerDeps, contentCount: number): void {
   switch (intent.kind) {
@@ -50,8 +46,6 @@ export function handleKey(state: AppState, intent: CommandIntent, deps: Controll
       if (state.pendingConfirm) {
         state.pendingConfirm = null;
         state.setNotice(null);
-      } else if (state.focus === 'editor' || isLaunchFocus(state.focus)) {
-        state.setFocus('content');
       } else if (state.route.kind !== 'home') {
         state.navigateHome();
       } else {
@@ -89,8 +83,6 @@ export function handleKey(state: AppState, intent: CommandIntent, deps: Controll
         void changeWorkItemState(state, deps, confirm.state);
       } else if (state.draftKey === confirm.draftKey && !state.mutationInFlight) {
         abandonLaunchIntent(state);
-        deps.resetEditor();
-        deps.focusEditor();
       }
       return;
     }
@@ -104,12 +96,8 @@ export async function handleAction(state: AppState, action: Action, deps: Contro
       deps.refreshDetails();
       return;
 
-    case 'jira-setup':
+    case 'launch':
       deps.openLaunchDialog();
-      return;
-
-    case 'review-start':
-      await startReview(state, deps);
       return;
 
     case 'launch-retry':
@@ -129,10 +117,6 @@ export async function handleAction(state: AppState, action: Action, deps: Contro
 
     case 'session':
       await openSession(state, deps, action.sessionId);
-      return;
-
-    case 'edit':
-      deps.focusEditor();
       return;
 
     case 'state':
@@ -179,37 +163,6 @@ async function retryLaunch(state: AppState, deps: ControllerDeps, launchId: stri
   } finally {
     state.mutationInFlight = false;
     deps.invalidate();
-  }
-}
-
-/**
- * Reviews start without a dialog: the review template, the pull request's
- * repository at its branch, and the agent chosen on Home.
- */
-export async function startReview(state: AppState, deps: ControllerDeps): Promise<void> {
-  const route = state.route;
-  if (route.kind !== 'review' || !route.review.repoId || state.mutationInFlight) return;
-  if (state.draft.requestId) {
-    state.setError('Resend or discard (x) the unanswered launch before starting the review again.');
-    return;
-  }
-  const { review } = route;
-  const draftKey = state.draftKey;
-  state.setError(null);
-  state.setNotice('Rendering review prompt…');
-  try {
-    const rendered = await deps.client.prompts.render.mutate({
-      promptId: 'review', title: `${review.repository}#${review.number}: ${review.title}`,
-      sources: [{ sourceType: 'change-request', provider: 'github', externalId: review.id, payload: review }],
-    }, { signal: deps.signal });
-    if (deps.signal?.aborted || state.draftKey !== draftKey) return;
-    state.setDraft({ text: rendered.content, promptId: rendered.promptId, repoIds: [route.review.repoId] });
-    await deps.submitLaunch(rendered.content);
-  } catch (error) {
-    if (deps.signal?.aborted || state.draftKey !== draftKey) return;
-    state.setNotice(null);
-    if (isOffline(error)) state.setOffline();
-    else state.setError(errorMessage(error, 'Rendering the review prompt failed'));
   }
 }
 

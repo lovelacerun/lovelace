@@ -78,9 +78,9 @@ lovelace help         # all commands
 ```
 
 Home shows what you worked on yesterday and today. From the TUI you can start
-a free-text task from Home, start work on a pending
-Jira issue (pick repositories, a template and an agent), open or continue
-sessions, and mark work done. Commands that need the server start it in the
+new work, work on a pending Jira issue or a review, or another session on a
+work item, each from one dialog that picks repositories, a template and an
+agent; open or continue sessions; and mark work done. Commands that need the server start it in the
 background; `lovelace server start|stop|restart|status` manage it.
 
 ## Where things live

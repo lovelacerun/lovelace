@@ -125,7 +125,8 @@ class Handler(BaseHTTPRequestHandler):
         if procedure == "repositories.list":
             return self.data(REPOSITORIES)
         if procedure == "prompts.list":
-            return self.data([dict(id="refine", title="Refine", content="Refine {{title}}",
+            return self.data([dict(id="default", title="Default", content="", builtIn=True, overridden=False),
+                              dict(id="refine", title="Refine", content="Refine {{title}}",
                                    builtIn=True, overridden=False)])
         if procedure == "tools.list":
             return self.data([dict(id="pi", title="Pi", thinkingLevels=[], executablePath="/fixture/pi",
@@ -141,6 +142,8 @@ class Handler(BaseHTTPRequestHandler):
         if procedure == "sessions.open":
             opened.append(body["workItemId"])
             return self.data(dict(action="continued", details=details(body["workItemId"])))
+        if procedure == "prompts.render" and body["promptId"] == "default":
+            return self.data(dict(promptId="default", content=""))
         if procedure == "prompts.render":
             assert body["promptId"] == "refine"
             assert body["sources"][0]["payload"]["description"] == ISSUE["description"]
@@ -284,9 +287,7 @@ with tempfile.TemporaryDirectory(prefix="lovelace-ui-pty-") as temporary:
         for cols, rows in [(50, 12), (80, 24), (120, 32)]:
             resize(cols, rows)
         send(b"\t")  # template selector, in the same modal
-        for key in (b"\r", b"\x1b[A", b"\r"):  # manual prompt
-            send(key)
-        for key in (b"\r", b"\x1b[B", b"\r"):  # refine template
+        for key in (b"\r", b"\x1b[B", b"\r"):  # refine template, below default
             send(key)
         until(lambda: sum(name == "prompts.render" for _, name, _ in requests) >= 2,
               "Template selector did not render a preview")
@@ -304,13 +305,16 @@ with tempfile.TemporaryDirectory(prefix="lovelace-ui-pty-") as temporary:
         until(lambda: called("workItems.get", JIRA_WORK_ID),
               "Jira launch did not navigate to saved work")
         send(b"\x1b")
-        send(b"n")
+        send(b"n")  # Home opens the same dialog with an empty prompt
+        until(lambda: sum(name == "prompts.list" for _, name, _ in requests) == 3,
+              "n on Home did not open the launch dialog")
+        until(lambda: b"New work" in output, "Home dialog not rendered")
         send(b"\x1b[200~" + PROMPT.encode() + b"\x1b[201~")
-        send(b"\r")
+        send(b"\x13")
         until(lambda: called("workItems.get", NEW_ID),
               "Successful launch did not navigate to saved work")
         assert received_prompt == PROMPT, repr(received_prompt)
-        assert opened == [WORK_ID], "Quick-start opened its session"
+        assert opened == [WORK_ID], "New work opened its session"
         send(b"q")
         end, waited = time.monotonic() + 4, 0
         while time.monotonic() < end:
@@ -321,7 +325,7 @@ with tempfile.TemporaryDirectory(prefix="lovelace-ui-pty-") as temporary:
         assert waited == pid, "Quit leaked a timer, poller or host client"
         pid = None
         assert os.waitstatus_to_exitcode(status) == 0, status
-        print("PASS: noninteractive CLI help/JSON, explicit responsive TUI, mouse divider resize and row clicks, one-step session open without confirmation, single Jira repository/prompt overlay, cancel without navigation, multi-select across separate name/topic filters, exact edited prompt and multiline paste, quick-start without auto-open, clean quit")
+        print("PASS: noninteractive CLI help/JSON, explicit responsive TUI, mouse divider resize and row clicks, one-step session open without confirmation, single Jira repository/prompt overlay, cancel without navigation, multi-select across separate name/topic filters, exact edited prompt and multiline paste, new work from Home's dialog without auto-open, clean quit")
     finally:
         if pid:
             try:

@@ -173,13 +173,11 @@ test('Jira overlay closes on acceptance and a second task can start before eithe
   // Completing another task never selects it or disturbs the new Home draft.
   root.state.navigateHome();
   root.state.setDraft({ text: 'Third task, not submitted' });
-  root.state.setFocus('editor');
   server.finish('work-1');
   await hooks(root).refresh.fetchDashboard(new AbortController().signal);
   await hooks(root).refresh.fetchDetails(new AbortController().signal);
   assert.equal(root.state.route.kind, 'home');
   assert.equal(root.state.draft.text, 'Third task, not submitted');
-  assert.equal(root.state.focus, 'editor');
   assert.equal(server.calls.length, 2);
   assert.equal(server.opened, 0);
 });

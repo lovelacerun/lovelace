@@ -8,7 +8,7 @@ import { createLovelaceClient, type LovelaceClient } from '@lovelace/client';
 import { fakeClient, serverError, type FakeHandlers } from '@lovelace/client/testing';
 import {
   CODING_HARNESSES, type AgentSession, type AvailableHarness, type DashboardResponse, type TrackedChangeRequest, type LaunchResponse, type SessionOpenResponse,
-  type LaunchState, type WorkItemDetails, type WorkItemState,
+  type LaunchState, type WorkItemDetails, type WorkItemState, type Worktree,
 } from '@lovelace/core';
 import { AppRoot } from './app.js';
 import { LaunchDialog } from './launch-dialog.js';
@@ -85,6 +85,8 @@ class FakeServer {
     'workItems.get': async ({ id }) => this.workItemByIdResponse[id] ?? detailsOf(id),
     'tracker.issues': async () => [],
     'tools.list': async () => fixtureTools(),
+    'prompts.list': async () => [],
+    'repositories.list': async () => [],
     'sessions.open': async ({ workItemId, sessionId }) => {
       this.openCalls.push({ workItemId, sessionId });
       const next = this.openQueue.shift();
@@ -98,8 +100,8 @@ class FakeServer {
       this.launchCalls.push({ endpoint: 'quickStart', trackerIssueId, prompt, requestId, ...(reviewRequestId ? { reviewRequestId } : {}), ...(repoIds ? { repoIds } : {}), ...(promptId ? { promptId } : {}) });
       return this.nextLaunch();
     },
-    'launches.newSession': async ({ workItemId, prompt, requestId }) => {
-      this.launchCalls.push({ endpoint: 'newSession', workItemId, prompt, requestId });
+    'launches.newSession': async ({ workItemId, prompt, requestId, repoIds }) => {
+      this.launchCalls.push({ endpoint: 'newSession', workItemId, prompt, requestId, ...(repoIds?.length ? { repoIds } : {}) });
       return this.nextLaunch();
     },
   };
@@ -171,9 +173,14 @@ const openSession = (root: AppRoot, sessionId = 'm') =>
 // -- Tests ----------------------------------------------------------------
 
 describe('AppRoot review list', () => {
-  it('lists reviews in the sidebar and starts one with the review template in its repository', async (t) => {
+  it('lists reviews in the sidebar and starts one from the dialog with the review template and its repository fixed', async (t) => {
     const { root, tui, server } = makeRoot();
     const rendered: unknown[] = [];
+    server.handlers['prompts.list'] = async () => ['default', 'review'].map(id => ({ id, title: id, content: '', builtIn: true, overridden: false }));
+    server.handlers['repositories.list'] = async () => ['a', 'b'].map(name => ({
+      id: `github:${name}`, provider: 'github', externalId: name, name, fullName: `org/${name}`,
+      cloneUrl: '', defaultBranch: 'main', isArchived: false, topics: [], lastSyncedAt: '',
+    }));
     server.handlers['prompts.render'] = async input => { rendered.push(input); return { promptId: 'review', content: 'Review org/a#7\n' }; };
     const review = {
       id: 'PR_1', number: 7, title: 'Retry uploads', url: '', repository: 'org/a', repoId: 'github:a',
@@ -187,14 +194,23 @@ describe('AppRoot review list', () => {
     assert.match(stripTerminalSequences(root.render(120).join('\n')), /Reviews  1[\s\S]*Retry uploads/, 'Home lists reviews too');
     root.state.navigate({ kind: 'review', id: review.id });
     assert.match(stripTerminalSequences(root.render(120).join('\n')), /Start review/);
-    server.launchQueue.push(launched('created'));
     tui.feedInput('\r');
-    await waitFor(() => server.launchCalls.length === 1 && !root.state.mutationInFlight);
+    const dialog = tui.overlays[0]!.component as LaunchDialog;
+    await waitFor(() => !dialog.loading && !dialog.renderingPrompt);
     assert.deepEqual(rendered, [{ promptId: 'review', title: 'org/a#7: Retry uploads',
       sources: [{ sourceType: 'change-request', provider: 'github', externalId: 'PR_1', payload: review }] }]);
+    assert.match(stripTerminalSequences(dialog.render(118).join('\n')), /Start review[\s\S]*\[x\] a[\s\S]*\[ \] b/);
+    dialog.toggleRepository('github:a');
+    assert.match(dialog.error!, /stays selected/);
+    dialog.unselectAll();
+    dialog.toggleRepository('github:b');
+    assert.deepEqual(root.state.draft.repoIds, ['github:a', 'github:b']);
+    server.launchQueue.push(launched('created'));
+    tui.feedInput('\x13');
+    await waitFor(() => server.launchCalls.length === 1 && !root.state.mutationInFlight);
     const launch = server.launchCalls[0]!;
     assert.equal(launch.reviewRequestId, 'PR_1');
-    assert.deepEqual(launch.repoIds, ['github:a']);
+    assert.deepEqual(launch.repoIds, ['github:a', 'github:b']);
     assert.equal(launch.promptId, 'review');
     assert.equal(launch.prompt, 'Review org/a#7\n');
     assert.equal(root.state.route.kind, 'work');
@@ -230,7 +246,6 @@ describe('AppRoot Jira start-work overlay', () => {
     assert.match(screen, /\[ \] sync/);
     assert.match(screen, /Refine/);
     assert.match(screen, /Rendered prompt/);
-    assert.equal(root.editor.getExpandedText(), '', 'background editor is not replaced with a picker');
     tui.feedInput(' ');
     assert.deepEqual(root.state.draft.repoIds, ['0']);
     tui.feedInput('\x1b[47u');
@@ -271,7 +286,7 @@ describe('AppRoot Jira start-work overlay', () => {
     tui.feedInput('\x1b');
     assert.equal(overlay.visible, false);
     assert.equal(root.state.route.kind, 'jira', 'Escape closes the overlay, not the underlying page');
-    assert.equal(root.editor.getExpandedText(), prompt);
+    assert.equal(root.state.draft.text, prompt);
   });
 
   it('isolates filter command letters, retains drafts on cancel and refuses unresolved launch changes', async (t) => {
@@ -344,6 +359,7 @@ describe('AppRoot new-session overlay', () => {
     const overlay = tui.overlays[0]!;
     const modal = overlay.component as LaunchDialog;
     assert.equal(modal.focus, 'prompt');
+    await waitFor(() => !modal.loading);
     for (const [cols, rows] of [[50, 12], [80, 24], [120, 36]]) {
       tui.resize(cols!, rows!);
       const lines = modal.render(cols! - 2);
@@ -366,6 +382,36 @@ describe('AppRoot new-session overlay', () => {
     assert.equal(root.state.route.kind, 'work');
     assert.equal(root.state.draft.text, '');
     assert.equal(server.openCalls.length, 0);
+  });
+
+  it('keeps attached repositories selected and sends only added ones', async (t) => {
+    const { root, tui, server } = makeRoot();
+    server.handlers['repositories.list'] = async () => ['a', 'b'].map(name => ({
+      id: `github:${name}`, provider: 'github', externalId: name, name, fullName: `org/${name}`,
+      cloneUrl: '', defaultBranch: 'main', isArchived: false, topics: [], lastSyncedAt: '',
+    }));
+    const done = root.start();
+    t.after(async () => { root.quit(); await done; });
+    const details = withSession('w1');
+    details.attachments.push({
+      id: 'wt', workItemId: 'w1', type: 'worktree', createdAt: '', updatedAt: '',
+      payload: { repoId: 'github:a', repoName: 'a', status: 'ready' } as Worktree,
+    });
+    root.state.navigateToWorkItem('w1');
+    root.state.setWorkItemData(details);
+    tui.feedInput('n');
+    const dialog = tui.overlays[0]!.component as LaunchDialog;
+    await waitFor(() => !dialog.loading);
+    assert.match(stripTerminalSequences(dialog.render(118).join('\n')), /\[x\] a[\s\S]*\[ \] b[\s\S]*1 repositories/);
+    dialog.toggleRepository('github:a');
+    assert.match(dialog.error!, /stay selected/);
+    dialog.selectAll();
+    assert.deepEqual(root.state.draft.repoIds, ['github:b']);
+    tui.feedInput('More');
+    server.launchQueue.push({ ...launched('w1'), details });
+    tui.feedInput('\x13');
+    await waitFor(() => server.launchCalls.length === 1 && !root.state.mutationInFlight);
+    assert.deepEqual(server.launchCalls[0]!.repoIds, ['github:b']);
   });
 
   it('refuses inactive work and keeps Escape inside the dialog', async (t) => {
@@ -448,61 +494,6 @@ describe('AppRoot session open', () => {
     await opening;
     assert.equal(tui.state.started, starts);
     assert.notEqual(root.state.notice, 'Continued the conversation in Herdr.');
-  });
-});
-
-describe('AppRoot editor sync across drafts', () => {
-  it('swaps editor contents when navigating between work items and back', async () => {
-    const { root, server, tui } = makeRoot();
-    const dash = emptyDashboard();
-    dash.activeWorkItems = [
-      { id: 'wi-A', title: 'A', state: 'active', notes: null, createdAt: '', updatedAt: '', startedAt: null, completedAt: null, sessionCount: 0, repositoryCount: 0, trackerIssueKeys: [], changeRequestRefs: [] },
-      { id: 'wi-B', title: 'B', state: 'active', notes: null, createdAt: '', updatedAt: '', startedAt: null, completedAt: null, sessionCount: 0, repositoryCount: 0, trackerIssueKeys: [], changeRequestRefs: [] },
-    ];
-    server.dashboardResponse = dash;
-    root.state.applyDashboardResponse(dash);
-
-    // Navigate to A and set a draft.
-    root.state.navigateToWorkItem('wi-A');
-    root.state.setDraft({ text: 'hello A' });
-    // syncEditor runs on render + input routing. Force by rendering.
-    root.render(80);
-    assert.equal(root.editor.getText(), 'hello A');
-
-    // Navigate to B — editor should reset to B's (empty) draft after render.
-    root.state.navigateToWorkItem('wi-B');
-    root.render(80);
-    assert.equal(root.editor.getText(), '');
-
-    // Back to A — A's text is restored.
-    root.state.navigateToWorkItem('wi-A');
-    root.render(80);
-    assert.equal(root.editor.getText(), 'hello A');
-
-    // Only Home can focus the dock editor.
-    (root as unknown as { startNew: () => void }).startNew();
-    assert.equal(root.editor.focused, false);
-    root.state.navigateHome();
-    (root as unknown as { startNew: () => void }).startNew();
-    const lastFocus = tui.focusCalls[tui.focusCalls.length - 1];
-    assert.ok(lastFocus === root.editor, 'tui.setFocus called with editor');
-    assert.equal(root.editor.focused, true);
-
-    // Leaving editor focus clears pi-tui focus.
-    root.state.setFocus('content');
-    (root as unknown as { applyFocusToTui: () => void }).applyFocusToTui();
-    assert.equal(root.editor.focused, false);
-    assert.equal(tui.focusCalls[tui.focusCalls.length - 1], null);
-    root.stop();
-  });
-
-  it('editor onChange from a keystroke does not clobber a retained requestId', async () => {
-    const { root } = makeRoot();
-    root.state.setDraft({ text: '', requestId: 'retained-uuid' });
-    // Simulate the editor firing onChange from a plain character edit.
-    root.editor.handleInput('x');
-    assert.equal(root.state.draft.requestId, 'retained-uuid', 'requestId preserved by onChange');
-    root.stop();
   });
 });
 
@@ -685,9 +676,9 @@ function replyError(res: ServerResponse, status: 400 | 404, message: string, pat
   reply(res, status, { error: { message, code: status === 400 ? -32600 : -32004, data: { code, httpStatus: status, path } } });
 }
 
-describe('AppRoot real Editor submission over fixture HTTP', () => {
+describe('AppRoot Home launch over fixture HTTP', () => {
   for (const failure of ['400', 'timeout'] as const) {
-    it(`preserves exact typed and pasted whitespace/buffer after ${failure}, then retries deliberately`, async t => {
+    it(`n opens an empty dialog; it keeps exact typed and pasted whitespace after ${failure}, then retries deliberately`, async t => {
       const requests: Array<{ path: string; body: { prompt: string; requestId: string } }> = [];
       const url = await httpFixture(t, (req, res) => {
         let data = '';
@@ -696,7 +687,8 @@ describe('AppRoot real Editor submission over fixture HTTP', () => {
           const path = req.url!.split('?')[0]!;
           if (path !== '/trpc/launches.quickStart') {
             if (path === '/trpc/launches.get') replyError(res, 404, 'launch not found', 'launches.get');
-            else replyData(res, path === '/trpc/dashboard.get' ? emptyDashboard() : path === '/trpc/tools.list' ? fixtureTools() : detailsOf('created'));
+            else replyData(res, path === '/trpc/dashboard.get' ? emptyDashboard() : path === '/trpc/tools.list' ? fixtureTools()
+              : path === '/trpc/prompts.list' || path === '/trpc/repositories.list' ? [] : detailsOf('created'));
             return;
           }
           const body = JSON.parse(data) as { prompt: string; requestId: string };
@@ -717,96 +709,45 @@ describe('AppRoot real Editor submission over fixture HTTP', () => {
       t.after(async () => { root.quit(); await done; });
       await waitFor(() => !root.state.isLoading);
       tui.feedInput('n');
-      tui.feedInput('\x1b[13;2u'); // Shift+Enter: leading blank line.
+      const overlay = tui.overlays[0]!;
+      const dialog = overlay.component as LaunchDialog;
+      await waitFor(() => !dialog.loading);
+      assert.equal(dialog.focus, 'prompt');
+      assert.equal(dialog.editor.getExpandedText(), '');
+      tui.feedInput('\r'); // Enter in the prompt: leading blank line.
       tui.feedInput('  typed ');
       tui.feedInput('\x1b[200~pasted  \n\n  \x1b[201~');
       const prompt = '\n  typed pasted  \n\n  ';
-      assert.equal(root.editor.getExpandedText(), prompt);
-      tui.feedInput('\r');
-      assert.equal(root.editor.getExpandedText(), prompt, 'no pre-submit clearing');
-      await waitFor(() => requests.length === 1 && !root.state.mutationInFlight);
+      assert.equal(dialog.editor.getExpandedText(), prompt);
+      tui.feedInput('\x13');
+      await waitFor(() => requests.length === 1 && !root.state.mutationInFlight && !dialog.launching);
       assert.equal(requests[0]!.body.prompt, prompt);
-      assert.equal(root.editor.getExpandedText(), prompt, 'failure retains exact buffer');
+      assert.equal(overlay.visible, true, 'failures stay in the dialog');
+      assert.equal(dialog.editor.getExpandedText(), prompt, 'failure retains exact buffer');
       assert.equal(root.state.draft.text, prompt);
-      assert.equal(root.state.focus, 'editor');
-      if (failure === 'timeout') {
-        assert.ok(root.state.draft.requestId);
-        root.state.navigateToWorkItem('other');
-        root.render(80);
-        assert.equal(root.editor.getExpandedText(), '');
-        root.state.navigateHome();
-        root.state.setFocus('editor');
-        root.render(80);
-      }
-      tui.feedInput('\r');
+      if (failure === 'timeout') assert.ok(root.state.draft.requestId);
+      tui.feedInput('\x13');
       await waitFor(() => requests.length === 2 && !root.state.mutationInFlight);
       assert.equal(requests[1]!.body.prompt, prompt);
       assert.equal(requests[1]!.path, '/trpc/launches.quickStart');
       if (failure === 'timeout') assert.equal(requests[1]!.body.requestId, requests[0]!.body.requestId);
       else assert.notEqual(requests[1]!.body.requestId, requests[0]!.body.requestId);
       assert.equal(root.state.route.kind, 'work');
-      assert.equal(root.editor.getExpandedText(), '');
+      await waitFor(() => !overlay.visible);
       root.state.navigateHome();
       assert.equal(root.state.draft.text, '', 'successful source draft is cleared too');
     });
   }
 
-  it('expands large paste markers but retains native compact rendering, split paste Enter and newline shortcuts', async t => {
-    const { root, tui, server } = makeRoot();
-    const done = root.start();
-    t.after(async () => { root.quit(); await done; });
-    await waitFor(() => !root.state.isLoading);
-    tui.feedInput('n');
-    tui.feedInput('\x1b[200~');
-    tui.feedInput('\r'); // Standalone Enter chunk is part of paste, not submit.
-    tui.feedInput('  ' + 'large line \n'.repeat(200) + '  ');
-    tui.feedInput('\x1b[201~');
-    const prompt = root.editor.getExpandedText();
-    assert.ok(root.editor.getText().includes('[paste #'));
-    assert.equal(server.launchCalls.length, 0);
-    assert.ok(prompt.startsWith('\n  '));
-    for (const [cols, rows] of [[50, 12], [80, 24], [120, 36]]) {
-      tui.resize(cols!, rows!);
-      const lines = root.render(cols!);
-      assert.ok(lines.length <= rows!);
-      assert.ok(lines.every(line => visibleWidth(line) <= cols!));
-    }
-    root.state.navigateToWorkItem('other');
-    root.render(80);
-    root.state.navigateHome();
-    root.state.setFocus('editor');
-    root.render(80);
-    assert.equal(root.editor.getExpandedText(), prompt);
-    assert.ok(root.editor.getText().includes('[paste #'), 'restore stays compact');
-    server.launchQueue.push(serverError(400, 'Rejected'));
-    tui.feedInput('\r');
-    await waitFor(() => server.launchCalls.length === 1 && !root.state.mutationInFlight);
-    assert.equal(server.launchCalls[0]!.prompt, prompt);
-    assert.equal(root.editor.getExpandedText(), prompt);
-
-    root.editor.setText('');
-    tui.feedInput('a');
-    tui.feedInput('\\');
-    tui.feedInput('\r'); // Backslash+Enter legacy newline.
-    tui.feedInput('b');
-    tui.feedInput('\n'); // Ctrl+J/newline is never submit.
-    tui.feedInput('c');
-    tui.feedInput('\x1b[13;2u');
-    assert.equal(root.editor.getExpandedText(), 'a\nb\nc\n');
-    tui.feedInput('burst\rtext');
-    assert.equal(server.launchCalls.length, 1, 'input burst does not submit');
-  });
-
   it('late mutation reply updates only its originating draft, not a newly selected task', async t => {
     let finish!: (value: LaunchResponse) => void;
     const server = new FakeServer();
     server.handlers['launches.quickStart'] = () => new Promise(resolve => { finish = resolve; });
-    const { root, tui } = makeRoot({ server });
+    const { root } = makeRoot({ server });
     const done = root.start();
     t.after(async () => { root.quit(); await done; });
-    tui.feedInput('n');
-    tui.feedInput('original');
-    tui.feedInput('\r');
+    root.state.setDraft({ text: 'original' });
+    void (root as unknown as { launch: (p: string) => Promise<boolean> }).launch('original');
     root.state.navigateToWorkItem('different');
     root.state.setDraft({ text: 'different draft' });
     root.render(80);
@@ -837,8 +778,6 @@ describe('AppRoot input/lifecycle integration', () => {
     tui.feedInput('\r');
     await waitFor(() => openWork(root.state).details?.workItem.id === 'wi');
     assert.equal(root.state.focus, 'content');
-    assert.equal(root.editor.focused, false);
-    assert.equal(tui.focusCalls.at(-1), null);
     root.state.setOffline();
     assert.equal(root.state.route.kind, 'work');
     assert.match(root.render(80).join('\n'), /Item wi/);
@@ -860,23 +799,6 @@ describe('AppRoot input/lifecycle integration', () => {
     tui.feedInput('\x1b[1;1:1B');
     tui.feedInput('\x1b[1;1:3B');
     assert.equal(root.state.sidebarSelectedIndex, before + 1);
-  });
-
-  it('cropped multiline editor keeps its cursor visible when moving upwards', async t => {
-    const { root, tui } = makeRoot();
-    const done = root.start();
-    t.after(async () => { root.quit(); await done; });
-    tui.resize(50, 12);
-    tui.feedInput('n');
-    for (let n = 0; n < 9; n++) { tui.feedInput('line ' + n); tui.feedInput('\n'); }
-    for (let n = 0; n < 9; n++) tui.feedInput('\x1b[A');
-    const lines = root.render(50);
-    assert.ok(lines.some(line => line.includes('\x1b_pi:c\x07')), 'hardware cursor survives crop');
-    assert.ok(lines.length <= 12);
-    assert.ok(lines.every(line => visibleWidth(line) <= 50));
-    tui.feedInput('\x1b');
-    assert.equal(root.editor.focused, false);
-    assert.ok(!root.render(50).some(line => line.includes('\x1b_pi:c\x07')));
   });
 
   it('Esc cancels confirmation before navigating; movement clears it', async t => {
@@ -910,8 +832,7 @@ describe('AppRoot input/lifecycle integration', () => {
     tui.feedInput('x');
     tui.feedInput('y');
     assert.equal(root.state.draft.requestId, undefined);
-    assert.equal(root.editor.getExpandedText(), '');
-    assert.equal(root.state.focus, 'editor');
+    assert.equal(root.state.draft.text, '');
     assert.equal(server.launchCalls.length, 0);
   });
 
@@ -955,77 +876,26 @@ describe('AppRoot details refresh', () => {
 });
 
 
-describe('Home-only quick-start dock', () => {
-  it('shows active work without a prompt and never focuses a hidden editor', async t => {
+describe('Home without a prompt dock', () => {
+  it('n opens the launch dialog on Home and on work items; Tab only moves between content and sidebar', async t => {
     const { root, tui } = makeRoot();
     const done = root.start();
     t.after(async () => { root.quit(); await done; });
     await waitFor(() => !root.state.isLoading);
+    assert.doesNotMatch(root.render(120).join('\n'), /Quick start/);
+    for (let i = 0; i < 4; i++) {
+      tui.feedInput('\t');
+      assert.ok(['content', 'sidebar'].includes(root.state.focus));
+    }
+    tui.feedInput('n');
+    assert.equal(tui.overlays.length, 1);
+    assert.match(stripTerminalSequences((tui.overlays[0]!.component as LaunchDialog).render(118).join('\n')), /New work/);
+    tui.feedInput('\x1b');
     root.state.navigateToWorkItem('wi');
     root.state.setWorkItemData(detailsOf('wi'));
-    root.state.setDraft({ text: 'hidden session draft' });
-    const output = root.render(120).join('\n');
-    assert.doesNotMatch(output, /Quick start|Session prompt|hidden session draft|Edit a prompt/);
-    assert.match(output, /Agent sessions/);
-    tui.feedInput('n'); // Opens the new-session overlay, not the Home editor.
-    assert.equal(tui.overlays.length, 1);
-    assert.equal(root.state.focus, 'content');
-    assert.equal(root.editor.focused, false);
-    tui.feedInput('\x1b');
-    for (let i = 0; i < 10; i++) {
-      tui.feedInput('\t');
-      assert.notEqual(root.state.focus, 'editor');
-    }
-    root.state.setFocus('editor');
-    assert.equal(root.state.focus, 'content');
-    root.state.navigateHome();
     tui.feedInput('n');
-    assert.equal(root.state.focus, 'editor');
-    assert.match(root.render(120).join('\n'), /Quick start/);
-  });
-
-  for (const [cols, rows] of [[50, 12], [80, 24], [120, 36]]) {
-    it('keeps three input lines pinned at the bottom on Home at ' + cols + 'x' + rows, () => {
-      const { root, tui } = makeRoot();
-      tui.resize(cols!, rows!);
-      root.state.applyDashboardResponse(emptyDashboard());
-      for (const text of ['', 'one\ntwo\nthree\nfour\nfive\nsix']) {
-        root.state.setDraft({ text });
-        const lines = root.render(cols!);
-        assert.equal(lines.length, rows);
-        const titleRow = lines.findIndex(line => line.includes('Quick start'));
-        if (rows! < 18) assert.equal(titleRow, rows! - 2, 'short terminals collapse the unfocused dock to one row');
-        else assert.equal(titleRow, rows! - 8, 'title, two borders, three input rows and the launch fields above the footer');
-        assert.ok(lines.slice(titleRow + 1, titleRow + 7).every(line => visibleWidth(line) <= cols!));
-        if (rows! >= 18) assert.match(stripTerminalSequences(lines[rows! - 2]!), cols! >= 100 ? /Agent +Pi ▾ +Thinking +default ▾ +Model +default ▾/ : /Pi ▾ +Thinking ▾ +Model ▾/);
-      }
-      root.state.setFocus('editor');
-      const focused = root.render(cols!);
-      assert.equal(focused.findIndex(line => line.includes('Quick start')), rows! - 8, 'a focused dock always shows three input rows');
-      root.stop();
-    });
-  }
-
-  it('shows no quick-start/input on Jira and skips hidden editor focus', () => {
-    const { root } = makeRoot();
-    const issue = { id: '42', key: 'PROJ-42', title: 'Task', url: '', status: null, issueType: null, updatedAt: '' };
-    root.state.applyDashboardResponse({ ...emptyDashboard(), pendingIssues: [issue] });
-    root.state.navigate({ kind: 'jira', id: issue.id });
-    root.state.setDraft({ text: 'retained Jira draft' });
-    const output = root.render(120).join('\n');
-    assert.doesNotMatch(output, /Quick start|Session prompt|retained Jira draft|Edit prompt/);
-    assert.match(output, /Start work/);
-    root.state.toggleFocus();
-    assert.equal(root.state.focus, 'sidebar');
-    root.state.toggleFocus();
-    assert.equal(root.state.focus, 'content');
-    root.state.setFocus('editor');
-    assert.equal(root.state.focus, 'content');
-    assert.equal(root.editor.focused, false);
-    root.state.navigateToWorkItem('wi');
-    assert.doesNotMatch(root.render(120).join('\n'), /Quick start/);
-    assert.doesNotMatch(root.render(120).join('\n'), /Session prompt/);
-    root.stop();
+    assert.equal(tui.overlays.length, 2);
+    assert.match(stripTerminalSequences((tui.overlays[1]!.component as LaunchDialog).render(118).join('\n')), /New session/);
   });
 });
 
@@ -1051,19 +921,6 @@ describe('Cold rendering and drafts', () => {
     });
   }
 
-  it('pasted Unicode and boundary whitespace round-trip across drafts at narrow size', async t => {
-    const { root, tui } = makeRoot(); const done = root.start();
-    t.after(async () => { root.quit(); await done; });
-    tui.resize(50, 12); root.state.setFocus('editor');
-    const prompt = '\n  👩🏽‍💻 é 漢字 λ\n\n  ';
-    tui.feedInput('\x1b[200~' + prompt + '\x1b[201~');
-    assert.equal(root.editor.getExpandedText(), prompt);
-    root.state.navigateToWorkItem('other'); root.render(50);
-    root.state.navigateHome(); root.state.setFocus('editor');
-    const lines = root.render(50);
-    assert.equal(root.editor.getExpandedText(), prompt);
-    assert.ok(lines.every(line => visibleWidth(line) <= 50));
-  });
 });
 
 
@@ -1146,7 +1003,7 @@ describe('AppRoot mouse', () => {
   });
 
   it('opens provider cards in the browser and replays clicked help chips', () => {
-    const { root, opened } = mouseRoot();
+    const { root, tui, opened } = mouseRoot();
     const details = detailsOf('a');
     details.attachments.push({
       id: 'pr', workItemId: 'a', type: 'pull-request', provider: 'github', externalId: '7',
@@ -1158,8 +1015,8 @@ describe('AppRoot mouse', () => {
     assert.deepEqual(opened, ['https://github.invalid/org/repo/pull/7']);
     clickText(root, 'Esc back');
     assert.equal(root.state.route.kind, 'home');
-    clickText(root, 'n new');
-    assert.equal(root.state.focus, 'editor');
+    clickText(root, 'n new work');
+    assert.equal(tui.overlays.length, 1, 'the n chip opens the launch dialog');
     root.stop();
   });
 
@@ -1184,17 +1041,13 @@ describe('AppRoot mouse', () => {
     root.stop();
   });
 
-  it('wheel moves the selection of the pane under the pointer; plain clicks focus the dock', () => {
+  it('wheel moves the selection of the pane under the pointer; plain clicks keep text selection', () => {
     const { root } = mouseRoot();
     root.render(120);
     root.handleMouse(event('wheel', 110, 4, { wheelDelta: 3 }));
     assert.equal(root.state.focus, 'sidebar');
     assert.equal(root.state.sidebarSelectedIndex, 1);
     root.handleMouse(event('wheel', 10, 4, { wheelDelta: -1 }));
-    assert.equal(root.state.focus, 'content');
-    root.handleMouse(event('click', 10, 33));
-    assert.equal(root.state.focus, 'editor');
-    root.handleMouse(event('click', 10, 4));
     assert.equal(root.state.focus, 'content');
     assert.equal(root.handleMouse(event('press', 10, 4)), undefined, 'presses keep native text selection');
     root.stop();

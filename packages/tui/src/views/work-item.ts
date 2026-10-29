@@ -39,7 +39,7 @@ export function renderWorkItem(state: AppState, { details }: Extract<Route, { ki
   const hasLaunchProgress = renderLaunchProgress(details, b, width);
   if (!sessions.length && !hasLaunchProgress) b.line(muted + '  No sessions yet.' + reset);
   if (workItem.state !== 'active') b.line(warning + '  Resume local work before launching or attaching.' + reset);
-  else b.action(accent + icons.new + reset + '  New session', { kind: 'edit' }, faint + 'n' + reset);
+  else b.action(accent + icons.new + reset + '  New session', { kind: 'launch' }, faint + 'n' + reset);
   b.line();
   gap();
   for (const line of renderAttachments(attachments, width, b)) b.line(line);

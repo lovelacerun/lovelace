@@ -3,27 +3,17 @@ import { describe, it } from 'node:test';
 import { decode } from './keymap.js';
 
 describe('keymap.decode', () => {
-  it('returns editor-input for ordinary characters when editor is focused', () => {
-    const intent = decode('q', { focus: 'editor' });
-    assert.deepEqual(intent, { kind: 'editor-input', data: 'q' });
-  });
-
-  it('returns editor-input for j and n when editor is focused', () => {
-    assert.deepEqual(decode('j', { focus: 'editor' }), { kind: 'editor-input', data: 'j' });
-    assert.deepEqual(decode('n', { focus: 'editor' }), { kind: 'editor-input', data: 'n' });
-  });
-
-  it('quits on q when editor is not focused', () => {
+  it('quits on q', () => {
     assert.deepEqual(decode('q', { focus: 'content' }), { kind: 'quit' });
     assert.deepEqual(decode('q', { focus: 'sidebar' }), { kind: 'quit' });
   });
 
   it('quits on Ctrl+C regardless of focus', () => {
-    assert.deepEqual(decode('\x03', { focus: 'editor' }), { kind: 'quit' });
+    assert.deepEqual(decode('\x03', { focus: 'sidebar' }), { kind: 'quit' });
     assert.deepEqual(decode('\x03', { focus: 'content' }), { kind: 'quit' });
   });
 
-  it('maps j/k and arrow keys to down/up when not editing', () => {
+  it('maps j/k and arrow keys to down/up', () => {
     assert.deepEqual(decode('j', { focus: 'content' }), { kind: 'down' });
     assert.deepEqual(decode('k', { focus: 'content' }), { kind: 'up' });
     assert.deepEqual(decode('\x1b[A', { focus: 'content' }), { kind: 'up' });
@@ -36,9 +26,9 @@ describe('keymap.decode', () => {
     assert.deepEqual(decode('\x1b', { focus: 'content' }), { kind: 'escape' });
   });
 
-  it('maps r to refresh and n to focus-editor', () => {
+  it('maps r to refresh and n to new', () => {
     assert.deepEqual(decode('r', { focus: 'content' }), { kind: 'refresh' });
-    assert.deepEqual(decode('n', { focus: 'content' }), { kind: 'focus-editor' });
+    assert.deepEqual(decode('n', { focus: 'content' }), { kind: 'new' });
   });
 
   it('maps d/a/c to state shortcuts', () => {
@@ -58,9 +48,5 @@ describe('keymap.decode', () => {
     assert.deepEqual(decode('\x1b', pending), { kind: 'escape' });
     for (const key of ['q', 'd', 'j', '\r', '\t']) assert.deepEqual(decode(key, pending), { kind: 'ignored' });
     assert.deepEqual(decode('\x03', pending), { kind: 'quit' });
-  });
-
-  it('intercepts Esc even when editor is focused', () => {
-    assert.deepEqual(decode('\x1b', { focus: 'editor' }), { kind: 'escape' });
   });
 });

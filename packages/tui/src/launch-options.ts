@@ -1,7 +1,7 @@
 import { visibleWidth } from '@earendil-works/pi-tui';
 import { CODING_HARNESSES, type CodingHarnessId } from '@lovelace/core';
 import { Dropdown, type DropdownItem, type DropdownTheme, truncate } from '@lovelace/tui-components';
-import type { AppState, FocusTarget, LaunchFocus } from './state.js';
+import type { AppState } from './state.js';
 import { accent, barBg, bold, muted, reset, selectedBg } from './theme.js';
 import { clickable } from './clickable.js';
 
@@ -9,7 +9,7 @@ export const LAUNCH_FIELDS = ['agent', 'thinking', 'model'] as const;
 export type LaunchField = (typeof LAUNCH_FIELDS)[number];
 const LABELS: Record<LaunchField, string> = { agent: 'Agent', thinking: 'Thinking', model: 'Model' };
 
-/** Select fields shared by Home's dock and the Jira overlay; `prefix` scopes their click links. */
+/** Select fields of the launch dialog; `prefix` scopes their click links. */
 export function selectTheme(prefix: string): DropdownTheme {
   return {
     field: (text, focused) => (focused ? selectedBg + accent + bold : barBg) + text + reset,
@@ -17,12 +17,6 @@ export function selectTheme(prefix: string): DropdownTheme {
     muted: text => muted + text + reset,
     link: (text, action) => clickable(text, { kind: 'modal', data: `${prefix}:${action}` }),
   };
-}
-
-/** Home's focus target for a field, and back. */
-export const launchFocus = (field: LaunchField): LaunchFocus => `launch-${field}`;
-export function launchField(focus: FocusTarget): LaunchField | undefined {
-  return focus.startsWith('launch-') ? focus.slice('launch-'.length) as LaunchField : undefined;
 }
 
 /** Click targets this row renders; both hosts forward them to `openLink`. */
@@ -34,7 +28,7 @@ export function isLaunchOptionsLink(data: string): boolean {
  * Agent, thinking and model select fields over the TUI-wide launch choice.
  * Each field expands into a filterable list; the model list comes from the
  * harness and also takes a typed name. Empty values keep the harness's own
- * defaults. Home's dock and both overlays share the choice.
+ * defaults. Every launch dialog shares the choice.
  */
 export class LaunchOptionsRow {
   private readonly menus: Record<LaunchField, Dropdown>;

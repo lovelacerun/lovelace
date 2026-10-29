@@ -13,8 +13,8 @@ export const SIDEBAR_MIN_WIDTH = 12;
 export const CONTENT_MIN_WIDTH = 36;
 /** Body rows below which views drop spacing and show one row per entry. */
 export const COMPACT_ROWS = 26;
-/** Body rows below which the unfocused Quick start dock collapses to one row. */
-export const DOCK_MIN_ROWS = 16;
+/** Body rows below which the content drops its top margin. */
+export const MARGIN_MIN_ROWS = 16;
 
 /** Sidebar width until the divider is dragged; 0 hides it. */
 export function responsiveSidebarWidth(cols: number): number {

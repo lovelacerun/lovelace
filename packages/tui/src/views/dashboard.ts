@@ -94,6 +94,6 @@ export function renderDashboard(state: AppState, width: number): Document {
 
   for (const line of split ? columns(left, right, width) : [...left, '', ...right]) b.line(line);
   if (!compact) { b.line(); b.line(); }
-  b.action(icons.new + '  New repository-free work  ' + faint + 'n' + reset, { kind: 'edit' });
+  b.action(icons.new + '  New work  ' + faint + 'n' + reset, { kind: 'launch' });
   return b.build();
 }

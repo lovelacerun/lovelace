@@ -2,10 +2,13 @@ import { visibleWidth } from '@earendil-works/pi-tui';
 import type { WorkItemState } from '@lovelace/core';
 import { padRight, safeText, truncate, wrap } from '@lovelace/tui-components';
 import { warning, accent, bold, canvas, cardBg, muted, faint, success, icons, reset, danger } from './theme.js';
-import { isLaunchFocus, type AppState } from './state.js';
+import type { AppState } from './state.js';
 import { keyChip } from './key-hints.js';
 
 const DIALOG_WIDTH = 56;
+
+/** What `n` opens the launch dialog for on each page. */
+const NEW_LABELS: Record<AppState['route']['kind'], string> = { home: 'new work', work: 'new session', jira: 'start work', review: 'start review' };
 
 const STATE_QUESTIONS: Record<WorkItemState, string> = {
   active: 'Reactivate this work?',
@@ -48,29 +51,20 @@ export function renderConfirmDialog(state: AppState, cols: number): string[] {
  * Footer chips, most important first; the frame drops trailing chips that do
  * not fit. Notices and errors lead and are truncated instead.
  */
-export function helpChips(state: AppState, launchMenuOpen = false): { status: string; chips: string[] } {
+export function helpChips(state: AppState): { status: string; chips: string[] } {
   const chips: string[] = [];
   const status = state.error ? danger + icons.warning + ' ' + safeText(state.error) + reset
     : state.notice ? accent + safeText(state.notice) + reset
     : state.mutationInFlight ? muted + 'launching…' + reset
     : '';
 
-  const typing = state.focus === 'editor' || isLaunchFocus(state.focus);
-  if (state.draft.requestId && !typing) chips.push(keyChip('x', 'discard launch'));
-  if (isLaunchFocus(state.focus) && launchMenuOpen) {
-    chips.push(keyChip('↑/↓', 'move'), keyChip('Enter', 'choose'), keyChip('type', 'filter'), keyChip('Esc', 'close'));
-  } else if (isLaunchFocus(state.focus)) {
-    chips.push(keyChip('Enter', 'open'), keyChip('type', 'search'), keyChip('Tab/⇧Tab', 'next/prev'), keyChip('Esc', 'leave'));
-  } else if (state.focus === 'editor') {
-    chips.push(keyChip('Enter', 'launch'), keyChip('Esc', 'leave editor'), keyChip('Shift+Enter', 'newline'));
-  } else {
-    chips.push(keyChip('Enter', 'open'));
-    if (state.route.kind !== 'home') chips.push(keyChip('Esc', 'back'));
-    if (state.route.kind === 'work') chips.push(keyChip('d/a/c', 'state'));
-    chips.push(keyChip('n', state.route.kind === 'work' ? 'new session' : 'new'));
-    chips.push(keyChip('↑/↓', 'move'), keyChip('Tab/⇧Tab', state.route.kind === 'home' ? 'focus' : 'next/prev'),
-      keyChip('r', 'refresh'), keyChip('q', 'quit'));
-  }
+  if (state.draft.requestId) chips.push(keyChip('x', 'discard launch'));
+  chips.push(keyChip('Enter', 'open'));
+  if (state.route.kind !== 'home') chips.push(keyChip('Esc', 'back'));
+  if (state.route.kind === 'work') chips.push(keyChip('d/a/c', 'state'));
+  chips.push(keyChip('n', NEW_LABELS[state.route.kind]));
+  chips.push(keyChip('↑/↓', 'move'), keyChip('Tab/⇧Tab', state.route.kind === 'home' ? 'focus' : 'next/prev'),
+    keyChip('r', 'refresh'), keyChip('q', 'quit'));
   return { status, chips };
 }
 

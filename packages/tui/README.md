@@ -1,7 +1,7 @@
 # @lovelace/tui
 
-A local workbench with a persistent navigation rail, scrollable details and an
-exact-text pi-tui Editor. All backend/provider calls use `@lovelace/client`;
+A local workbench with a persistent navigation rail, scrollable details and
+one launch dialog with an exact-text pi-tui Editor. All backend/provider calls use `@lovelace/client`;
 the server drives Herdr, so the TUI does no terminal IO beyond its own screen.
 
 ## Running
@@ -52,25 +52,8 @@ terminal's own default (e.g. a transparent background):
 | `accent`, `key`, `special` | Focus and keys, issue keys, agents and merged PRs |
 | `success`, `warning`, `danger` | Passed/done, needs attention, failed/offline |
 
-Quick-start appears only on Home: a bottom dock just above the footer with
-three visible input lines; longer prompts scroll within it. On terminals
-shorter than 18 rows the unfocused dock collapses to one row and expands
-when focused (`n` or a click). Below the editor sit **Agent**, **Thinking** and
-**Model** select fields, which `Tab` reaches after the editor (or a click
-focuses). `Enter`, `Space` or `↓` expands a field into a list below it; typing
-filters it, `↑/↓` move, `Enter` chooses and `Esc` closes. Agents are the
-harnesses detected on the server and models come from the harness's catalog;
-a model name the catalog lacks can be typed and chosen as typed. `default`
-keeps the harness's own setting. Narrow docks drop the labels and show a
-field's name in place of `default`. The choice, kept per harness, is shared
-with the Jira overlay and remembered until the TUI exits; `Enter` in the
-editor launches with it.
-Work-item details have no inline prompt input. Jira work and further sessions
-start from one launch dialog. On a Jira issue it adds repositories and
-templates (see below); on an active work item (`n` or the row under Agent
-sessions) it is **New session**: a prompt and the shared agent/thinking/model
-choice, run in the item's ready worktrees. `Ctrl+S` starts; failures stay in
-the dialog.
+Pages have no inline prompt input; every launch starts from the launch dialog
+(`n`), described below.
 
 ## Keyboard
 
@@ -78,13 +61,11 @@ the dialog.
 | --- | --- |
 | `q` / Ctrl+C | Quit dashboard / quit anywhere |
 | `r` | Refresh dashboard and selected details |
-| `Tab` / `Shift+Tab` | Next/previous detail item, then sidebar; Home cycles content/sidebar/editor/agent/thinking/model |
-| `n` | Focus Home prompt, open Jira start-work overlay, start the selected review, or open a work item's new-session overlay |
-| `↑/↓` / `k/j` | Move selection outside editor |
-| `Enter` | Open selection (Jira/PR cards open the default browser), or launch from editor |
-| `Shift+Enter` / Ctrl+J | Insert newline |
-| Backslash + `Enter` | Newline on legacy terminals |
-| `Esc` | Cancel confirmation first; otherwise leave editor/back |
+| `Tab` / `Shift+Tab` | Next/previous detail item, then sidebar; Home switches content/sidebar |
+| `n` | Open the launch dialog: new work on Home, start work on a Jira issue or review, or a new session on a work item |
+| `↑/↓` / `k/j` | Move selection |
+| `Enter` | Open selection (Jira/PR cards open the default browser) |
+| `Esc` | Cancel confirmation first; otherwise back |
 | `d/a/c` | Confirm local done/active/cancelled state |
 | `y` | Confirm state change or launch discard |
 | `x` | Ask to discard an unanswered launch |
@@ -105,14 +86,13 @@ The fullscreen viewport captures the mouse (pi-tui `TuiAltScreen`).
 - Drag the sidebar divider to resize it for the session; double-click it to
   restore the responsive width.
 - The wheel moves the selection in the pane under the pointer.
-- Click the quick-start dock to focus it; click the page to leave it.
-- In the Jira start overlay, click repositories to toggle them, the filters
-  or prompt to focus them, `‹`/`›` to switch templates, and the buttons.
+- In the launch dialog, click repositories to toggle them, the filters,
+  prompt or select fields to focus them, and the buttons.
 - Dragging elsewhere selects and copies text.
 
 Clickable regions are OSC 8 hyperlinks; in-app targets use a private
 `lovelace:` scheme, so pi-tui's own link hit-testing routes every click and no
-geometry is tracked beyond the divider and the dock. Reuse the helpers instead
+geometry is tracked beyond the divider. Reuse the helpers instead
 of adding hit tests:
 
 - `clickable(text, target)` (`src/clickable.ts`) marks any rendered text as a
@@ -121,26 +101,19 @@ of adding hit tests:
 - `keyChip(key, label)` / `keyHint(text, key)` (`src/key-hints.ts`) render
   hints that press a key.
 - `SplitPane` from `@lovelace/tui-components` lays out the global sidebar and
-  the Jira overlay columns, forwards mouse events to the pane under the
+  the launch dialog's columns, forwards mouse events to the pane under the
   pointer and owns the draggable sidebar divider.
 - Provider URLs use pi-tui's `hyperlink(text, url)` and open in the browser.
 
 Generic pi-tui components (split panes, cards, link cards and text helpers) live in [`@lovelace/tui-components`](../tui-components/README.md);
 this package keeps the palette and application glue.
 
-## Starting a review
+## The launch dialog
 
-Pending review requests appear in the sidebar under **Reviews**, and on Home
-when any are waiting. A review page shows the pull request and **Start review**
-(`Enter` or `n`): the TUI renders the `review` template and starts the agent
-chosen on Home in the pull request's repository, checked out at its branch.
-There is no dialog; the launch is the same retryable quick-start as Jira work.
-Pull requests whose repository is not in the catalog cannot be started.
-
-## Starting Jira work
-
-Open a pending Jira issue and choose **Start work**. One native pi-tui overlay
-opens above the unchanged Jira page:
+`n` opens one native pi-tui overlay above the unchanged page. It starts new
+work from Home, work on a Jira issue (**Start work**), a review of a pull
+request (**Start review**) or another session on an active work item
+(**New session**, also the row under Agent sessions).
 
 - **Left:** repository multi-select with separate name and topic filters.
   `Space`/`Enter` toggles a repository; `/` focuses name search and `t` topics.
@@ -148,29 +121,39 @@ opens above the unchanged Jira page:
   with the server's `github.repositoryTopics` from `~/.config/lovelace/config.jsonc`
   (default: none); clear the field to show all topics.
   **Select all** (`Ctrl+A` in the list) adds every filtered match, including off-screen
-  matches; **Unselect all** (`Ctrl+U`) clears the entire selection, including hidden
+  matches; **Unselect all** (`Ctrl+U`) clears the selection, including hidden
   repositories. `Tab` from topics focuses these buttons; `←/→`, then `Enter` applies.
   Narrow layouts label them **All / None**. At most 100 repositories can be selected;
   exceeding the limit leaves the selection unchanged.
   Hidden selections remain selected. Archived repositories are hidden by
   default; `a` includes them. `r` refreshes the catalog through the server.
+  A review's repository, checked out at the pull request's branch, and the
+  repositories a work item already has stay selected; added ones get fresh
+  branches.
 - **Right:** a template select field, a large editable prompt preview and,
-  below it, the shared agent/thinking/model fields (as on Home). The template
-  field expands like those fields and chooses built-in, overridden/custom, or
-  manual prompts.
-  Existing edited drafts are preserved on reopen; an empty draft starts with
-  Implement. In the prompt box, `Enter` inserts a newline, never launches.
-- **Bottom:** Start work / Cancel. `Tab`/`Shift+Tab` cycles controls;
+  below it, the **Agent**, **Thinking** and **Model** select fields. Each
+  field expands into a list (`Enter`, `Space` or `↓`); typing filters it,
+  `↑/↓` move, `Enter` chooses and `Esc` closes. Agents are the harnesses
+  detected on the server and models come from the harness's catalog; a model
+  name the catalog lacks can be typed and chosen as typed. `default` keeps the
+  harness's own setting. The choice, kept per harness, is shared by every
+  dialog until the TUI exits.
+  An empty draft starts from the page's template: `default` on Home and work
+  items (empty unless overridden), `implement` on Jira issues and `review` on
+  reviews. Existing edited drafts are preserved on reopen. In the prompt box,
+  `Enter` inserts a newline, never launches.
+- **Bottom:** Start / Cancel. `Tab`/`Shift+Tab` cycles controls;
   `Ctrl+S` or `Ctrl+Enter` starts explicitly. `Esc` closes just the overlay,
   retaining the draft/selection and the underlying page.
 
 The catalog comes from authenticated GitHub access across organizations, with
 both viewer and owner affiliations included. Names and topics are cached on
-the server; clients never query GitHub. Each issue keeps its own draft and
+the server; clients never query GitHub. Each page keeps its own draft and
 selection. Start submits a durable launch request; the overlay closes as soon
 as the server accepts it, rather than waiting for repositories or agent startup.
 The saved work item shows preparation phases and repository progress, then
-its session. Home quick-start stays repository-free and also returns on acceptance.
+its session. Pull requests whose repository is not in the catalog cannot be
+started.
 
 You can start another task while earlier work prepares. Work-item progress is
 polled every second while launching, and the dashboard every two seconds while
@@ -178,7 +161,7 @@ any launch is pending (otherwise seven seconds). Background completion never
 changes your selection or focuses Herdr. Read failures retain last-known state;
 quitting stops client polling, not server preparation/startup.
 
-Validation errors stay in the setup dialog. Later preparation/startup failures
+Validation errors stay in the launch dialog. Later preparation/startup failures
 appear on the saved work item with **Retry saved prompt**, which asks the
 server to run that launch again with its saved prompt, template/repositories
 and harness options; ready worktrees are reused. Uncertain launches (an
@@ -203,14 +186,14 @@ continued. Inactive work needs explicit reactivation first. Session states
   columns it hides, Home lists active work instead and Tab skips it.
 - Shaded header/footer bars and navigation panel, a `▌` selection bar and
   Home entries as padded two-row cards; under 26 body rows views fall back to
-  one row per entry. Layouts fit from 36×10 (phone SSH) up; the Jira start overlay
+  one row per entry. Layouts fit from 36×10 (phone SSH) up; the launch dialog
   shows one pane at a time when narrow, following focus.
 - Polling coalesces refreshes; read failures retain actual last-good data. The
   header and footer distinguish last-known data from no data, never inventing
   a cache.
 - Submission preserves Unicode, blank lines and boundary/pasted whitespace.
   Empty validation alone uses trim. Paste chunks never trigger commands.
-- Drafts are isolated by work/Jira/Home. A draft keeps only its prompt,
+- Drafts are isolated by Home, work item, Jira issue and review. A draft keeps only its prompt,
   selections and, while a launch got no answer, its request ID. Rejections
   retain the exact text.
 - Resending an unanswered launch reuses its request ID, so the server replays
