@@ -101,7 +101,7 @@ test('launches send the chosen harness and overrides, and the choice outlives th
   const client = {
     quickStart: async (_prompt: string, _jira?: string, agentId?: string, overrides?: ToolLaunchOptionsById) => {
       calls.push({ agentId, overrides });
-      return { details: { workItem: { id: 'work' }, metas: [] }, launch: { ok: true, error: null } };
+      return { details: { workItem: { id: 'work' }, attachments: [] }, launch: { ok: true, error: null } };
     },
   } as unknown as LovelaceClient;
   await submitLaunch(state, { client, refreshDashboard() {}, newRequestId: () => 'id-1' }, 'Do it');

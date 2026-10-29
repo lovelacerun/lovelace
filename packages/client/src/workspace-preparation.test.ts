@@ -1,19 +1,18 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import type { RepositoryWorkspaceMetaPayload, WorkItemDetails } from '@lovelace/core';
+import type { Worktree, WorkItemDetails } from '@lovelace/core';
 import { ApiError, LovelaceClient } from './client.js';
 import { WorkspacePreparationWaitError } from './workspace-preparation.js';
 
-const workspace = (repoId: string, status: RepositoryWorkspaceMetaPayload['status']): RepositoryWorkspaceMetaPayload => ({
+const workspace = (repoId: string, status: Worktree['status']): Worktree => ({
   repoId, repoName: repoId, repoPath: `/repos/${repoId}`, role: 'primary', workspaceMode: 'fresh',
   worktreePath: `/work/${repoId}`, branchName: 'lovelace/fixture', baseBranch: 'main', remoteBranch: null,
   sourceExternalId: null, installCommand: null, installedAt: null, cleanedAt: null, preparedAt: '2026-01-01T00:00:00Z', status,
 });
-const details = (...workspaces: RepositoryWorkspaceMetaPayload[]): WorkItemDetails => ({
+const details = (...workspaces: Worktree[]): WorkItemDetails => ({
   workItem: { id: 'work', title: 'Fixture', state: 'active', notes: null, createdAt: '', updatedAt: '', startedAt: null, completedAt: null },
-  metas: workspaces.map(payload => ({
-    id: payload.repoId, workItemId: 'work', metaType: 'repository', provider: 'github', externalId: payload.repoId,
-    payloadJson: JSON.stringify(payload), createdAt: '', updatedAt: '',
+  attachments: workspaces.map(payload => ({
+    id: payload.repoId, workItemId: 'work', type: 'worktree' as const, payload, createdAt: '', updatedAt: '',
   })),
 });
 
@@ -46,7 +45,7 @@ test('polling survives preparation longer than the default 15-second HTTP deadli
   const result = await promise;
   assert.equal(posts, 1);
   assert.deepEqual(progress.at(-1), ['ready', 'failed']);
-  assert.equal(JSON.parse(result.metas[0]!.payloadJson!).dependenciesReused, true);
+  assert.equal((result.attachments[0]!.payload as Worktree).dependenciesReused, true);
 });
 
 test('interrupting the wait reports still preparing and an inspect command, removes listeners and never resubmits', async () => {

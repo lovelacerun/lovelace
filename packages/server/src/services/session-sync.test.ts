@@ -5,8 +5,8 @@ import type { HerdrClient } from '../herdr/herdr-client.js';
 import { CONNECTED_POLL_MS, DISCONNECTED_POLL_MS, startSessionSync } from './session-sync.js';
 
 function fixture() {
-  const sessions = [{ id: 'm1', workItemId: 'work', metaType: 'session', payloadJson: JSON.stringify({ agentName: 'll-1', status: 'running', terminalRef: { paneId: 'w1:p1' } }) }];
-  const database = { listWorkItemMeta: () => sessions, updateWorkItemMetaPayload() {}, recordWorkActivity() {}, recordWorkActivityOnce() {} } as unknown as DatabaseState;
+  const sessions = [{ id: 'm1', workItemId: 'work', type: 'session', payload: { agentName: 'll-1', status: 'running', terminalRef: { paneId: 'w1:p1' } } }];
+  const database = { listAttachmentsOfType: () => sessions, updateAttachment() {}, recordWorkActivity() {}, recordWorkActivityOnce() {} } as unknown as DatabaseState;
   let release: () => void = () => {};
   let listCalls = 0;
   const herdr = {

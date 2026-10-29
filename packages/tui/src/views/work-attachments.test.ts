@@ -1,15 +1,15 @@
 import assert from 'node:assert/strict';
 import { it } from 'node:test';
 import { stripTerminalSequences, visibleWidth } from '@earendil-works/pi-tui';
-import type { WorkItemDetails } from '@lovelace/core';
+import type { Attachment } from '@lovelace/core';
 import { AppState } from '../state.js';
 import { DocumentBuilder } from './common.js';
 import { jiraCardBg, prCardBg, success, danger, reset, selectedBg } from '../theme.js';
 import { renderAttachments } from './work-attachments.js';
 
-type Meta = WorkItemDetails['metas'][number];
-function meta(metaType: Meta['metaType'], data: Record<string, unknown>): Meta {
-  return { id: 'meta', workItemId: 'work', metaType, externalId: 'ref', payloadJson: JSON.stringify(data), provider: null, createdAt: '', updatedAt: '' };
+type Link = Attachment<'tracker-item' | 'pull-request' | 'change-request'>;
+function meta(type: Link['type'], data: Record<string, unknown>): Link {
+  return { id: 'meta', workItemId: 'work', type, externalId: 'ref', payload: data, provider: 'fixture', createdAt: '', updatedAt: '' } as unknown as Link;
 }
 const jira = meta('tracker-item', { key: 'PROJ-1471', title: 'Regenerate the audio narration', status: 'In Review' });
 const pr = meta('pull-request', { repoFullName: 'examplecom/text-to-speech', number: 374, status: 'draft', reviewDecision: 'APPROVED', buildStatus: 'success' });
@@ -67,7 +67,7 @@ it('stacks providers on narrow terminals and keeps empty states honest', () => {
 });
 
 it('normalizes provider status casing without treating unknown as a warning', () => {
-  const lines = renderAttachments([meta('pull-request', { ...JSON.parse(pr.payloadJson!), reviewDecision: 'approved', buildStatus: 'SUCCESS' })], 100);
+  const lines = renderAttachments([meta('pull-request', { ...pr.payload, reviewDecision: 'approved', buildStatus: 'SUCCESS' })], 100);
   assert.match(plain(lines), /✓ Approved  ✓ Build passed/);
   assert.ok(lines.some(line => line.includes(success + '✓ Build passed')));
 });
@@ -77,8 +77,8 @@ for (const width of [31, 50, 64, 80, 120]) {
     const state = new AppState({ onInvalidate() {} });
     state.focus = 'content';
     const linked = [
-      meta('tracker-item', { ...JSON.parse(jira.payloadJson!), url: 'https://jira.example/browse/PROJ-1471' }),
-      meta('pull-request', { ...JSON.parse(pr.payloadJson!), url: 'https://github.com/example/service/pull/374' }),
+      meta('tracker-item', { ...jira.payload, url: 'https://jira.example/browse/PROJ-1471' }),
+      meta('pull-request', { ...pr.payload, url: 'https://github.com/example/service/pull/374' }),
     ];
     for (const selected of [0, 1]) {
       state.contentSelectedIndex = selected;
@@ -86,7 +86,7 @@ for (const width of [31, 50, 64, 80, 120]) {
       builder.line('Header');
       for (const line of renderAttachments(linked, width, builder)) builder.line(line);
       const doc = builder.build();
-      assert.deepEqual(doc.actions, linked.map(item => ({ kind: 'open-url', url: JSON.parse(item.payloadJson!).url })));
+      assert.deepEqual(doc.actions, linked.map(item => ({ kind: 'open-url', url: item.payload.url })));
       assert.match(stripTerminalSequences(doc.lines[doc.selectedRow]!), selected === 0 ? /› PROJ-1471/ : /› #374/);
       assert.ok(doc.lines[doc.selectedRow]!.includes(selectedBg));
       for (const line of doc.lines) assert.ok(visibleWidth(line) <= width);

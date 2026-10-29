@@ -6,7 +6,7 @@ import test from 'node:test';
 import type { JiraIssueSummary, LovelaceConfig } from '@lovelace/core';
 import { fixtureProviders, storedSnapshot } from '../test-support/providers.js';
 import { openDatabase } from '../database.js';
-import { createActiveWorkItemFromMetas, createManualWorkItem } from '../repositories/work-item-repository.js';
+import { createActiveWorkItem, createManualWorkItem } from '../repositories/work-item-repository.js';
 import { buildDashboard, startOfPreviousLocalDay } from './dashboard-service.js';
 
 function configForRoot(root: string): LovelaceConfig {
@@ -50,9 +50,9 @@ test('dashboard pendingJiraIssues excludes attached + terminal issues', async ()
     const done = jiraIssue('3', { status: 'Done' });
     await providers.setAssigned([open, attached, done]);
 
-    createActiveWorkItemFromMetas(database, {
+    createActiveWorkItem(database, {
       title: 'Attached',
-      metas: [{ metaType: 'tracker-item', provider: 'jira', externalId: attached.id, payload: attached }],
+      attachments: [{ type: 'tracker-item', provider: 'jira', externalId: attached.id, payload: attached }],
     });
 
     const dashboard = buildDashboard({

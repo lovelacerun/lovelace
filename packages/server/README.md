@@ -18,7 +18,7 @@ workspaces, tabs or panes.
 `src/services/session-service.ts` owns sessions:
 
 - Launch: open a shell in the work item's workspace (created on first use,
-  recorded as a `herdr-workspace` meta, tagged `lovelace=<workItemId>`), run
+  recorded as a `herdr-workspace` attachment, tagged `lovelace=<workItemId>`), run
   `herdr agent start` with native flags only, then `herdr agent prompt`. A new
   shell that is not ready yet is retried briefly. An agent that opens blocked
   keeps its prompt pending until Herdr reports it idle.
@@ -55,7 +55,7 @@ without launching it. Independent work items run concurrently; pane allocation
 alone is serialized per item to keep one Herdr workspace with distinct tabs.
 Server startup marks orphaned launches uncertain, never replays them.
 
-Repository metas are persisted as `pending` before preparation starts. Coriol
+Worktrees are persisted as `pending` before preparation starts. Coriol
 events expose `preparing` and the latest phase; each ready/failed result is
 saved independently. Overlapping requests coalesce per work item/repository
 (and review source). `POST /work-items/:id/repositories` retains its synchronous

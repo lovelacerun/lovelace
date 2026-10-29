@@ -1,6 +1,6 @@
-import type { HerdrWorkspaceMetaPayload, WorkItem } from '@lovelace/core';
+import type { WorkItem } from '@lovelace/core';
 import type { DatabaseState } from '../database.js';
-import { addWorkItemMetas } from '../repositories/work-item-repository.js';
+import { addAttachments } from '../repositories/work-item-repository.js';
 import type { HerdrClient } from './herdr-client.js';
 
 /** Workspace token naming the owning work item. Herdr forgets tokens on restart; Lovelace re-reports them. */
@@ -22,9 +22,9 @@ export function openLaunchPane(database: DatabaseState, herdr: HerdrClient, work
 export function renameWorkItemWorkspace(database: DatabaseState, herdr: HerdrClient, workItemId: string): Promise<void> {
   return serialize(database, workItemId, async () => {
     const workItem = database.getWorkItem(workItemId);
-    const meta = database.listWorkItemMeta(workItemId).find(entry => entry.metaType === 'herdr-workspace');
-    if (!workItem || !meta?.externalId) return;
-    const recorded = await herdr.getWorkspace(meta.externalId);
+    const attachment = database.listAttachmentsOfType('herdr-workspace', workItemId)[0];
+    if (!workItem || !attachment) return;
+    const recorded = await herdr.getWorkspace(attachment.payload.workspaceId);
     const owner = recorded?.tokens[WORK_ITEM_TOKEN];
     if (!recorded || (owner !== undefined && owner !== workItemId)) return;
     await herdr.renameWorkspace(recorded.workspaceId, workspaceLabel(workItem));
@@ -43,8 +43,8 @@ async function serialize<T>(database: DatabaseState, workItemId: string, run: ()
 }
 
 async function openLaunchPaneUnlocked(database: DatabaseState, herdr: HerdrClient, workItem: WorkItem, input: { cwd: string; label: string }): Promise<LaunchPane> {
-  const meta = database.listWorkItemMeta(workItem.id).find(entry => entry.metaType === 'herdr-workspace');
-  const recorded = meta?.externalId ? await herdr.getWorkspace(meta.externalId) : null;
+  const attachment = database.listAttachmentsOfType('herdr-workspace', workItem.id)[0];
+  const recorded = attachment ? await herdr.getWorkspace(attachment.payload.workspaceId) : null;
   const owner = recorded?.tokens[WORK_ITEM_TOKEN];
   if (recorded && (owner === undefined || owner === workItem.id)) {
     if (owner === undefined) await herdr.reportWorkspaceTokens(recorded.workspaceId, { [WORK_ITEM_TOKEN]: workItem.id });
@@ -54,10 +54,9 @@ async function openLaunchPaneUnlocked(database: DatabaseState, herdr: HerdrClien
   // The new workspace's root shell hosts this launch; no extra tab.
   const created = await herdr.createWorkspace({ cwd: input.cwd, label: workspaceLabel(database.getWorkItem(workItem.id) ?? workItem) });
   await herdr.reportWorkspaceTokens(created.workspaceId, { [WORK_ITEM_TOKEN]: workItem.id });
-  const payload: HerdrWorkspaceMetaPayload = { workspaceId: created.workspaceId, createdAt: new Date().toISOString() };
   database.transaction(() => {
-    if (meta?.externalId) database.deleteWorkItemMetasByExternalIds(workItem.id, 'herdr-workspace', 'herdr', [meta.externalId]);
-    addWorkItemMetas(database, workItem.id, [{ metaType: 'herdr-workspace', provider: 'herdr', externalId: created.workspaceId, payload }]);
+    if (attachment) database.deleteAttachment('herdr-workspace', attachment.id);
+    addAttachments(database, workItem.id, [{ type: 'herdr-workspace', payload: { workspaceId: created.workspaceId } }]);
   });
   return created;
 }

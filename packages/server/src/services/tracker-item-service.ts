@@ -1,10 +1,9 @@
-import type { JiraIssueSummary, WorkItemMeta } from '@lovelace/core';
+import type { Attachment, JiraIssueSummary } from '@lovelace/core';
 import type { DatabaseState } from '../database.js';
 import type { CachedJira } from '../cached-providers.js';
 import groupBy from '@nkzw/core/groupBy.js';
-import safeParse from '@nkzw/core/safeParse.js';
 import { isNonEmptyString, truncateText } from '../helpers.js';
-import { addWorkItemMetas } from '../repositories/work-item-repository.js';
+import { addAttachments } from '../repositories/work-item-repository.js';
 
 interface JiraIssueRef {
   /** Issue key ("PROJ-123") or numeric Jira issue id. */
@@ -42,35 +41,29 @@ export async function attachJiraIssueToWorkItem(
   jira: Pick<CachedJira, 'isConfigured' | 'fetchIssue'>,
   workItemId: string,
   ref: JiraIssueRef,
-): Promise<WorkItemMeta | null> {
+): Promise<Attachment<'tracker-item'> | null> {
   if (!database.getWorkItem(workItemId)) return null;
   if (!jira.isConfigured()) throw new Error('Jira is not configured');
   const issue = await jira.fetchIssue(ref.key);
   if (!issue) throw new Error(`Jira issue not found: ${ref.key}`);
   database.deleteInboxMeta('tracker-item', 'jira', issue.id);
   return database.transaction(() => {
-    const meta = upsertTrackerItemMeta(database, workItemId, issue);
+    const attachment = upsertTrackerItem(database, workItemId, issue);
     keyWorkItemTitle(database, workItemId);
-    return meta;
+    return attachment;
   });
 }
 
-/** Detaches by the meta external id (Jira issue id) or by issue key. */
+/** Detaches by the attachment's external id (Jira issue id) or by issue key. */
 export function detachJiraIssueFromWorkItem(database: DatabaseState, workItemId: string, idOrKey: string): boolean {
   if (!database.getWorkItem(workItemId)) return false;
   const needle = idOrKey.trim();
-  const externalIds = database
-    .listWorkItemMeta(workItemId)
-    .filter((meta) => meta.metaType === 'tracker-item' && meta.provider === 'jira' && meta.externalId)
-    .filter((meta) => meta.externalId === needle || parsePayload(meta)?.key?.toUpperCase() === needle.toUpperCase())
-    .map((meta) => meta.externalId as string);
-  if (externalIds.length === 0) return true;
+  const detached = jiraIssues(database, workItemId)
+    .filter((attachment) => attachment.externalId === needle || attachment.payload.key?.toUpperCase() === needle.toUpperCase());
+  if (detached.length === 0) return true;
   database.transaction(() => {
-    const keys = database.listWorkItemMeta(workItemId)
-      .filter((meta) => meta.metaType === 'tracker-item' && externalIds.includes(meta.externalId!))
-      .map((meta) => parsePayload(meta)?.key)
-      .filter(isNonEmptyString);
-    database.deleteWorkItemMetasByExternalIds(workItemId, 'tracker-item', 'jira', externalIds);
+    const keys = detached.map((attachment) => attachment.payload.key).filter(isNonEmptyString);
+    database.deleteLinkAttachments(workItemId, 'tracker-item', 'jira', detached.map((attachment) => attachment.externalId));
     database.touchWorkItem(workItemId);
     const title = database.getWorkItem(workItemId)!.title;
     const key = keys.find((entry) => title.startsWith(`${entry}: `));
@@ -84,27 +77,28 @@ export function detachJiraIssueFromWorkItem(database: DatabaseState, workItemId:
 function keyWorkItemTitle(database: DatabaseState, workItemId: string): void {
   const title = database.getWorkItem(workItemId)?.title;
   if (!title || KEYED_TITLE_PATTERN.test(title)) return;
-  const key = database.listWorkItemMeta(workItemId)
-    .filter((meta) => meta.metaType === 'tracker-item' && meta.provider === 'jira')
-    .map((meta) => parsePayload(meta)?.key)
+  const key = jiraIssues(database, workItemId)
+    .map((attachment) => attachment.payload.key)
     .find(isNonEmptyString);
   if (key) database.updateWorkItem(workItemId, { title: `${key}: ${title}` });
 }
 
-function upsertTrackerItemMeta(database: DatabaseState, workItemId: string, issue: JiraIssueSummary): WorkItemMeta {
+function jiraIssues(database: DatabaseState, workItemId?: string): Array<Attachment<'tracker-item'>> {
+  return database.listAttachmentsOfType('tracker-item', workItemId).filter((attachment) => attachment.provider === 'jira');
+}
+
+function upsertTrackerItem(database: DatabaseState, workItemId: string, issue: JiraIssueSummary): Attachment<'tracker-item'> {
   const payload: JiraIssueSummary = {
     ...issue,
     descriptionText: truncateText(issue.descriptionText, DESCRIPTION_MAX_LENGTH),
   };
-  const current = database
-    .listWorkItemMeta(workItemId)
-    .find((meta) => meta.metaType === 'tracker-item' && meta.provider === 'jira' && meta.externalId === issue.id);
+  const current = jiraIssues(database, workItemId).find((attachment) => attachment.externalId === issue.id);
   if (current) {
-    const updated = database.updateWorkItemMetaPayload(current.id, payload);
+    const updated = database.updateAttachment('tracker-item', current.id, payload);
     database.touchWorkItem(workItemId);
     return updated ?? current;
   }
-  return addWorkItemMetas(database, workItemId, [{ metaType: 'tracker-item', provider: 'jira', externalId: issue.id, payload }])[0]!;
+  return addAttachments(database, workItemId, [{ type: 'tracker-item', provider: 'jira', externalId: issue.id, payload }])[0] as Attachment<'tracker-item'>;
 }
 
 interface RefreshAttachedTrackerIssuesDeps {
@@ -128,33 +122,26 @@ export async function refreshAttachedTrackerIssues(deps: RefreshAttachedTrackerI
 async function refreshAttachedTrackerIssuesOnce(deps: RefreshAttachedTrackerIssuesDeps): Promise<{ refreshed: number; failed: number }> {
   if (!deps.jira.isConfigured()) return { refreshed: 0, failed: 0 };
   const groups = groupBy(
-    deps.database.listWorkItemMeta().filter((meta) => meta.metaType === 'tracker-item' && meta.provider === 'jira' && meta.externalId),
-    (meta) => {
-      const key = parsePayload(meta)?.key;
-      return isNonEmptyString(key) ? key : meta.externalId!;
-    },
+    jiraIssues(deps.database),
+    (attachment) => isNonEmptyString(attachment.payload.key) ? attachment.payload.key : attachment.externalId,
   );
 
   let refreshed = 0;
   let failed = 0;
-  for (const [lookup, metas] of groups) {
+  for (const [lookup, attachments] of groups) {
     try {
       const latest = await deps.jira.refreshIssue(lookup);
       if (!latest) continue;
       const payload = { ...latest, descriptionText: truncateText(latest.descriptionText, DESCRIPTION_MAX_LENGTH) };
-      for (const meta of metas) {
+      for (const attachment of attachments) {
         // May have been explicitly detached while the provider request was pending.
-        if (deps.database.updateWorkItemMetaPayload(meta.id, payload)) refreshed += 1;
+        if (deps.database.updateAttachment('tracker-item', attachment.id, payload)) refreshed += 1;
       }
     } catch (error) {
-      failed += metas.length;
+      failed += attachments.length;
       deps.logger.warn({ err: error, lookup }, 'Failed to refresh attached Jira issue');
     }
   }
   if (refreshed > 0 || failed > 0) deps.logger.info({ refreshed, failed }, 'Refreshed attached tracker issues');
   return { refreshed, failed };
-}
-
-function parsePayload(meta: WorkItemMeta): { key?: string } | null {
-  return safeParse<{ key?: string }>(meta.payloadJson);
 }

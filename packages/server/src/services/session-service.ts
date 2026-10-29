@@ -2,15 +2,14 @@ import { randomUUID } from 'node:crypto';
 import { dirname, resolve, sep } from 'node:path';
 import {
   CODING_HARNESSES, isCodingHarnessId,
-  type AgentCli, type AgentSessionState, type CodingHarnessId, type RepositoryWorkspaceMetaPayload, type StartWorkLaunchInput,
-  type ToolSessionMetaPayload, type WorkItemMeta,
+  type AgentCli, type AgentSession, type AgentSessionState, type Attachment, type CodingHarnessId, type StartWorkLaunchInput,
+  type WorkItemAttachment, type Worktree,
 } from '@lovelace/core';
-import safeParse from '@nkzw/core/safeParse.js';
 import type { DatabaseState } from '../database.js';
-import { metaSources, repositoryWorkspaces } from '../helpers.js';
+import { attachmentSources } from '../helpers.js';
 import { HerdrError, type HerdrClient, type HerdrPane } from '../herdr/herdr-client.js';
 import { openLaunchPane } from '../herdr/work-item-workspace.js';
-import { addWorkItemMetas, getWorkItemDetails } from '../repositories/work-item-repository.js';
+import { addAttachments, getWorkItemDetails } from '../repositories/work-item-repository.js';
 import { harnessArguments, isNativeSessionId } from '../tools/harness-arguments.js';
 import type { LoadedTool } from '../tools/tool-loader.js';
 import { emitActivity } from './activity-bus.js';
@@ -40,12 +39,12 @@ export class SessionRequestError extends Error {
  * workspace and submits the prompt. A session is recorded only once Herdr
  * detected its agent; a failed start leaves its tab for inspection.
  */
-export async function launchSessions(deps: SessionServiceDeps, workItemId: string, input: StartWorkLaunchInput): Promise<WorkItemMeta[]> {
+export async function launchSessions(deps: SessionServiceDeps, workItemId: string, input: StartWorkLaunchInput): Promise<Array<Attachment<'session'>>> {
   const { database, logger } = deps;
   const details = getWorkItemDetails(database, workItemId);
   if (!details) throw new SessionRequestError(404, 'work item not found');
   if (details.workItem.state !== 'active') throw new SessionRequestError(409, 'work item not active');
-  const allWorkspaces = readyWorkspaces(details.metas);
+  const allWorkspaces = readyWorkspaces(details.attachments);
   const selected = input.repoIds?.length ? allWorkspaces.filter(workspace => input.repoIds!.includes(workspace.repoId)) : allWorkspaces;
   if (selected.length === 0 && (allWorkspaces.length > 0 || input.repoIds?.length)) throw new Error('No ready repository workspaces match this launch');
   const harnesses = [...new Set(input.toolIds)].map(toolId => {
@@ -56,9 +55,9 @@ export async function launchSessions(deps: SessionServiceDeps, workItemId: strin
   });
   if (harnesses.length === 0) return [];
   const workItem = details.workItem;
-  const cwd = launchCwd(selected) ?? ensureTaskWorkspacePath(resolve(deps.config.lovelaceDir, 'workspaces'), workItemId, metaSources(details.metas), workItem.title);
+  const cwd = launchCwd(selected) ?? ensureTaskWorkspacePath(resolve(deps.config.lovelaceDir, 'workspaces'), workItemId, attachmentSources(details.attachments), workItem.title);
 
-  const created: WorkItemMeta[] = [];
+  const created: Array<Attachment<'session'>> = [];
   const failures: string[] = [];
   for (const toolId of harnesses) {
     const title = harnessTitle(toolId);
@@ -76,16 +75,14 @@ export async function launchSessions(deps: SessionServiceDeps, workItemId: strin
       const promptPending = Boolean(prompt) && !(ready && await submitPrompt(deps.herdr, agentName, prompt!));
       // Herdr's integration usually reports the conversation at startup; record it before the agent can exit.
       const reported = (await deps.herdr.listPanes()).find(entry => entry.paneId === pane.paneId && entry.agent === toolId)?.agentSession;
-      const now = new Date().toISOString();
-      const payload: ToolSessionMetaPayload = {
+      const payload: AgentSession = {
         terminalRef: { workspaceId: pane.workspaceId, paneId: pane.paneId },
         agentName, nativeSessionId: nativeSessionId ?? reportedSessionId(toolId, reported), nativeSessionPath: reportedSessionPath(reported),
         toolId, options, promptId: input.promptId ?? null, prompt, ...(promptPending ? { promptPending } : {}), title, cwd,
         status: 'running', agentState: !ready ? 'blocked' : prompt && !promptPending ? 'working' : 'idle',
         metadata: { selectedRepoIds: selected.map(workspace => workspace.repoId) },
-        createdAt: now, updatedAt: now,
       };
-      created.push(...addWorkItemMetas(database, workItemId, [{ metaType: 'session', provider: toolId, externalId: agentName, payload }]));
+      created.push(addAttachments(database, workItemId, [{ type: 'session', payload }])[0] as Attachment<'session'>);
       logger.info({ workItemId, toolId, agentName, paneId: pane.paneId }, 'Started agent session in Herdr');
       emitActivity({ type: 'tool.launched', workItemId, message: `${title} launched` });
     } catch (error) {
@@ -105,29 +102,29 @@ const openQueues = new WeakMap<DatabaseState, Map<string, Promise<unknown>>>();
  * Focuses the session's live Herdr pane, or continues its exact native
  * conversation when the agent has ended. Never starts a fresh conversation.
  */
-export async function openSession(deps: SessionServiceDeps, workItemId: string, metaId: string): Promise<'focused' | 'continued'> {
+export async function openSession(deps: SessionServiceDeps, workItemId: string, sessionId: string): Promise<'focused' | 'continued'> {
   let queues = openQueues.get(deps.database);
   if (!queues) { queues = new Map(); openQueues.set(deps.database, queues); }
-  const previous = queues.get(metaId);
+  const previous = queues.get(sessionId);
   const task = (async () => {
     if (previous) await previous.catch(() => undefined);
-    return openSessionUnlocked(deps, workItemId, metaId);
+    return openSessionUnlocked(deps, workItemId, sessionId);
   })();
-  queues.set(metaId, task);
-  try { return await task; } finally { if (queues.get(metaId) === task) queues.delete(metaId); }
+  queues.set(sessionId, task);
+  try { return await task; } finally { if (queues.get(sessionId) === task) queues.delete(sessionId); }
 }
 
-async function openSessionUnlocked(deps: SessionServiceDeps, workItemId: string, metaId: string): Promise<'focused' | 'continued'> {
+async function openSessionUnlocked(deps: SessionServiceDeps, workItemId: string, sessionId: string): Promise<'focused' | 'continued'> {
   const { database, herdr } = deps;
   const details = getWorkItemDetails(database, workItemId);
   if (!details) throw new SessionRequestError(404, 'work item not found');
   if (details.workItem.state !== 'active') throw new SessionRequestError(409, 'work item not active');
-  const meta = details.metas.find(entry => entry.id === metaId && entry.metaType === 'session');
-  const session = meta ? parseSession(meta) : null;
-  if (!meta || !session || !isCodingHarnessId(session.toolId)) throw new SessionRequestError(404, 'session not found');
+  const attachment = details.attachments.find((entry): entry is Attachment<'session'> => entry.id === sessionId && entry.type === 'session');
+  if (!attachment || !isCodingHarnessId(attachment.payload.toolId)) throw new SessionRequestError(404, 'session not found');
+  const session = attachment.payload;
 
   const panes = await herdr.listPanes();
-  const current = applyObservation(database, meta, session, panes);
+  const current = applyObservation(database, attachment, panes);
   const pane = current.terminalRef ? panes.find(entry => entry.paneId === current.terminalRef!.paneId) : undefined;
   if (current.status === 'running' && pane) {
     await herdr.focusTab(pane.tabId);
@@ -138,7 +135,7 @@ async function openSessionUnlocked(deps: SessionServiceDeps, workItemId: string,
   const resume = toolId === 'pi' ? current.nativeSessionPath : current.nativeSessionId;
   if (!resume) throw new SessionRequestError(409, 'No native conversation was recorded for this session, so it cannot be continued. Start a new session instead.');
   const args = harnessArguments(toolId, current.options, resume);
-  const cwd = current.cwd ?? launchCwd(readyWorkspaces(details.metas));
+  const cwd = current.cwd ?? launchCwd(readyWorkspaces(details.attachments));
   if (!cwd) throw new SessionRequestError(409, 'Session working directory is unknown.');
 
   let target: { workspaceId: string; tabId: string; paneId: string } | null = null;
@@ -149,18 +146,17 @@ async function openSessionUnlocked(deps: SessionServiceDeps, workItemId: string,
       target = { workspaceId: pane.workspaceId, tabId: pane.tabId, paneId: pane.paneId };
     } catch (error) {
       if (!(error instanceof HerdrError)) throw error;
-      deps.logger.warn({ err: error, workItemId, metaId }, 'Ended session pane is not an idle shell; continuing in a new tab');
+      deps.logger.warn({ err: error, workItemId, sessionId }, 'Ended session pane is not an idle shell; continuing in a new tab');
     }
   }
   if (!target) {
     target = await openLaunchPane(database, herdr, details.workItem, { cwd, label: current.title ?? harnessTitle(toolId) });
     await startAgent(herdr, { name: current.agentName, kind: toolId, paneId: target.paneId, args }, { freshPane: true });
   }
-  database.updateWorkItemMetaPayload(meta.id, {
-    ...current, terminalRef: { workspaceId: target.workspaceId, paneId: target.paneId },
-    status: 'running', agentState: 'idle', updatedAt: new Date().toISOString(),
-  } satisfies ToolSessionMetaPayload);
-  database.recordWorkActivity({ workItemId, kind: 'session.continued', payload: { metaId: meta.id, provider: meta.provider } });
+  database.updateAttachment('session', attachment.id, {
+    ...current, terminalRef: { workspaceId: target.workspaceId, paneId: target.paneId }, status: 'running', agentState: 'idle',
+  });
+  database.recordWorkActivity({ workItemId, kind: 'session.continued', payload: { metaId: attachment.id, provider: toolId } });
   await herdr.focusTab(target.tabId);
   return 'continued';
 }
@@ -170,28 +166,23 @@ async function openSessionUnlocked(deps: SessionServiceDeps, workItemId: string,
  * conversation identity its integration reported, and the end of the agent.
  */
 export async function syncSessions(database: DatabaseState, herdr: HerdrClient, now = new Date()): Promise<void> {
-  const running = database.listWorkItemMeta().flatMap(meta => {
-    const session = meta.metaType === 'session' ? parseSession(meta) : null;
-    return session?.status === 'running' ? [{ meta, session }] : [];
-  });
+  const running = database.listAttachmentsOfType('session').filter(attachment => attachment.payload.status === 'running');
   if (running.length === 0) return;
   const panes = await herdr.listPanes();
-  for (const { meta, session } of running) {
-    const current = applyObservation(database, meta, session, panes, now);
+  for (const attachment of running) {
+    const current = applyObservation(database, attachment, panes, now);
     // A prompt held back by a startup dialog goes out once the agent is ready for input.
     if (current.promptPending && current.prompt && current.status === 'running' && current.agentState === 'idle'
       && await submitPrompt(herdr, current.agentName, current.prompt)) {
-      database.updateWorkItemMetaPayload(meta.id, { ...current, promptPending: false, agentState: 'working', updatedAt: now.toISOString() });
+      database.updateAttachment('session', attachment.id, { ...current, promptPending: false, agentState: 'working' });
     }
   }
 }
 
 /** Panes of sessions Lovelace still considers running, i.e. that Herdr listed at the last sync. */
 export function runningSessionPanes(database: DatabaseState): string[] {
-  return database.listWorkItemMeta().flatMap(meta => {
-    const session = meta.metaType === 'session' ? parseSession(meta) : null;
-    return session?.status === 'running' && session.terminalRef?.paneId ? [session.terminalRef.paneId] : [];
-  });
+  return database.listAttachmentsOfType('session').flatMap(({ payload: session }) =>
+    session.status === 'running' && session.terminalRef?.paneId ? [session.terminalRef.paneId] : []);
 }
 
 /**
@@ -226,7 +217,8 @@ async function submitPrompt(herdr: HerdrClient, agentName: string, prompt: strin
   }
 }
 
-function applyObservation(database: DatabaseState, meta: WorkItemMeta, session: ToolSessionMetaPayload, panes: HerdrPane[], now = new Date()): ToolSessionMetaPayload {
+function applyObservation(database: DatabaseState, attachment: Attachment<'session'>, panes: HerdrPane[], now = new Date()): AgentSession {
+  const session = attachment.payload;
   if (session.status !== 'running') return session;
   const pane = session.terminalRef ? panes.find(entry => entry.paneId === session.terminalRef!.paneId) : undefined;
   // Another agent in the same pane is not this session.
@@ -234,13 +226,13 @@ function applyObservation(database: DatabaseState, meta: WorkItemMeta, session: 
   const agentState: AgentSessionState = live ? live.agentStatus : 'ended';
   const nativeSessionId = reportedSessionId(session.toolId, live?.agentSession) ?? session.nativeSessionId;
   const nativeSessionPath = reportedSessionPath(live?.agentSession) ?? session.nativeSessionPath;
-  const next: ToolSessionMetaPayload = { ...session, status: live ? 'running' : 'ended', agentState, nativeSessionId, nativeSessionPath };
-  if (agentState === 'working') recordWorked(database, meta, now);
+  const next: AgentSession = { ...session, status: live ? 'running' : 'ended', agentState, nativeSessionId, nativeSessionPath };
+  if (agentState === 'working') recordWorked(database, attachment, now);
   if (next.status === session.status && next.agentState === session.agentState
     && next.nativeSessionId === session.nativeSessionId && next.nativeSessionPath === session.nativeSessionPath) return session;
-  database.updateWorkItemMetaPayload(meta.id, { ...next, updatedAt: now.toISOString() });
+  database.updateAttachment('session', attachment.id, next);
   if (next.agentState !== session.agentState) {
-    database.recordWorkActivity({ workItemId: meta.workItemId, kind: 'session.state-changed', payload: { metaId: meta.id, from: session.agentState, state: next.agentState } });
+    database.recordWorkActivity({ workItemId: attachment.workItemId, kind: 'session.state-changed', payload: { metaId: attachment.id, from: session.agentState, state: next.agentState } });
   }
   return next;
 }
@@ -254,16 +246,11 @@ function reportedSessionPath(reported: HerdrPane['agentSession'] | undefined): s
 }
 
 /** At most one `session.worked` record per session and local calendar day. */
-function recordWorked(database: DatabaseState, meta: WorkItemMeta, now: Date): void {
+function recordWorked(database: DatabaseState, attachment: Attachment<'session'>, now: Date): void {
   const day = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-  database.recordWorkActivityOnce(`session-worked:${meta.id}:${day}`, {
-    workItemId: meta.workItemId, kind: 'session.worked', occurredAt: now.toISOString(), payload: { metaId: meta.id, date: day },
+  database.recordWorkActivityOnce(`session-worked:${attachment.id}:${day}`, {
+    workItemId: attachment.workItemId, kind: 'session.worked', occurredAt: now.toISOString(), payload: { metaId: attachment.id, date: day },
   });
-}
-
-function parseSession(meta: WorkItemMeta): ToolSessionMetaPayload | null {
-  const payload = safeParse<ToolSessionMetaPayload>(meta.payloadJson);
-  return typeof payload?.agentName === 'string' ? payload : null;
 }
 
 /** Herdr agent names: `[a-z][a-z0-9_-]{0,31}`, unique among live agents. */
@@ -275,10 +262,11 @@ function harnessTitle(id: CodingHarnessId): string {
   return CODING_HARNESSES.find(harness => harness.id === id)!.title;
 }
 
-function readyWorkspaces(metas: WorkItemMeta[]): RepositoryWorkspaceMetaPayload[] {
-  const newest = new Map<string, RepositoryWorkspaceMetaPayload>();
-  for (const { payload: workspace } of repositoryWorkspaces(metas)) {
-    if (workspace.status !== 'ready') continue;
+function readyWorkspaces(attachments: WorkItemAttachment[]): Worktree[] {
+  const newest = new Map<string, Worktree>();
+  for (const attachment of attachments) {
+    if (attachment.type !== 'worktree' || attachment.payload.status !== 'ready') continue;
+    const workspace = attachment.payload;
     const existing = newest.get(workspace.worktreePath);
     if (!existing || existing.preparedAt < workspace.preparedAt) newest.set(workspace.worktreePath, workspace);
   }
@@ -286,7 +274,7 @@ function readyWorkspaces(metas: WorkItemMeta[]): RepositoryWorkspaceMetaPayload[
 }
 
 /** Worktrees live under a per-task directory; agents start there so one session spans all of them. */
-function launchCwd(workspaces: RepositoryWorkspaceMetaPayload[]): string | null {
+function launchCwd(workspaces: Worktree[]): string | null {
   if (workspaces.length === 0) return null;
   const parents = [...new Set(workspaces.map(workspace => dirname(workspace.worktreePath)))];
   if (parents.length === 1) return parents[0]!;

@@ -11,9 +11,9 @@ export function pendingReviewRequests(database: DatabaseState, github: Pick<Cach
     .filter((meta) => meta.sourceType === 'change-request' && meta.provider === 'github' && meta.state === 'dismissed')
     .map((meta) => meta.externalId));
   const workItemIds = new Set(database.listWorkItems().filter((item) => item.state !== 'cancelled').map((item) => item.id));
-  const attached = new Set(database.listWorkItemMeta()
-    .filter((meta) => meta.metaType === 'change-request' && meta.provider === 'github' && workItemIds.has(meta.workItemId))
-    .map((meta) => meta.externalId));
+  const attached = new Set(database.listAttachmentsOfType('change-request')
+    .filter((attachment) => attachment.provider === 'github' && workItemIds.has(attachment.workItemId))
+    .map((attachment) => attachment.externalId));
   return (github.peekReviewRequests()?.value ?? [])
     .filter((review) => !dismissed.has(review.id) && !attached.has(review.id))
     .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));

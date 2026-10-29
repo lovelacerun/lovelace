@@ -1,10 +1,9 @@
-import type { GitHubReviewRequest, InboxSourceType, JiraIssueSummary, LovelaceLink, WorkItem, WorkItemDetails, WorkItemMeta } from '@lovelace/core';
+import type { GitHubReviewRequest, InboxSourceType, JiraIssueSummary, LovelaceLink, WorkItem, WorkItemAttachment, WorkItemDetails } from '@lovelace/core';
 import groupBy from '@nkzw/core/groupBy.js';
 import isPresent from '@nkzw/core/isPresent.js';
-import safeParse from '@nkzw/core/safeParse.js';
 import type { CachedGitHub, CachedJira } from '../cached-providers.js';
 import type { DatabaseState } from '../database.js';
-import { asRecord, dedupeLinks, isNonEmptyString, truncateText } from '../helpers.js';
+import { dedupeLinks, isNonEmptyString, truncateText } from '../helpers.js';
 import { pendingReviewRequests } from './review-request-service.js';
 
 export interface InboxProviders {
@@ -49,13 +48,13 @@ interface InboxResponse {
 
 export function buildInbox(database: DatabaseState, providers: InboxProviders): InboxResponse {
   const workItems = database.listWorkItems();
-  const metas = database.listWorkItemMeta();
-  const metasByWorkItemId = groupBy(metas, (meta) => meta.workItemId);
+  const attachments = database.listAttachments();
+  const attachmentsByWorkItemId = groupBy(attachments, (attachment) => attachment.workItemId);
   const dismissedSourceKeys = buildDismissedSourceKeySet(database.listInboxMeta());
-  const linkedSourceKeys = buildLinkedSourceKeySet(workItems, metas);
+  const linkedSourceKeys = buildLinkedSourceKeySet(workItems, attachments);
   const assignedIssues = providers.jira.peekAssignedIssues()?.value ?? [];
 
-  const relatedWorkItemsBySourceKey = buildRelatedWorkItemRefMap(workItems, metas);
+  const relatedWorkItemsBySourceKey = buildRelatedWorkItemRefMap(workItems, attachments);
 
   const jiraIssues = assignedIssues
     .filter((issue) => !dismissedSourceKeys.has(sourceKey('tracker-item', 'jira', issue.id)))
@@ -64,7 +63,7 @@ export function buildInbox(database: DatabaseState, providers: InboxProviders): 
 
   const activeWorkItems = workItems
     .filter((workItem) => workItem.state === 'active')
-    .map((workItem) => toWorkItemInboxItem(workItem, metasByWorkItemId.get(workItem.id) ?? []));
+    .map((workItem) => toWorkItemInboxItem(workItem, attachmentsByWorkItemId.get(workItem.id) ?? []));
 
   return {
     activeWorkItems: sortByUpdatedAt(activeWorkItems),
@@ -73,17 +72,17 @@ export function buildInbox(database: DatabaseState, providers: InboxProviders): 
   };
 }
 
-function toWorkItemInboxItem(workItem: WorkItem, metas: WorkItemMeta[]): InboxItem {
-  const firstUrl = findPrimaryUrl(metas);
+function toWorkItemInboxItem(workItem: WorkItem, attachments: WorkItemAttachment[]): InboxItem {
+  const firstUrl = findPrimaryUrl(attachments);
   return {
     id: workItem.id,
     sourceType: 'work-item',
     title: workItem.title,
-    subtitle: summarizeWorkItemMeta(workItem, metas),
+    subtitle: summarizeWorkItem(workItem, attachments),
     url: firstUrl,
     updatedAt: workItem.updatedAt,
-    links: extractManualTrackerLinks(metas),
-    raw: { workItem, metas },
+    links: extractManualTrackerLinks(attachments),
+    raw: { workItem, attachments },
   };
 }
 
@@ -130,11 +129,12 @@ function toSlimTrackerIssue(issue: JiraIssueSummary): JiraIssueSummary {
   };
 }
 
-function summarizeWorkItemMeta(workItem: WorkItem, metas: WorkItemMeta[]): string | null {
-  const trackerCount = metas.filter((meta) => meta.metaType === 'tracker-item').length;
-  const changeRequestCount = metas.filter((meta) => meta.metaType === 'change-request').length;
-  const sessionCount = metas.filter((meta) => meta.metaType === 'session').length;
-  const repositoryCount = metas.filter((meta) => meta.metaType === 'repository').length;
+function summarizeWorkItem(workItem: WorkItem, attachments: WorkItemAttachment[]): string | null {
+  const count = (type: WorkItemAttachment['type']) => attachments.filter((attachment) => attachment.type === type).length;
+  const trackerCount = count('tracker-item');
+  const changeRequestCount = count('change-request');
+  const sessionCount = count('session');
+  const repositoryCount = count('worktree');
   const parts = [
     trackerCount > 0 ? `${trackerCount} tracker ${trackerCount === 1 ? 'item' : 'items'}` : null,
     changeRequestCount > 0 ? `${changeRequestCount} change ${changeRequestCount === 1 ? 'request' : 'requests'}` : null,
@@ -147,50 +147,49 @@ function summarizeWorkItemMeta(workItem: WorkItem, metas: WorkItemMeta[]): strin
   return workItem.state;
 }
 
-function findPrimaryUrl(metas: WorkItemMeta[]): string | null {
-  const linkedItems = metas.filter((item) => item.metaType === 'change-request' || item.metaType === 'tracker-item');
+function findPrimaryUrl(attachments: WorkItemAttachment[]): string | null {
+  const linkedItems = attachments.filter((attachment) => attachment.type === 'change-request' || attachment.type === 'tracker-item');
   if (linkedItems.length !== 1) return null;
-  const url = asRecord(safeParse(linkedItems[0]!.payloadJson)).url;
+  const url = linkedItems[0]!.payload.url;
   return isNonEmptyString(url) ? url : null;
 }
 
-function extractManualTrackerLinks(metas: WorkItemMeta[]): LovelaceLink[] {
+function extractManualTrackerLinks(attachments: WorkItemAttachment[]): LovelaceLink[] {
   return dedupeLinks(
-    metas.flatMap((meta) => {
-      if (meta.metaType !== 'tracker-item' || !meta.externalId) return [];
-      const payload = asRecord(safeParse(meta.payloadJson));
+    attachments.flatMap((attachment) => {
+      if (attachment.type !== 'tracker-item') return [];
       return [
         {
           type: 'tracker-item' as const,
-          provider: meta.provider ?? 'unknown',
-          externalId: meta.externalId,
-          key: typeof payload.key === 'string' ? payload.key : meta.externalId,
-          url: typeof payload.url === 'string' ? payload.url : null,
+          provider: attachment.provider,
+          externalId: attachment.externalId,
+          key: attachment.payload.key || attachment.externalId,
+          url: attachment.payload.url || null,
         },
       ];
     }),
   );
 }
 
-function buildLinkedSourceKeySet(workItems: WorkItem[], metas: WorkItemMeta[]): Set<string> {
+function buildLinkedSourceKeySet(workItems: WorkItem[], attachments: WorkItemAttachment[]): Set<string> {
   const hiddenStates = new Set<WorkItem['state']>(['done', 'cancelled']);
   const activeWorkItemIds = new Set(workItems.filter((workItem) => !hiddenStates.has(workItem.state)).map((workItem) => workItem.id));
   return new Set(
-    metas
-      .filter((meta) => activeWorkItemIds.has(meta.workItemId))
-      .filter((meta) => (meta.metaType === 'tracker-item' || meta.metaType === 'change-request') && meta.externalId)
-      .map((meta) => sourceKey(meta.metaType as InboxSourceType, meta.provider, meta.externalId as string)),
+    attachments
+      .filter((attachment) => activeWorkItemIds.has(attachment.workItemId))
+      .flatMap((attachment) => attachment.type === 'tracker-item' || attachment.type === 'change-request'
+        ? [sourceKey(attachment.type, attachment.provider, attachment.externalId)] : []),
   );
 }
 
-function buildRelatedWorkItemRefMap(workItems: WorkItem[], metas: WorkItemMeta[]): Map<string, RelatedWorkItemRef[]> {
+function buildRelatedWorkItemRefMap(workItems: WorkItem[], attachments: WorkItemAttachment[]): Map<string, RelatedWorkItemRef[]> {
   const workItemsById = new Map(workItems.map((workItem) => [workItem.id, workItem]));
   const grouped = new Map<string, RelatedWorkItemRef[]>();
-  for (const meta of metas) {
-    if ((meta.metaType !== 'tracker-item' && meta.metaType !== 'change-request') || !meta.externalId) continue;
-    const workItem = workItemsById.get(meta.workItemId);
+  for (const attachment of attachments) {
+    if (attachment.type !== 'tracker-item' && attachment.type !== 'change-request') continue;
+    const workItem = workItemsById.get(attachment.workItemId);
     if (!workItem) continue;
-    const key = sourceKey(meta.metaType as InboxSourceType, meta.provider, meta.externalId);
+    const key = sourceKey(attachment.type, attachment.provider, attachment.externalId);
     const refs = grouped.get(key) ?? [];
     if (!refs.some((ref) => ref.id === workItem.id)) {
       refs.push({ id: workItem.id, title: workItem.title, state: workItem.state, completedAt: workItem.completedAt });

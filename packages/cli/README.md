@@ -17,7 +17,7 @@ is replaced. Homebrew's wrapper exports its stable `opt` path as
 
 ```sh
 lovelace work-items launch <id> <pi|codex|claude> (--prompt <text> | --prompt-file <path>)
-lovelace work-items open <id> <session-meta-id>
+lovelace work-items open <id> <session-id>
 ```
 
 Launch requires exactly one of `--prompt`/`--prompt-file` (optional `--model`,

@@ -3,9 +3,11 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test, { type TestContext } from 'node:test';
-import type { LovelaceConfig, ToolSessionMetaPayload } from '@lovelace/core';
+import type { AgentSession, JiraIssueSummary, LovelaceConfig } from '@lovelace/core';
+import { DatabaseSync } from 'node:sqlite';
 import { openDatabase } from '../database.js';
-import { addWorkItemMetas, createManualWorkItem } from '../repositories/work-item-repository.js';
+import { migrations } from '../migrations.js';
+import { addAttachments, createManualWorkItem } from '../repositories/work-item-repository.js';
 import { FakeHerdr } from '../test-support/fake-herdr.js';
 import { syncSessions } from './session-service.js';
 
@@ -18,6 +20,10 @@ async function fixture(t: TestContext) {
 }
 
 const logger = { info() {}, warn() {}, error() {} };
+
+function jiraIssue(status: string): JiraIssueSummary {
+  return { id: '1', key: 'PROJ-1', title: 'Issue', url: 'https://jira.example/browse/PROJ-1', status, statusCategory: null, issueType: null, updatedAt: 'now', descriptionText: null } as JiraIssueSummary;
+}
 
 test('activity records real DB mutations once and survives restart without backfill', async (t) => {
   const { database, config } = await fixture(t);
@@ -48,16 +54,23 @@ test('activity records real DB mutations once and survives restart without backf
 
 test('additive activity schema preserves legacy work/metas and invents no v3 history', async (t) => {
   const { database, config } = await fixture(t);
-  const work = createManualWorkItem(database, { title: 'Legacy' });
-  addWorkItemMetas(database, work.id, [{ metaType: 'tracker-item', provider: 'jira', externalId: '1', payload: { key: 'PROJ-1' } }]);
-  // Simulate an unversioned v3 database that had no activity table. This is temporary fixture state only.
-  database.db.exec('drop table work_activity');
-  database.db.exec('pragma user_version = 0');
   database.db.close();
+  // Simulate an unversioned v3 database that had no activity table. This is temporary fixture state only.
+  const legacy = new DatabaseSync(join(config.lovelaceDir, 'state.db'));
+  legacy.exec('drop table work_activity; drop table work_launch_operations; drop table work_item_attachments; drop table worktrees; drop table sessions');
+  migrations[0]!(legacy);
+  legacy.exec(`
+    drop table work_activity;
+    insert into work_items (id, title, state, created_at, updated_at) values ('w1', 'Legacy', 'active', 'now', 'now');
+    insert into work_item_meta (id, work_item_id, meta_type, provider, external_id, payload_json, created_at, updated_at)
+      values ('m1', 'w1', 'tracker-item', 'jira', '1', '{"key":"PROJ-1"}', 'now', 'now');
+    pragma user_version = 0;
+  `);
+  legacy.close();
   const reopened = openDatabase(config);
   try {
-    assert.equal(reopened.getWorkItem(work.id)!.title, 'Legacy');
-    assert.equal(reopened.listWorkItemMeta(work.id).length, 1);
+    assert.equal(reopened.getWorkItem('w1')!.title, 'Legacy');
+    assert.equal(reopened.listAttachments('w1').length, 1);
     assert.deepEqual(reopened.listWorkActivity(), []);
   } finally { reopened.db.close(); }
 });
@@ -65,26 +78,25 @@ test('additive activity schema preserves legacy work/metas and invents no v3 his
 test('metadata creation activity is atomic and provider payload refresh is not work', async (t) => {
   const { database } = await fixture(t);
   const work = createManualWorkItem(database, { title: 'Metas' });
-  const [meta] = addWorkItemMetas(database, work.id, [{ metaType: 'tracker-item', provider: 'jira', externalId: '1', payload: { key: 'PROJ-1', status: 'To Do' } }]);
+  const [attachment] = addAttachments(database, work.id, [{ type: 'tracker-item', provider: 'jira', externalId: '1', payload: jiraIssue('To Do') }]);
   const before = database.listWorkActivity();
-  database.updateWorkItemMetaPayload(meta!.id, { key: 'PROJ-1', status: 'Done' });
+  database.updateAttachment('tracker-item', attachment!.id, jiraIssue('Done'));
   assert.deepEqual(database.listWorkActivity(), before);
-  const timestamp = new Date().toISOString();
-  const duplicate = { id: 'same-fixture-id', workItemId: work.id, metaType: 'session' as const, provider: 'pi', externalId: 'fixture', payloadJson: '{}', createdAt: timestamp, updatedAt: timestamp };
-  assert.throws(() => database.createWorkItemMetas([duplicate, duplicate]), /UNIQUE constraint/);
-  assert.equal(database.listWorkItemMeta().some((entry) => entry.id === duplicate.id), false);
+  const attachmentCount = database.listAttachments().length;
+  const duplicate = { workItemId: work.id, type: 'tracker-item' as const, provider: 'jira', externalId: '2', payload: jiraIssue('To Do') };
+  assert.throws(() => database.addAttachments([duplicate, duplicate]), /UNIQUE constraint/);
+  assert.equal(database.listAttachments().length, attachmentCount);
   assert.deepEqual(database.listWorkActivity(), before, 'failed transaction cannot leave activity behind');
   assert.throws(() => database.recordWorkActivity({ workItemId: 'missing', kind: 'session.created' }), /FOREIGN KEY/);
 });
 
 function runningSession(database: ReturnType<typeof openDatabase>, workItemId: string, herdr: FakeHerdr) {
   const pane = [...herdr.panes.values()][0]!;
-  const now = new Date().toISOString();
-  const payload: ToolSessionMetaPayload = {
+  const payload: AgentSession = {
     terminalRef: { workspaceId: pane.workspaceId, paneId: pane.paneId }, agentName: 'll-fixture', nativeSessionId: null, nativeSessionPath: null,
-    toolId: 'codex', title: 'Codex', cwd: '/fixture', status: 'running', agentState: 'idle', metadata: null, createdAt: now, updatedAt: now,
+    toolId: 'codex', title: 'Codex', cwd: '/fixture', status: 'running', agentState: 'idle', metadata: null,
   };
-  return addWorkItemMetas(database, workItemId, [{ metaType: 'session', provider: 'codex', externalId: payload.agentName, payload }])[0]!;
+  return addAttachments(database, workItemId, [{ type: 'session', payload }])[0]!;
 }
 
 test('Herdr sync mirrors agent state and native identity, and records the end once', async (t) => {
@@ -94,7 +106,7 @@ test('Herdr sync mirrors agent state and native identity, and records the end on
   const { paneId } = await herdr.createWorkspace({ cwd: '/fixture', label: 'Agent' });
   await herdr.startAgent({ name: 'll-fixture', kind: 'codex', paneId, args: [] });
   const meta = runningSession(database, work.id, herdr);
-  const read = () => JSON.parse(database.listWorkItemMeta(work.id).find(entry => entry.id === meta.id)!.payloadJson!) as ToolSessionMetaPayload;
+  const read = () => database.getAttachment('session', meta.id)!.payload;
   herdr.panes.get(paneId)!.agentStatus = 'working';
   await syncSessions(database, herdr);
   await syncSessions(database, herdr);
@@ -121,7 +133,7 @@ test('another agent in the session pane is not this session', async (t) => {
   await herdr.startAgent({ name: 'other', kind: 'claude', paneId, args: [] });
   const meta = runningSession(database, work.id, herdr);
   await syncSessions(database, herdr);
-  assert.equal(JSON.parse(database.listWorkItemMeta(work.id).find(entry => entry.id === meta.id)!.payloadJson!).status, 'ended');
+  assert.equal(database.getAttachment('session', meta.id)!.payload.status, 'ended');
 });
 
 test('a working agent records one real-work marker per session and local day', async (t) => {

@@ -6,14 +6,11 @@ import {
   type DashboardResponse,
   type DashboardReview,
   type DashboardRecent,
-  type JiraIssueSummary,
-  type PullRequestMetaPayload,
   type WorkItem,
-  type WorkItemMeta,
+  type WorkItemAttachment,
   type WorkItemSummary,
 } from '@lovelace/core';
 import groupBy from '@nkzw/core/groupBy.js';
-import safeParse from '@nkzw/core/safeParse.js';
 import { latestLaunchPhase } from '../repositories/launch-operation-repository.js';
 import type { DatabaseState, LaunchOperation, WorkActivityRow } from '../database.js';
 import type { CachedGitHub, CachedJira } from '../cached-providers.js';
@@ -32,17 +29,17 @@ interface DashboardDeps {
 export function buildDashboard(deps: DashboardDeps): DashboardResponse {
   const now = deps.now ?? new Date();
   const workItems = deps.database.listWorkItems();
-  const metasByWorkItemId = groupBy(deps.database.listWorkItemMeta(), (meta) => meta.workItemId);
+  const attachmentsByWorkItemId = groupBy(deps.database.listAttachments(), (attachment) => attachment.workItemId);
   const launchesByWorkItemId = groupBy(deps.database.listLaunchOperations(), operation => operation.workItemId);
 
   const activeWorkItems = workItems
     .filter((item) => item.state === 'active')
-    .map((item) => toSummary(item, metasByWorkItemId.get(item.id) ?? [], launchesByWorkItemId.get(item.id) ?? []))
+    .map((item) => toSummary(item, attachmentsByWorkItemId.get(item.id) ?? [], launchesByWorkItemId.get(item.id) ?? []))
     .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 
-  const pendingJiraIssues = buildPendingJiraIssues(deps.jira, deps.database, workItems, metasByWorkItemId);
+  const pendingJiraIssues = buildPendingJiraIssues(deps.jira, deps.database, workItems, attachmentsByWorkItemId);
   const pendingReviews = buildPendingReviews(deps.database, deps.github);
-  const recent = buildRecent(deps.database, workItems, metasByWorkItemId, launchesByWorkItemId, now);
+  const recent = buildRecent(deps.database, workItems, attachmentsByWorkItemId, launchesByWorkItemId, now);
   const freshness = buildFreshness(deps, deps.syncIntervalMs, now);
 
   return {
@@ -59,7 +56,7 @@ function buildPendingJiraIssues(
   jira: DashboardDeps['jira'],
   database: DatabaseState,
   workItems: WorkItem[],
-  metasByWorkItemId: Map<string, WorkItemMeta[]>,
+  attachmentsByWorkItemId: Map<string, WorkItemAttachment[]>,
 ): DashboardJiraIssue[] {
   const issues = jira.peekAssignedIssues()?.value ?? [];
   const hiddenInboxIds = new Set(database.listInboxMeta()
@@ -71,11 +68,10 @@ function buildPendingJiraIssues(
   for (const workItem of workItems) {
     // Local completion is not an invitation to start the same Jira issue again.
     if (workItem.state === 'cancelled') continue;
-    for (const meta of metasByWorkItemId.get(workItem.id) ?? []) {
-      if (meta.metaType !== 'tracker-item' || meta.provider !== 'jira') continue;
-      if (meta.externalId) activeAttachedIds.add(meta.externalId);
-      const payload = safeParse<JiraIssueSummary>(meta.payloadJson);
-      if (typeof payload?.key === 'string' && payload.key) activeAttachedKeys.add(payload.key.toUpperCase());
+    for (const attachment of attachmentsByWorkItemId.get(workItem.id) ?? []) {
+      if (attachment.type !== 'tracker-item' || attachment.provider !== 'jira') continue;
+      activeAttachedIds.add(attachment.externalId);
+      if (attachment.payload.key) activeAttachedKeys.add(attachment.payload.key.toUpperCase());
     }
   }
 
@@ -114,7 +110,7 @@ function buildPendingReviews(database: DatabaseState, github: DashboardDeps['git
 function buildRecent(
   database: DatabaseState,
   workItems: WorkItem[],
-  metasByWorkItemId: Map<string, WorkItemMeta[]>,
+  attachmentsByWorkItemId: Map<string, WorkItemAttachment[]>,
   launchesByWorkItemId: Map<string, LaunchOperation[]>,
   now: Date,
 ): DashboardRecent {
@@ -127,7 +123,7 @@ function buildRecent(
   for (const id of touchedWorkItemIds) {
     const workItem = workItemsById.get(id);
     if (!workItem) continue;
-    recentWorkItems.push(toSummary(workItem, metasByWorkItemId.get(id) ?? [], launchesByWorkItemId.get(id) ?? []));
+    recentWorkItems.push(toSummary(workItem, attachmentsByWorkItemId.get(id) ?? [], launchesByWorkItemId.get(id) ?? []));
   }
   recentWorkItems.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 
@@ -164,26 +160,20 @@ function isStale(fetchedAt: string | null, now: Date, staleAfter: number): boole
   return now.getTime() - parsed > staleAfter;
 }
 
-function toSummary(workItem: WorkItem, metas: WorkItemMeta[], launches: LaunchOperation[]): WorkItemSummary {
+function toSummary(workItem: WorkItem, attachments: WorkItemAttachment[], launches: LaunchOperation[]): WorkItemSummary {
   const trackerIssueKeys: string[] = [];
   const pullRequestRefs: Array<{ repoFullName: string; number: number }> = [];
   let sessionCount = 0;
   let repositoryCount = 0;
-  for (const meta of metas) {
-    if (meta.metaType === 'session') {
-      const payload = safeParse<{ status?: string }>(meta.payloadJson);
-      if ((payload?.status ?? 'unknown') !== 'ended') sessionCount += 1;
-    } else if (meta.metaType === 'repository') {
-      const payload = safeParse<{ status?: string }>(meta.payloadJson);
-      if (payload?.status === 'ready') repositoryCount += 1;
-    } else if (meta.metaType === 'tracker-item' && meta.provider === 'jira') {
-      const payload = safeParse<JiraIssueSummary>(meta.payloadJson);
-      if (typeof payload?.key === 'string' && payload.key) trackerIssueKeys.push(payload.key);
-    } else if (meta.metaType === 'pull-request') {
-      const payload = safeParse<PullRequestMetaPayload>(meta.payloadJson);
-      if (payload?.repoFullName && typeof payload.number === 'number') {
-        pullRequestRefs.push({ repoFullName: payload.repoFullName, number: payload.number });
-      }
+  for (const attachment of attachments) {
+    if (attachment.type === 'session') {
+      if (attachment.payload.status !== 'ended') sessionCount += 1;
+    } else if (attachment.type === 'worktree') {
+      if (attachment.payload.status === 'ready') repositoryCount += 1;
+    } else if (attachment.type === 'tracker-item' && attachment.provider === 'jira') {
+      if (attachment.payload.key) trackerIssueKeys.push(attachment.payload.key);
+    } else if (attachment.type === 'pull-request') {
+      pullRequestRefs.push({ repoFullName: attachment.payload.repoFullName, number: attachment.payload.number });
     }
   }
   const launchPhase = latestLaunchPhase(launches);

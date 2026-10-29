@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { readFile } from 'node:fs/promises';
 import { parseArgs } from 'node:util';
-import type { WorkItemDetails } from '@lovelace/core';
+import { attachmentsOfType, type WorkItemAttachment, type WorkItemDetails, type Worktree } from '@lovelace/core';
 import { client, request } from './http.js';
 import { launchTools, openTool } from './launch-tools.js';
 import { agentCommand, agentGuide, version } from './self.js';
@@ -190,8 +190,8 @@ async function handleWorkItems(subcommand: string | undefined, args: string[]) {
     case 'show': {
       const id = args[0]?.trim();
       if (!id) throw new Error('Usage: lovelace work-items show <id>');
-      const details = (await request(`/work-items/${id}`)) as { workItem: unknown; metas: Array<{ metaType: string; provider: string | null; externalId: string | null; payloadJson: string | null }> };
-      return printJson({ ...details, pullRequests: extractPullRequests(details.metas), jiraIssues: extractJiraIssues(details.metas) });
+      const details = (await request(`/work-items/${id}`)) as WorkItemDetails;
+      return printJson({ ...details, pullRequests: extractPullRequests(details.attachments), jiraIssues: extractJiraIssues(details.attachments) });
     }
     case 'update':
       return handleUpdate(args);
@@ -214,8 +214,8 @@ async function handleWorkItems(subcommand: string | undefined, args: string[]) {
     case 'workspaces': {
       const id = args[0]?.trim();
       if (!id) throw new Error('Usage: lovelace work-items workspaces <id>');
-      const details = (await request(`/work-items/${id}`)) as { metas: Array<{ metaType: string; payloadJson: string | null }> };
-      return printJson(extractRepositoryWorkspaces(details.metas));
+      const details = (await request(`/work-items/${id}`)) as WorkItemDetails;
+      return printJson(extractRepositoryWorkspaces(details.attachments));
     }
     case 'list':
     default:
@@ -266,11 +266,11 @@ async function handleUpdate(args: string[]) {
 async function handleAttachPr(args: string[]) {
   const [id, ...refs] = args.map((value) => value.trim()).filter(Boolean);
   if (!id || refs.length === 0) throw new Error('Usage: lovelace work-items attach-pr <id> <pr...>');
-  const metas = [];
+  const attachments = [];
   for (const ref of refs) {
-    metas.push(await request(`/work-items/${id}/pull-requests`, { method: 'POST', body: JSON.stringify(bodyForPullRequestRef(ref)) }));
+    attachments.push(await request(`/work-items/${id}/pull-requests`, { method: 'POST', body: JSON.stringify(bodyForPullRequestRef(ref)) }));
   }
-  return printJson(metas);
+  return printJson(attachments);
 }
 
 async function handleDetachPr(args: string[]) {
@@ -285,11 +285,11 @@ async function handleDetachPr(args: string[]) {
 async function handleAttachJira(args: string[]) {
   const [id, ...refs] = args.map((value) => value.trim()).filter(Boolean);
   if (!id || refs.length === 0) throw new Error('Usage: lovelace work-items attach-jira <id> <issue...>');
-  const metas = [];
+  const attachments = [];
   for (const ref of refs) {
-    metas.push(await request(`/work-items/${id}/tracker-items`, { method: 'POST', body: JSON.stringify(bodyForJiraIssueRef(ref)) }));
+    attachments.push(await request(`/work-items/${id}/tracker-items`, { method: 'POST', body: JSON.stringify(bodyForJiraIssueRef(ref)) }));
   }
-  return printJson(metas);
+  return printJson(attachments);
 }
 
 async function handleDetachJira(args: string[]) {
@@ -313,10 +313,10 @@ async function handlePrs(args: string[]) {
   const id = args[0]?.trim();
   if (!id) throw new Error('Usage: lovelace work-items prs <id> [--refresh]');
   const refresh = args.includes('--refresh');
-  const metas = refresh
-    ? ((await request(`/work-items/${id}/pull-requests/refresh`, { method: 'POST' })) as Array<{ metaType: string; externalId: string | null; payloadJson: string | null }>)
-    : ((await request(`/work-items/${id}`)) as { metas: Array<{ metaType: string; externalId: string | null; payloadJson: string | null }> }).metas;
-  return printJson(extractPullRequests(metas));
+  const attachments = refresh
+    ? ((await request(`/work-items/${id}/pull-requests/refresh`, { method: 'POST' })) as WorkItemAttachment[])
+    : ((await request(`/work-items/${id}`)) as WorkItemDetails).attachments;
+  return printJson(extractPullRequests(attachments));
 }
 
 const ADD_WORKTREE_USAGE = 'Usage: lovelace work-items add-worktree <id> <repo> [--branch <name>] [--base <branch>]';
@@ -369,21 +369,12 @@ async function handleAddWorktree(args: string[]) {
 
   return printJson({
     workItem: details.workItem,
-    repositories: extractRepositoryWorkspaces(details.metas),
+    repositories: extractRepositoryWorkspaces(details.attachments),
   });
 }
 
-function extractPullRequests(metas: Array<{ metaType: string; externalId: string | null; payloadJson: string | null }>) {
-  return metas
-    .filter((meta) => meta.metaType === 'pull-request' && meta.payloadJson)
-    .map((meta) => {
-      try {
-        return { externalId: meta.externalId, ...JSON.parse(meta.payloadJson ?? '{}') };
-      } catch {
-        return null;
-      }
-    })
-    .filter(Boolean);
+function extractPullRequests(attachments: WorkItemAttachment[]) {
+  return attachmentsOfType(attachments, 'pull-request').map((attachment) => ({ externalId: attachment.externalId, ...attachment.payload }));
 }
 
 function bodyForPullRequestRef(ref: string) {
@@ -395,17 +386,10 @@ function bodyForJiraIssueRef(ref: string) {
   return /^([A-Za-z][A-Za-z0-9_]*-)?\d+$/.test(ref) ? { key: ref } : { url: ref };
 }
 
-function extractJiraIssues(metas: Array<{ metaType: string; provider: string | null; externalId: string | null; payloadJson: string | null }>) {
-  return metas
-    .filter((meta) => meta.metaType === 'tracker-item' && meta.provider === 'jira' && meta.payloadJson)
-    .map((meta) => {
-      try {
-        return { externalId: meta.externalId, ...JSON.parse(meta.payloadJson ?? '{}') };
-      } catch {
-        return null;
-      }
-    })
-    .filter(Boolean);
+function extractJiraIssues(attachments: WorkItemAttachment[]) {
+  return attachmentsOfType(attachments, 'tracker-item')
+    .filter((attachment) => attachment.provider === 'jira')
+    .map((attachment) => ({ externalId: attachment.externalId, ...attachment.payload }));
 }
 
 function parsePullRequestShorthand(value: string): { repoFullName: string; number: number } | null {
@@ -427,18 +411,12 @@ function externalIdFromUrl(value: string): string | null {
   }
 }
 
-function extractRepositoryWorkspaces(metas: Array<{ metaType: string; payloadJson: string | null }>) {
-  const newestByWorktreePath = new Map<string, { repoId: string; status: string; worktreePath: string; branchName: string | null; dependenciesReused?: boolean; preparedAt: string; preparationStep?: string; errorMessage?: string | null }>();
-  for (const meta of metas) {
-    if (meta.metaType !== 'repository' || !meta.payloadJson) continue;
-    try {
-      const payload = JSON.parse(meta.payloadJson) as { repoId: string; status: string; worktreePath: string; branchName: string | null; dependenciesReused?: boolean; preparedAt: string; preparationStep?: string; errorMessage?: string | null };
-      const existing = newestByWorktreePath.get(payload.worktreePath);
-      if (!existing || existing.preparedAt < payload.preparedAt) {
-        newestByWorktreePath.set(payload.worktreePath, payload);
-      }
-    } catch {
-      // ignore malformed meta payloads
+function extractRepositoryWorkspaces(attachments: WorkItemAttachment[]) {
+  const newestByWorktreePath = new Map<string, Worktree>();
+  for (const { payload } of attachmentsOfType(attachments, 'worktree')) {
+    const existing = newestByWorktreePath.get(payload.worktreePath);
+    if (!existing || existing.preparedAt < payload.preparedAt) {
+      newestByWorktreePath.set(payload.worktreePath, payload);
     }
   }
   return [...newestByWorktreePath.values()].map(({ repoId, status, worktreePath, branchName, dependenciesReused, preparationStep, errorMessage }) => ({
@@ -491,7 +469,7 @@ Commands:
   work-items prs <id> [--refresh]   List attached pull requests
   work-items launch   Launch <id> <pi|codex|claude> [--model <model>] [--thinking <level>] (--prompt <text> | --prompt-file <path>)
                      Starts the agent in the work item's Herdr workspace without focusing it
-  work-items open <id> <session-meta-id>  Focus the session in Herdr, or continue its ended conversation
+  work-items open <id> <session-id>  Focus the session in Herdr, or continue its ended conversation
   work-items start    Mark a work item as active
   work-items done     Mark a work item as done
   work-items add-worktree <id> <repo> [--branch <name>] [--base <branch>]

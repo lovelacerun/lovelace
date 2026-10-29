@@ -1,7 +1,10 @@
 import { randomUUID } from 'node:crypto';
-import type { CreateManualWorkItemInput, WorkItem, WorkItemDetails, WorkItemMeta } from '@lovelace/core';
-import type { DatabaseState } from '../database.js';
+import type { CreateManualWorkItemInput, WorkItem, WorkItemAttachment, WorkItemDetails } from '@lovelace/core';
+import type { DatabaseState, NewAttachment } from '../database.js';
 import { launchOperationSummary } from './launch-operation-repository.js';
+
+/** An attachment to add to a work item that is not created yet. */
+export type PendingAttachment = NewAttachment extends infer A ? A extends NewAttachment ? Omit<A, 'workItemId'> : never : never;
 
 export function getWorkItemDetails(database: DatabaseState, id: string): WorkItemDetails | null {
   const workItem = database.getWorkItem(id);
@@ -9,13 +12,13 @@ export function getWorkItemDetails(database: DatabaseState, id: string): WorkIte
   const launchOperations = database.listLaunchOperations(id).map(launchOperationSummary);
   return {
     workItem,
-    metas: database.listWorkItemMeta(id),
+    attachments: database.listAttachments(id),
     ...(launchOperations.length ? { launchOperations } : {}),
   };
 }
 
 export function createManualWorkItem(database: DatabaseState, input: CreateManualWorkItemInput): WorkItem {
-  return createActiveWorkItemFromMetas(database, { ...input, metas: [] });
+  return createActiveWorkItem(database, { ...input, attachments: [] });
 }
 
 export function updateWorkItem(
@@ -29,18 +32,9 @@ export function updateWorkItem(
   });
 }
 
-export function createActiveWorkItemFromMetas(
+export function createActiveWorkItem(
   database: DatabaseState,
-  input: {
-    title: string;
-    notes?: string | null;
-    metas: Array<{
-      metaType: WorkItemMeta['metaType'];
-      provider: string | null;
-      externalId: string | null;
-      payload: unknown;
-    }>;
-  },
+  input: { title: string; notes?: string | null; attachments: PendingAttachment[] },
 ): WorkItem {
   const now = new Date().toISOString();
   const workItem: WorkItem = {
@@ -54,64 +48,15 @@ export function createActiveWorkItemFromMetas(
     completedAt: null,
   };
 
-  database.createWorkItem(workItem);
-  database.createWorkItemMetas(
-    input.metas.map((meta) =>
-      buildWorkItemMeta({
-        workItemId: workItem.id,
-        metaType: meta.metaType,
-        provider: meta.provider,
-        externalId: meta.externalId,
-        payload: meta.payload,
-      }),
-    ),
-  );
-
+  database.transaction(() => {
+    database.createWorkItem(workItem);
+    database.addAttachments(input.attachments.map((attachment) => ({ ...attachment, workItemId: workItem.id }) as NewAttachment));
+  });
   return workItem;
 }
 
-export function addWorkItemMetas(
-  database: DatabaseState,
-  workItemId: string,
-  metas: Array<{
-    metaType: WorkItemMeta['metaType'];
-    provider: string | null;
-    externalId: string | null;
-    payload: unknown;
-  }>,
-): WorkItemMeta[] {
-  const created = database.createWorkItemMetas(
-    metas.map((meta) =>
-      buildWorkItemMeta({
-        workItemId,
-        metaType: meta.metaType,
-        provider: meta.provider,
-        externalId: meta.externalId,
-        payload: meta.payload,
-      }),
-    ),
-  );
+export function addAttachments(database: DatabaseState, workItemId: string, attachments: PendingAttachment[]): WorkItemAttachment[] {
+  const created = database.addAttachments(attachments.map((attachment) => ({ ...attachment, workItemId }) as NewAttachment));
   database.touchWorkItem(workItemId);
   return created;
-}
-
-function buildWorkItemMeta(input: {
-  workItemId: string;
-  metaType: WorkItemMeta['metaType'];
-  provider: string | null;
-  externalId: string | null;
-  payload: unknown;
-}): WorkItemMeta {
-  const now = new Date().toISOString();
-
-  return {
-    id: randomUUID(),
-    workItemId: input.workItemId,
-    metaType: input.metaType,
-    provider: input.provider,
-    externalId: input.externalId,
-    payloadJson: JSON.stringify(input.payload),
-    createdAt: now,
-    updatedAt: now,
-  };
 }

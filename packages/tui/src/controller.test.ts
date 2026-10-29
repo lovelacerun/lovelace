@@ -28,7 +28,7 @@ function detailsOf(id: string): WorkItemDetails {
       id, title: `Item ${id}`, state: 'active', notes: null,
       createdAt: '', updatedAt: '', startedAt: null, completedAt: null,
     },
-    metas: [],
+    attachments: [],
   };
 }
 

@@ -1,9 +1,8 @@
-import type { PullRequestMetaPayload, WorkItemMeta } from '@lovelace/core';
-import safeParse from '@nkzw/core/safeParse.js';
+import type { Attachment, PullRequestPayload } from '@lovelace/core';
 import type { DatabaseState } from '../database.js';
 import type { GitHubPullRequestStatus } from '@lovelace/github-client';
 import type { CachedGitHub } from '../cached-providers.js';
-import { addWorkItemMetas } from '../repositories/work-item-repository.js';
+import { addAttachments } from '../repositories/work-item-repository.js';
 
 interface PullRequestRef {
   repoFullName: string;
@@ -37,34 +36,31 @@ export async function attachPullRequestToWorkItem(
   github: CachedGitHub,
   workItemId: string,
   ref: PullRequestRef,
-): Promise<WorkItemMeta | null> {
+): Promise<Attachment<'pull-request'> | null> {
   if (!database.getWorkItem(workItemId)) return null;
   const status = await github.fetchPullRequestStatus(ref.repoFullName, ref.number);
   if (!status) throw new Error(`GitHub pull request not found: ${externalIdForPullRequest(ref)}`);
-  return upsertPullRequestMeta(database, workItemId, status);
+  return upsertPullRequest(database, workItemId, status);
 }
 
 export async function refreshPullRequestsForWorkItem(
   database: DatabaseState,
   github: CachedGitHub,
   workItemId: string,
-): Promise<WorkItemMeta[] | null> {
+): Promise<Array<Attachment<'pull-request'>> | null> {
   if (!database.getWorkItem(workItemId)) return null;
-  const metas = database.listWorkItemMeta(workItemId).filter((meta) => meta.metaType === 'pull-request' && meta.provider === 'github');
-  const updated: WorkItemMeta[] = [];
-  for (const meta of metas) {
-    const payload = parsePayload(meta);
-    if (!payload) continue;
-    const status = await github.refreshPullRequestStatus(payload.repoFullName, payload.number);
+  const updated: Array<Attachment<'pull-request'>> = [];
+  for (const attachment of gitHubPullRequests(database, workItemId)) {
+    const status = await github.refreshPullRequestStatus(attachment.payload.repoFullName, attachment.payload.number);
     if (!status) continue;
-    updated.push(upsertPullRequestMeta(database, workItemId, status, meta));
+    updated.push(upsertPullRequest(database, workItemId, status, attachment));
   }
   return updated;
 }
 
 export function detachPullRequestFromWorkItem(database: DatabaseState, workItemId: string, externalId: string): boolean {
   if (!database.getWorkItem(workItemId)) return false;
-  database.deleteWorkItemMetasByExternalIds(workItemId, 'pull-request', 'github', [externalId]);
+  database.deleteLinkAttachments(workItemId, 'pull-request', 'github', [externalId]);
   database.touchWorkItem(workItemId);
   return true;
 }
@@ -76,53 +72,51 @@ export async function refreshOpenPullRequests(
 ) {
   const result = { attempted: 0, updated: 0, failed: 0 };
   for (const workItem of database.listWorkItems('active')) {
-    const metas = database.listWorkItemMeta(workItem.id).filter((meta) => meta.metaType === 'pull-request' && meta.provider === 'github');
-    for (const meta of metas) {
-      const payload = parsePayload(meta);
-      if (!payload || payload.status === 'closed' || payload.status === 'merged') continue;
+    for (const attachment of gitHubPullRequests(database, workItem.id)) {
+      const { payload } = attachment;
+      if (payload.status === 'closed' || payload.status === 'merged') continue;
       result.attempted += 1;
       try {
         const status = await github.refreshPullRequestStatus(payload.repoFullName, payload.number);
         if (status) {
-          upsertPullRequestMeta(database, workItem.id, status, meta);
+          upsertPullRequest(database, workItem.id, status, attachment);
           result.updated += 1;
         }
       } catch (error) {
         result.failed += 1;
-        logger.warn({ err: error, workItemId: workItem.id, externalId: meta.externalId }, 'Failed to refresh pull request meta');
+        logger.warn({ err: error, workItemId: workItem.id, externalId: attachment.externalId }, 'Failed to refresh pull request');
       }
     }
   }
   return result;
 }
 
-function upsertPullRequestMeta(
+function gitHubPullRequests(database: DatabaseState, workItemId: string): Array<Attachment<'pull-request'>> {
+  return database.listAttachmentsOfType('pull-request', workItemId).filter((attachment) => attachment.provider === 'github');
+}
+
+function upsertPullRequest(
   database: DatabaseState,
   workItemId: string,
   status: GitHubPullRequestStatus,
-  existing?: WorkItemMeta,
-): WorkItemMeta {
+  existing?: Attachment<'pull-request'>,
+): Attachment<'pull-request'> {
   const now = new Date().toISOString();
   const externalId = externalIdForPullRequest(status);
-  const current = existing ?? database.listWorkItemMeta(workItemId).find((meta) => meta.metaType === 'pull-request' && meta.provider === 'github' && meta.externalId === externalId);
-  const previousPayload = current ? parsePayload(current) : null;
-  const payload: PullRequestMetaPayload = {
+  const current = existing ?? gitHubPullRequests(database, workItemId).find((attachment) => attachment.externalId === externalId);
+  const payload: PullRequestPayload = {
     ...status,
-    attachedAt: previousPayload?.attachedAt ?? now,
+    attachedAt: current?.payload.attachedAt ?? now,
     lastSyncedAt: now,
   };
   if (current) {
-    const updated = database.updateWorkItemMetaPayload(current.id, payload);
+    const updated = database.updateAttachment('pull-request', current.id, payload);
     database.touchWorkItem(workItemId);
     return updated ?? current;
   }
-  return addWorkItemMetas(database, workItemId, [{ metaType: 'pull-request', provider: 'github', externalId, payload }])[0]!;
+  return addAttachments(database, workItemId, [{ type: 'pull-request', provider: 'github', externalId, payload }])[0] as Attachment<'pull-request'>;
 }
 
 function externalIdForPullRequest(ref: PullRequestRef): string {
   return `${ref.repoFullName}#${ref.number}`;
-}
-
-function parsePayload(meta: WorkItemMeta): PullRequestMetaPayload | null {
-  return safeParse<PullRequestMetaPayload>(meta.payloadJson);
 }

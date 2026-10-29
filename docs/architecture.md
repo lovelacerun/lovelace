@@ -35,19 +35,24 @@ boundary.
 | Table | Holds |
 | --- | --- |
 | `work_items` | Title, notes, state (`active`, `done`, `cancelled`) and timestamps |
-| `work_item_meta` | Everything attached to a work item, by `meta_type` (below) |
+| `work_item_attachments` | Jira issues, pull requests, review requests, prompt drafts and the Herdr workspace, by `type` (below) |
+| `worktrees` | A work item's worktrees and their preparation status |
+| `sessions` | Agents started in Herdr |
 | `work_launch_operations` | One row per launch request ID |
 | `work_activity` | Activity events; feeds the "yesterday and today" view |
 | `repos` | Repository catalog from the code host |
 | `cache_snapshots` | Persisted provider lists, loaded before the first sync |
 | `inbox_meta` | Dismissed inbox entries |
 
-Attachment types (`meta_type`): `tracker-item` (Jira issue), `pull-request`,
-`change-request` (review request a work item was started from),
-`repository` (a worktree and its preparation status), `prompt-draft` (the
-exact prompt and selections of a launch), `session` (an agent in Herdr) and
-`herdr-workspace`. Payloads are JSON; the types live in
-`packages/core/src/types.ts`.
+Attachments are one discriminated union, `WorkItemAttachment` in
+`packages/core/src/types.ts`, keyed by `type`: `tracker-item` (Jira issue),
+`pull-request`, `change-request` (review request a work item was started
+from), `worktree`, `prompt-draft` (the exact prompt and selections of a
+launch), `session` (an agent in Herdr) and `herdr-workspace`.
+`server/src/attachments.ts` is the only place that maps them to and from
+rows; work item details carry them typed. Unique indexes allow one
+attachment per upstream record and work item, one Herdr workspace per work
+item, one live worktree per path and one session per Herdr agent name.
 
 ## Provider data
 
@@ -67,7 +72,7 @@ npm dependencies, copying the seed's `node_modules` copy-on-write when the
 lockfile matches.
 
 Before preparation starts, each selected repository is recorded as a
-`repository` attachment with status `pending`; it moves through `preparing`
+`worktree` attachment with status `pending`; it moves through `preparing`
 to `ready` or `failed`, each result saved on its own. Overlapping requests for
 the same work item and repository join the one in flight. On startup,
 preparations interrupted by a restart become `failed` and can be retried at
@@ -108,7 +113,7 @@ when its pane is gone or runs something else.
 An agent that opens blocked (e.g. a folder trust dialog) still counts as
 started; its prompt is submitted once Herdr reports it idle.
 
-**Open** (`POST /work-items/:id/sessions/:metaId/open`) focuses a running
+**Open** (`POST /work-items/:id/sessions/:sessionId/open`) focuses a running
 session's tab. For an ended session it resumes the exact recorded
 conversation (`claude --resume <id>`, `codex resume <id>`,
 `pi --session <file>`) in the pane it left, or a new tab. Without a recorded

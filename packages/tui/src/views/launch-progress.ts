@@ -1,8 +1,8 @@
-import type { LaunchPhase, RepositoryWorkspaceMetaPayload, ToolLaunchDraftPayload } from '@lovelace/core';
+import { attachmentsOfType, type LaunchPhase } from '@lovelace/core';
 import { safeText, wrap } from '@lovelace/tui-components';
 import type { AppState } from '../state.js';
 import { accent, danger, icons, muted, reset, success, warning } from '../theme.js';
-import { payload, type DocumentBuilder } from './common.js';
+import type { DocumentBuilder } from './common.js';
 
 export function launchPhaseLabel(phase: LaunchPhase): string {
   return {
@@ -27,12 +27,9 @@ export function renderLaunchProgress(state: AppState, b: DocumentBuilder, width:
   for (const operation of visible) {
     const phase = operation.launch.phase ?? (operation.status === 'pending' ? 'accepted' : 'failed');
     b.line('  ' + launchPhaseBadge(phase));
-    const draftMeta = details?.metas.find(meta => meta.id === operation.draftMetaId);
-    const draft = draftMeta ? payload(draftMeta) as unknown as ToolLaunchDraftPayload : undefined;
+    const draft = attachmentsOfType(details?.attachments ?? [], 'prompt-draft').find(entry => entry.id === operation.draftMetaId)?.payload;
     if ((phase === 'preparing' || phase === 'failed') && draft?.repoIds) {
-      for (const meta of details?.metas ?? []) {
-        if (meta.metaType !== 'repository') continue;
-        const workspace = payload(meta) as unknown as RepositoryWorkspaceMetaPayload;
+      for (const { payload: workspace } of attachmentsOfType(details?.attachments ?? [], 'worktree')) {
         if (!draft.repoIds.includes(workspace.repoId) || workspace.status === 'cleaned') continue;
         const color = workspace.status === 'ready' ? success : workspace.status === 'failed' ? danger : muted;
         const step = workspace.preparationStep ? ` — ${safeText(workspace.preparationStep)}` : '';

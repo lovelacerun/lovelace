@@ -6,12 +6,12 @@ import type { CreateWorkspaceRequest } from '@lovelace/coriol';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test, { type TestContext } from 'node:test';
-import type { DashboardResponse, JiraIssueSummary, LovelaceConfig, QuickStartResponse, SessionOpenResponse, ToolSessionMetaPayload, WorkItemDetails } from '@lovelace/core';
+import { attachmentsOfType, type DashboardResponse, type JiraIssueSummary, type LovelaceConfig, type QuickStartResponse, type SessionOpenResponse, type AgentSession, type WorkItemDetails } from '@lovelace/core';
 import { openDatabase } from '../database.js';
 import { buildServer } from '../app.js';
 import type { RouteDeps } from './deps.js';
 import type { LoadedTool } from '../tools/tool-loader.js';
-import { createActiveWorkItemFromMetas } from '../repositories/work-item-repository.js';
+import { createActiveWorkItem } from '../repositories/work-item-repository.js';
 import { FakeHerdr } from '../test-support/fake-herdr.js';
 import { fixtureProviders, storedSnapshot } from '../test-support/providers.js';
 import { syncSessions } from '../services/session-service.js';
@@ -44,8 +44,8 @@ async function fixture(t: TestContext, fail = false, providers = fixtureProvider
 }
 
 const session = (details: QuickStartResponse['details']) => {
-  const meta = details.metas.find((entry) => entry.metaType === 'session')!;
-  return { meta, payload: JSON.parse(meta.payloadJson!) as ToolSessionMetaPayload };
+  const meta = attachmentsOfType(details.attachments, 'session')[0]!;
+  return { meta, payload: meta.payload as AgentSession };
 };
 
 const issue: JiraIssueSummary = {
@@ -70,7 +70,7 @@ test('quick-start validates every field before creating work or drafts', async (
     assert.equal(response.statusCode, 400, JSON.stringify(payload));
   }
   assert.equal(database.getWorkItemCount(), 0);
-  assert.equal(database.listWorkItemMeta().length, 0);
+  assert.equal(database.listAttachments().length, 0);
   assert.equal(database.listWorkActivity().length, 0);
   assert.equal(starts().length, 0);
 });
@@ -84,11 +84,11 @@ test('quick-start opens a Herdr workspace for the work item, starts the agent an
   assert.deepEqual(launch, { ok: true, error: null, phase: 'started' });
   assert.equal(details.workItem.state, 'active');
   assert.equal(details.workItem.title, 'Rewrite the sync');
-  const draft = JSON.parse(details.metas.find((meta) => meta.metaType === 'prompt-draft')!.payloadJson!);
+  const draft = attachmentsOfType(details.attachments, 'prompt-draft')[0]!.payload;
   assert.equal(draft.prompt, prompt);
   assert.equal(draft.status, 'launched');
-  const workspace = details.metas.find((meta) => meta.metaType === 'herdr-workspace')!;
-  assert.deepEqual(herdr.workspaces.get(workspace.externalId!)!.tokens, { lovelace: details.workItem.id });
+  const workspace = attachmentsOfType(details.attachments, 'herdr-workspace')[0]!;
+  assert.deepEqual(herdr.workspaces.get(workspace.payload.workspaceId)!.tokens, { lovelace: details.workItem.id });
   const { payload } = session(details);
   assert.equal(starts()[0]!.paneId, payload.terminalRef!.paneId, 'the new workspace root shell hosts the first agent');
   assert.equal(starts()[0]!.kind, 'pi');
@@ -112,7 +112,7 @@ test('later sessions open tabs in the same workspace; a restarted Herdr gets its
   assert.equal(herdr.calls.filter(call => call.method === 'createTab').length, 1);
   const claude = starts()[1]!;
   const sessionId = claude.args[claude.args.indexOf('--session-id') + 1];
-  const created = second.details.metas.filter(meta => meta.metaType === 'session').map(meta => JSON.parse(meta.payloadJson!) as ToolSessionMetaPayload);
+  const created = attachmentsOfType(second.details.attachments, 'session').map(meta => meta.payload as AgentSession);
   assert.equal(created.find(entry => entry.toolId === 'claude')!.nativeSessionId, sessionId);
 });
 
@@ -123,10 +123,10 @@ test('a workspace the user closed or another owner tagged is replaced, not reuse
   const [first] = herdr.workspaces.keys();
   herdr.workspaces.get(first!)!.tokens.lovelace = 'someone-else';
   const second = (await app.inject({ method: 'POST', url, payload: { prompt: 'Second' } })).json<QuickStartResponse>();
-  const recorded = second.details.metas.filter(meta => meta.metaType === 'herdr-workspace');
+  const recorded = attachmentsOfType(second.details.attachments, 'herdr-workspace');
   assert.equal(recorded.length, 1);
-  assert.notEqual(recorded[0]!.externalId, first);
-  herdr.workspaces.delete(recorded[0]!.externalId!);
+  assert.notEqual(recorded[0]!.payload.workspaceId, first);
+  herdr.workspaces.delete(recorded[0]!.payload.workspaceId);
   const third = (await app.inject({ method: 'POST', url, payload: { prompt: 'Third' } })).json<QuickStartResponse>();
   assert.equal(third.launch.ok, true);
   assert.equal(herdr.workspaces.size, 2);
@@ -178,7 +178,7 @@ test('an agent that opens blocked on a startup dialog gets its prompt once it is
   await syncSessions(database, herdr);
   assert.equal(herdr.prompts.length, 1);
   assert.ok(herdr.prompts[0]!.text.startsWith(prompt));
-  const saved = JSON.parse(database.listWorkItemMeta().find(entry => entry.id === meta.id)!.payloadJson!) as ToolSessionMetaPayload;
+  const saved = database.listAttachments().find(entry => entry.id === meta.id)!.payload as AgentSession;
   assert.equal(saved.promptPending, false);
 });
 
@@ -199,16 +199,16 @@ test('launch failure returns active persisted work and exact pending draft for r
   assert.equal(launch.ok, false);
   assert.match(launch.error!, /fixture launch failure/);
   assert.equal(details.workItem.state, 'active');
-  assert.equal(details.metas.filter((meta) => meta.metaType === 'session').length, 0);
-  const pendingDraft = details.metas.find((meta) => meta.metaType === 'prompt-draft')!;
-  assert.equal(JSON.parse(pendingDraft.payloadJson!).prompt, prompt);
-  assert.equal(JSON.parse(pendingDraft.payloadJson!).status, 'pending');
+  assert.equal(attachmentsOfType(details.attachments, 'session').length, 0);
+  const pendingDraft = attachmentsOfType(details.attachments, 'prompt-draft')[0]!;
+  assert.equal(pendingDraft.payload.prompt, prompt);
+  assert.equal(pendingDraft.payload.status, 'pending');
   herdr.failStart = null;
   const retried = await app.inject({ method: 'POST', url: `/work-items/${details.workItem.id}/new-session`, payload: { prompt } });
   assert.equal(retried.json<QuickStartResponse>().launch.ok, true);
   assert.equal(database.getWorkItemCount(), 1);
-  assert.equal(database.listWorkItemMeta().filter((meta) => meta.metaType === 'prompt-draft').length, 2);
-  assert.equal(JSON.parse(database.listWorkItemMeta().find((meta) => meta.id === pendingDraft.id)!.payloadJson!).prompt, prompt);
+  assert.equal(database.listAttachmentsOfType('prompt-draft').length, 2);
+  assert.equal(database.getAttachment('prompt-draft', pendingDraft.id)!.payload.prompt, prompt);
 });
 
 test('Jira quick-start resolves only server cache and selects no repositories', async (t) => {
@@ -219,8 +219,8 @@ test('Jira quick-start resolves only server cache and selects no repositories', 
   assert.equal(response.statusCode, 200);
   assert.equal(launch.ok, true);
   assert.equal(details.workItem.title, 'PROJ-42: Something');
-  assert.equal(details.metas.filter((meta) => meta.metaType === 'tracker-item').length, 1);
-  assert.equal(details.metas.filter((meta) => meta.metaType === 'repository').length, 0);
+  assert.equal(attachmentsOfType(details.attachments, 'tracker-item').length, 1);
+  assert.equal(attachmentsOfType(details.attachments, 'worktree').length, 0);
   assert.equal(starts().length, 1);
   assert.equal((await app.inject('/dashboard')).json<DashboardResponse>().pendingJiraIssues.length, 0);
   assert.equal(database.listWorkActivity().filter((row) => row.kind === 'work-item.tracker-attached').length, 1);
@@ -228,7 +228,7 @@ test('Jira quick-start resolves only server cache and selects no repositories', 
 
 test('explicit repository/template selections validate before any mutation', async (t) => {
   const { app, database, starts } = await fixture(t);
-  const work = createActiveWorkItemFromMetas(database, { title: 'Active', metas: [] });
+  const work = createActiveWorkItem(database, { title: 'Active', attachments: [] });
   for (const selection of [
     { repoIds: null }, { repoIds: 'repo' }, { repoIds: [42] }, { repoIds: [''] },
     { repoIds: ['a', 'a'] }, { repoIds: ['missing'] }, { repoIds: Array.from({ length: 101 }, (_, i) => String(i)) },
@@ -240,7 +240,7 @@ test('explicit repository/template selections validate before any mutation', asy
     }
   }
   assert.equal(database.getWorkItemCount(), 1);
-  assert.equal(database.listWorkItemMeta().length, 0);
+  assert.equal(database.listAttachments().length, 0);
   assert.equal(starts().length, 0);
 });
 
@@ -259,7 +259,7 @@ function repositoryFixture(deps: RouteDeps) {
     repositoryPath: (id: string) => join(deps.config.lovelaceDir, 'repos', id),
     async createWorkspace(request: CreateWorkspaceRequest) {
       calls.push(request);
-      assert.ok(deps.database.listWorkItemMeta().some(meta => meta.metaType === 'prompt-draft'), 'prompt persisted before preparation');
+      assert.ok(deps.database.listAttachments().some(meta => meta.type === 'prompt-draft'), 'prompt persisted before preparation');
       if (failing && request.repository.id.endsWith('/b')) throw new Error('fixture install failure');
       const path = join(workspacesDirectory, request.workspaceId, request.directoryName!);
       await mkdir(path, { recursive: true });
@@ -283,8 +283,8 @@ test('Jira selections prepare isolated worktrees before a single idempotent agen
   assert.equal(launch.ok, true, launch.error ?? '');
   assert.equal(calls.length, 2);
   assert.ok(calls.every(call => call.mode === 'fresh' && call.branchName.includes('proj-42')));
-  assert.equal(details.metas.filter(meta => meta.metaType === 'repository').length, 2);
-  const draft = JSON.parse(details.metas.find(meta => meta.metaType === 'prompt-draft')!.payloadJson!);
+  assert.equal(attachmentsOfType(details.attachments, 'worktree').length, 2);
+  const draft = attachmentsOfType(details.attachments, 'prompt-draft')[0]!.payload;
   assert.deepEqual(draft.repoIds, payload.repoIds);
   assert.equal(draft.promptId, 'refine');
   assert.equal(draft.prompt, prompt);
@@ -317,7 +317,7 @@ test('review quick-start checks out the pull request branch of its repository an
   const { details, launch } = response.json<QuickStartResponse>();
   assert.equal(launch.ok, true, launch.error ?? '');
   assert.equal(details.workItem.title, 'org/a#7: Retry uploads');
-  assert.deepEqual(details.metas.filter(meta => meta.metaType === 'change-request').map(meta => meta.externalId), ['PR_1']);
+  assert.deepEqual(attachmentsOfType(details.attachments, 'change-request').map(meta => meta.externalId), ['PR_1']);
   assert.deepEqual(calls.map(call => [call.repository.id, call.mode, call.remoteBranch]).sort(), [['github/org/a', 'existing', 'feature/retry'], ['github/org/b', 'fresh', null]]);
   assert.equal(starts().length, 1);
   assert.equal((await app.inject('/dashboard')).json<DashboardResponse>().pendingReviews.length, 0);
@@ -332,7 +332,7 @@ test('partial workspace failure preserves the draft and retries only failed repo
   assert.equal(first.launch.ok, false);
   assert.match(first.launch.error!, /Repository preparation failed/);
   assert.equal(starts().length, 0);
-  assert.equal(JSON.parse(first.details.metas.find(meta => meta.metaType === 'prompt-draft')!.payloadJson!).prompt, payload.prompt);
+  assert.equal(attachmentsOfType(first.details.attachments, 'prompt-draft')[0]!.payload.prompt, payload.prompt);
   setFailing(false);
   const retry = (await app.inject({ method: 'POST', url: `/work-items/${first.details.workItem.id}/new-session`, payload })).json<QuickStartResponse>();
   assert.equal(retry.launch.ok, true, retry.launch.error ?? '');
@@ -343,7 +343,7 @@ test('partial workspace failure preserves the draft and retries only failed repo
 
 test('new-session rejects inactive work and malformed options without saving drafts', async (t) => {
   const { app, database, starts } = await fixture(t);
-  const work = createActiveWorkItemFromMetas(database, { title: 'Active', metas: [] });
+  const work = createActiveWorkItem(database, { title: 'Active', attachments: [] });
   const url = `/work-items/${work.id}/new-session`;
   for (const options of [null, [], 'high', { pi: { model: 42 } }, { pi: { thinkingLevel: 'invalid' } }, { unknown: {} }, { pi: { unknown: true } }]) {
     assert.equal((await app.inject({ method: 'POST', url, payload: { prompt: 'Text', options } })).statusCode, 400);
@@ -352,7 +352,7 @@ test('new-session rejects inactive work and malformed options without saving dra
     database.updateWorkItemState(work.id, state);
     assert.equal((await app.inject({ method: 'POST', url, payload: { prompt: 'Text' } })).statusCode, 409);
   }
-  assert.equal(database.listWorkItemMeta(work.id).length, 0);
+  assert.equal(database.listAttachments(work.id).length, 0);
   assert.equal(starts().length, 0);
   assert.equal((await app.inject({ method: 'POST', url: '/work-items/missing/new-session', payload: { prompt: 'Text' } })).statusCode, 404);
 });
@@ -369,15 +369,15 @@ test('quick-start passes harness options as native flags and rejects malformed o
 
 test('new-session passes harness options as native flags and keeps them with the session', async (t) => {
   const { app, database, starts } = await fixture(t);
-  const work = createActiveWorkItemFromMetas(database, { title: 'Active', metas: [] });
+  const work = createActiveWorkItem(database, { title: 'Active', attachments: [] });
   const options = { pi: { model: 'fixture/model', thinkingLevel: 'high' } };
   const prompt = '  My text\n';
   const response = await app.inject({ method: 'POST', url: `/work-items/${work.id}/new-session`, payload: { prompt, options } });
   assert.equal(response.statusCode, 200);
   assert.equal(response.json<QuickStartResponse>().launch.ok, true);
-  const draft = database.listWorkItemMeta(work.id).find((meta) => meta.metaType === 'prompt-draft')!;
-  assert.equal(JSON.parse(draft.payloadJson!).prompt, prompt);
-  assert.deepEqual(JSON.parse(draft.payloadJson!).toolOptions, options);
+  const draft = database.listAttachmentsOfType('prompt-draft', work.id)[0]!;
+  assert.equal(draft.payload.prompt, prompt);
+  assert.deepEqual(draft.payload.toolOptions, options);
   assert.deepEqual(starts()[0]!.args, ['--model', 'fixture/model', '--thinking', 'high']);
   assert.deepEqual(session(response.json<QuickStartResponse>().details).payload.options, options.pi);
 });
@@ -405,7 +405,7 @@ test('opening an ended session continues its exact native conversation in the pa
   assert.equal(response.statusCode, 200);
   assert.equal(response.json<SessionOpenResponse>().action, 'continued');
   assert.deepEqual(starts()[1], { name: payload.agentName, kind: 'pi', paneId: pane, args: ['--session', reported] });
-  const continued = JSON.parse(database.listWorkItemMeta().find(entry => entry.id === meta.id)!.payloadJson!) as ToolSessionMetaPayload;
+  const continued = database.listAttachments().find(entry => entry.id === meta.id)!.payload as AgentSession;
   assert.equal(continued.status, 'running');
   assert.equal(continued.nativeSessionPath, reported);
   assert.equal(herdr.prompts.length, 1, 'the initial prompt is never replayed');
@@ -426,8 +426,8 @@ test('a closed pane continues in a new tab; sessions without native identity are
   assert.equal(starts().length, 1);
 
   const second = (await app.inject({ method: 'POST', url: `/work-items/${quick.details.workItem.id}/new-session`, payload: { prompt: 'Again', agentId: 'codex' } })).json<QuickStartResponse>();
-  const meta2 = second.details.metas.filter(entry => entry.metaType === 'session').find(entry => entry.id !== meta.id)!;
-  const payload2 = JSON.parse(meta2.payloadJson!) as ToolSessionMetaPayload;
+  const meta2 = attachmentsOfType(second.details.attachments, 'session').find(entry => entry.id !== meta.id)!;
+  const payload2 = meta2.payload as AgentSession;
   const nativeId = herdr.panes.get(payload2.terminalRef!.paneId)!.agentSession!.value;
   await app.inject({ method: 'POST', url: `/work-items/${quick.details.workItem.id}/sessions/${meta2.id}/open` });
   herdr.closePane(payload2.terminalRef!.paneId);
@@ -511,7 +511,7 @@ test('restart recovers a pending intent as uncertain and never replays its launc
 
 test('concurrent launches preserve separate successful and failed operation drafts', async (t) => {
   const { app, database, herdr } = await fixture(t);
-  const work = createActiveWorkItemFromMetas(database, { title: 'Concurrent drafts', metas: [] });
+  const work = createActiveWorkItem(database, { title: 'Concurrent drafts', attachments: [] });
   let release!: () => void;
   let started!: () => void;
   const gate = new Promise<void>((resolve) => { release = resolve; });
@@ -530,13 +530,13 @@ test('concurrent launches preserve separate successful and failed operation draf
   assert.equal(b.json<QuickStartResponse>().launch.ok, false);
   release();
   assert.equal((await a).json<QuickStartResponse>().launch.ok, true);
-  const drafts = database.listWorkItemMeta(work.id).filter((meta) => meta.metaType === 'prompt-draft').map((meta) => JSON.parse(meta.payloadJson!));
-  assert.equal(drafts.find((draft) => draft.requestId === aPayload.requestId).status, 'launched');
-  assert.equal(drafts.find((draft) => draft.requestId === bPayload.requestId).status, 'pending');
-  assert.equal(drafts.find((draft) => draft.requestId === bPayload.requestId).prompt, bPayload.prompt);
+  const drafts = database.listAttachmentsOfType('prompt-draft', work.id).map((meta) => meta.payload);
+  assert.equal(drafts.find((draft) => draft.requestId === aPayload.requestId)!.status, 'launched');
+  assert.equal(drafts.find((draft) => draft.requestId === bPayload.requestId)!.status, 'pending');
+  assert.equal(drafts.find((draft) => draft.requestId === bPayload.requestId)!.prompt, bPayload.prompt);
   const replay = await app.inject({ method: 'POST', url, payload: bPayload });
   assert.equal(replay.json<QuickStartResponse>().launch.ok, false);
-  assert.equal(database.listWorkItemMeta(work.id).filter((meta) => meta.metaType === 'prompt-draft').length, 2);
+  assert.equal(database.listAttachmentsOfType('prompt-draft', work.id).length, 2);
 });
 
 test('request identity validates UUIDs and scopes endpoint/work/options before mutation', async (t) => {
@@ -582,8 +582,8 @@ test('async acceptance persists work/draft/progress; replay joins and synchronou
   const response = accepted.json<QuickStartResponse>();
   assert.equal(response.operation!.status, 'pending');
   assert.deepEqual(response.launch, { ok: false, error: null, phase: 'preparing' });
-  assert.equal(JSON.parse(response.details.metas.find(meta => meta.metaType === 'prompt-draft')!.payloadJson!).prompt, payload.prompt);
-  assert.equal(JSON.parse(response.details.metas.find(meta => meta.metaType === 'repository')!.payloadJson!).status, 'pending');
+  assert.equal(attachmentsOfType(response.details.attachments, 'prompt-draft')[0]!.payload.prompt, payload.prompt);
+  assert.equal(attachmentsOfType(response.details.attachments, 'worktree')[0]!.payload.status, 'pending');
   assert.equal(response.details.launchOperations![0]!.requestId, payload.requestId);
   assert.equal(starts().length, 0);
   const lookup = (await app.inject(`/launch-operations/${payload.requestId}`)).json<QuickStartResponse>();
@@ -661,12 +661,12 @@ test('background partial preparation failure exposes the exact draft for retry o
   const failed = (await app.inject(`/launch-operations/${payload.requestId}`)).json<QuickStartResponse>();
   assert.equal(failed.launch.phase, 'failed');
   assert.equal(starts().length, 0);
-  const draft = JSON.parse(failed.details.metas.find(meta => meta.id === failed.details.launchOperations![0]!.draftMetaId)!.payloadJson!);
+  const draft = attachmentsOfType(failed.details.attachments, 'prompt-draft').find(meta => meta.id === failed.details.launchOperations![0]!.draftMetaId)!.payload;
   assert.equal(draft.prompt, payload.prompt);
   assert.deepEqual(draft.repoIds, payload.repoIds);
   assert.equal(draft.promptId, payload.promptId);
   assert.equal((await app.inject('/dashboard')).json<DashboardResponse>().activeWorkItems[0]!.launchPhase, 'failed');
-  const paths = failed.details.metas.filter(meta => meta.metaType === 'repository').map(meta => JSON.parse(meta.payloadJson!).worktreePath);
+  const paths = attachmentsOfType(failed.details.attachments, 'worktree').map(meta => meta.payload.worktreePath);
   setFailing(false);
   const retryPayload = { ...payload, requestId: randomUUID() };
   const retry = await app.inject({ method: 'POST', url: `/work-items/${accepted.details.workItem.id}/new-session`, payload: retryPayload });
@@ -674,7 +674,7 @@ test('background partial preparation failure exposes the exact draft for retry o
   await waitForLaunch(database, retryPayload.requestId);
   const ready = (await app.inject(`/work-items/${accepted.details.workItem.id}`)).json<WorkItemDetails>();
   assert.equal(ready.launchOperations!.at(-1)!.launch.ok, true);
-  assert.deepEqual(ready.metas.filter(meta => meta.metaType === 'repository').map(meta => JSON.parse(meta.payloadJson!).worktreePath), paths);
+  assert.deepEqual(attachmentsOfType(ready.attachments, 'worktree').map(meta => meta.payload.worktreePath), paths);
   assert.equal(database.getWorkItemCount(), 1);
   assert.equal(calls.length, 3, 'ready sibling reused; only failed repository retried');
   assert.equal(starts().length, 1);
@@ -717,7 +717,7 @@ test('a lost acceptance reply is inspectable by UUID and never duplicates backgr
 
 test('concurrent sessions on the same item allocate one Herdr workspace and independent panes', async t => {
   const { app, database, herdr } = await fixture(t);
-  const work = createActiveWorkItemFromMetas(database, { title: 'Concurrent sessions', metas: [] });
+  const work = createActiveWorkItem(database, { title: 'Concurrent sessions', attachments: [] });
   const gate = deferred();
   let allocations = 0;
   const create = herdr.createWorkspace.bind(herdr);
@@ -729,10 +729,10 @@ test('concurrent sessions on the same item allocate one Herdr workspace and inde
   gate.resolve();
   await Promise.all(requests.map(request => waitForLaunch(database, request.requestId)));
   assert.equal(herdr.workspaces.size, 1);
-  assert.equal(database.listWorkItemMeta(work.id).filter(meta => meta.metaType === 'herdr-workspace').length, 1);
-  const sessions = database.listWorkItemMeta(work.id).filter(meta => meta.metaType === 'session').map(meta => JSON.parse(meta.payloadJson!));
+  assert.equal(database.listAttachmentsOfType('herdr-workspace', work.id).length, 1);
+  const sessions = database.listAttachmentsOfType('session', work.id).map(meta => meta.payload);
   assert.equal(sessions.length, 2);
-  assert.notEqual(sessions[0]!.terminalRef.paneId, sessions[1]!.terminalRef.paneId);
+  assert.notEqual(sessions[0]!.terminalRef!.paneId, sessions[1]!.terminalRef!.paneId);
   assert.equal(herdr.calls.filter(call => call.method === 'createTab').length, 1);
   assert.equal(herdr.calls.filter(call => call.method === 'focusTab').length, 0);
 });
@@ -777,5 +777,5 @@ test('cancelling accepted work during preparation never starts an agent or reset
   assert.equal(outcome.launch.phase, 'failed');
   assert.equal(outcome.details.workItem.state, 'cancelled');
   assert.equal(starts().length, 0);
-  assert.equal(JSON.parse(outcome.details.metas.find(meta => meta.metaType === 'prompt-draft')!.payloadJson!).status, 'pending');
+  assert.equal(attachmentsOfType(outcome.details.attachments, 'prompt-draft')[0]!.payload.status, 'pending');
 });

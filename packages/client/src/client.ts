@@ -152,8 +152,8 @@ export class LovelaceClient {
     }, launchOptions(options));
   }
   /** Focuses the session's Herdr pane, or continues its exact conversation when the agent ended. */
-  openSession(id: string, metaId: string, options?: RequestOptions): Promise<SessionOpenResponse> {
-    return this.request(`/work-items/${encodeURIComponent(id)}/sessions/${encodeURIComponent(metaId)}/open`, { method: 'POST' }, launchOptions(options));
+  openSession(id: string, sessionId: string, options?: RequestOptions): Promise<SessionOpenResponse> {
+    return this.request(`/work-items/${encodeURIComponent(id)}/sessions/${encodeURIComponent(sessionId)}/open`, { method: 'POST' }, launchOptions(options));
   }
 }
 

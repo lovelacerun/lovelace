@@ -20,8 +20,8 @@ test('work-items add-worktree polls after submission and preserves final JSON in
       preparedAt: '2026-01-01T00:00:00Z', sourceExternalId: null,
       ...(status === 'failed' ? { errorMessage: 'fixture install failed' } : {}),
     });
-    const details = (ready) => ({ workItem: { id: 'work' }, metas: ['a','b'].map(repoId => ({
-      id: repoId, metaType: 'repository', payloadJson: JSON.stringify(payload(repoId, ready ? (repoId === 'a' ? 'ready' : 'failed') : 'pending')),
+    const details = (ready) => ({ workItem: { id: 'work' }, attachments: ['a','b'].map(repoId => ({
+      id: repoId, type: 'worktree', payload: payload(repoId, ready ? (repoId === 'a' ? 'ready' : 'failed') : 'pending'),
     })) });
     globalThis.fetch = async (url, init) => {
       if (!String(url).startsWith('http://127.0.0.1:48999/')) throw new Error('Nonlocal fixture request');
@@ -59,7 +59,7 @@ test('Ctrl-C during workspace preparation emits a JSON interruption error with a
     if (!String(url).startsWith('http://127.0.0.1:48999/')) throw new Error('Nonlocal fixture request');
     if (new URL(url).pathname === '/repos') return Response.json([{ id: 'a', name: 'a', fullName: 'org/a' }]);
     if (init?.method === 'POST') setTimeout(() => process.emit('SIGINT'), 25);
-    return Response.json({ workItem: { id: 'work' }, metas: [{ id: 'a', metaType: 'repository', payloadJson: JSON.stringify({ repoId: 'a', repoName: 'a', sourceExternalId: null, status: 'preparing' }) }] });
+    return Response.json({ workItem: { id: 'work' }, attachments: [{ id: 'a', type: 'worktree', payload: { repoId: 'a', repoName: 'a', sourceExternalId: null, status: 'preparing' } }] });
   };`);
   const result = spawnSync(process.execPath, ['--import', loader, '--import', preload, entry, 'work-items', 'add-worktree', 'work', 'a'], {
     env: { ...process.env, LOVELACE_ROOT: root, LOVELACE_CONFIG: join(root, 'config.jsonc'), LOVELACE_PORT: '48999', LOVELACE_NO_AUTOSTART: '1' }, encoding: 'utf8', timeout: 5_000,

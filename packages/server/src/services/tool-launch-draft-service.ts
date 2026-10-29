@@ -1,9 +1,7 @@
 import { randomUUID } from 'node:crypto';
-import { isToolLaunchOptionsById } from '@lovelace/core';
-import safeParse from '@nkzw/core/safeParse.js';
-import type { StartWorkLaunchInput, ToolLaunchDraftPayload, WorkItemMeta } from '@lovelace/core';
+import type { Attachment, StartWorkLaunchInput, ToolLaunchDraftPayload } from '@lovelace/core';
 import type { DatabaseState } from '../database.js';
-import { addWorkItemMetas } from '../repositories/work-item-repository.js';
+import { addAttachments } from '../repositories/work-item-repository.js';
 
 /** Persists the exact launch intent before any slow or fallible launch step. */
 export function saveToolLaunchDraft(
@@ -11,7 +9,7 @@ export function saveToolLaunchDraft(
   workItemId: string,
   input: StartWorkLaunchInput,
   requestId: string,
-): WorkItemMeta {
+): Attachment<'prompt-draft'> {
   const now = new Date().toISOString();
   const payload: ToolLaunchDraftPayload = {
     revision: randomUUID(),
@@ -25,43 +23,17 @@ export function saveToolLaunchDraft(
     createdAt: now,
     updatedAt: now,
   };
-  return addWorkItemMetas(database, workItemId, [{
-    metaType: 'prompt-draft',
-    provider: 'lovelace',
-    externalId: `launch:${requestId}`,
-    payload,
-  }])[0]!;
+  return addAttachments(database, workItemId, [{ type: 'prompt-draft', payload }])[0] as Attachment<'prompt-draft'>;
 }
 
-export function markToolLaunchDraftLaunched(database: DatabaseState, draft: WorkItemMeta): WorkItemMeta | null {
-  const current = database.listWorkItemMeta(draft.workItemId).find((meta) => meta.id === draft.id);
+export function markToolLaunchDraftLaunched(database: DatabaseState, draft: Attachment<'prompt-draft'>): Attachment<'prompt-draft'> | null {
+  const current = database.getAttachment('prompt-draft', draft.id);
   if (!current) return null;
-  const payload = parseToolLaunchDraft(current.payloadJson);
-  const captured = parseToolLaunchDraft(draft.payloadJson);
-  if (!payload || !captured) return null;
   // A replaced prompt is a new revision that stays pending.
-  if (payload.revision !== captured.revision) return current;
-  return database.updateWorkItemMetaPayload(draft.id, {
-    ...payload,
+  if (current.payload.revision !== draft.payload.revision) return current;
+  return database.updateAttachment('prompt-draft', draft.id, {
+    ...current.payload,
     status: 'launched',
     updatedAt: new Date().toISOString(),
-  } satisfies ToolLaunchDraftPayload);
-}
-
-function parseToolLaunchDraft(payloadJson: string | null): ToolLaunchDraftPayload | null {
-  const value = safeParse<Partial<ToolLaunchDraftPayload>>(payloadJson);
-  if (!Array.isArray(value?.toolIds) || !value.toolIds.every((entry) => typeof entry === 'string')) return null;
-  if (typeof value.revision !== 'string' || typeof value.createdAt !== 'string' || typeof value.updatedAt !== 'string') return null;
-  return {
-    revision: value.revision,
-    requestId: typeof value.requestId === 'string' ? value.requestId : undefined,
-    toolIds: value.toolIds,
-    toolOptions: isToolLaunchOptionsById(value.toolOptions) ? value.toolOptions : undefined,
-    repoIds: Array.isArray(value.repoIds) && value.repoIds.every((entry) => typeof entry === 'string') ? value.repoIds : null,
-    promptId: typeof value.promptId === 'string' ? value.promptId : null,
-    prompt: typeof value.prompt === 'string' ? value.prompt : null,
-    status: value.status === 'launched' ? 'launched' : 'pending',
-    createdAt: value.createdAt,
-    updatedAt: value.updatedAt,
-  };
+  });
 }

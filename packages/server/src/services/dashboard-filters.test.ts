@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import test, { type TestContext } from 'node:test';
 import type { JiraIssueSummary, LovelaceConfig } from '@lovelace/core';
 import { openDatabase } from '../database.js';
-import { createActiveWorkItemFromMetas, createManualWorkItem } from '../repositories/work-item-repository.js';
+import { createActiveWorkItem, createManualWorkItem } from '../repositories/work-item-repository.js';
 import { fixtureProviders, storedSnapshot } from '../test-support/providers.js';
 import { buildDashboard, startOfPreviousLocalDay } from './dashboard-service.js';
 
@@ -35,7 +35,7 @@ test('pending Jira respects category, dismissal, snooze and all non-cancelled li
   await providers.setAssigned(issues);
   database.upsertInboxMeta({ sourceType: 'tracker-item', provider: 'jira', externalId: '5', state: 'dismissed', createdAt: now.toISOString(), updatedAt: now.toISOString() });
   for (const [id, state] of [['9', 'active'], ['10', 'done'], ['12', 'cancelled']] as const) {
-    const work = createActiveWorkItemFromMetas(database, { title: id, metas: [{ metaType: 'tracker-item', provider: 'jira', externalId: id, payload: jiraIssue(id) }] });
+    const work = createActiveWorkItem(database, { title: id, attachments: [{ type: 'tracker-item', provider: 'jira', externalId: id, payload: jiraIssue(id) }] });
     database.updateWorkItemState(work.id, state);
   }
   assert.deepEqual(dashboard().pendingJiraIssues.map((issue) => issue.id), ['1', '4', '6', '7', '8', '11', '12']);

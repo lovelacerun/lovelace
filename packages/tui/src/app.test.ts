@@ -6,7 +6,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 import type { TestContext } from 'node:test';
 import { ApiError, LovelaceClient, type QuickStartOptions } from '@lovelace/client';
 import {
-  CODING_HARNESSES, type AvailableHarness, type DashboardResponse, type QuickStartResponse, type SessionOpenResponse,
+  CODING_HARNESSES, type AgentSession, type AvailableHarness, type DashboardResponse, type PullRequestPayload, type QuickStartResponse, type SessionOpenResponse,
   type WorkItemDetails, type WorkItemState,
 } from '@lovelace/core';
 import { AppRoot } from './app.js';
@@ -66,7 +66,7 @@ class FakeTui {
 
 // -- FakeClient -----------------------------------------------------------
 
-interface OpenCall { workItemId: string; metaId: string }
+interface OpenCall { workItemId: string; sessionId: string }
 interface LaunchCall { endpoint: 'quickStart' | 'newSession'; workItemId?: string; jiraIssueId?: string; reviewRequestId?: string; prompt: string; requestId?: string; repoIds?: string[]; promptId?: string }
 
 class FakeClient {
@@ -84,8 +84,8 @@ class FakeClient {
   }
   async getJiraIssues() { return []; }
   async getTools() { return fixtureTools(); }
-  async openSession(workItemId: string, metaId: string): Promise<SessionOpenResponse> {
-    this.openCalls.push({ workItemId, metaId });
+  async openSession(workItemId: string, sessionId: string): Promise<SessionOpenResponse> {
+    this.openCalls.push({ workItemId, sessionId });
     const next = this.openQueue.shift();
     if (!next) throw new Error('No queued open response');
     if (next instanceof Error) throw next;
@@ -141,7 +141,7 @@ function detailsOf(id: string, state: WorkItemState = 'active'): WorkItemDetails
       id, title: `Item ${id}`, state, notes: null,
       createdAt: '', updatedAt: '', startedAt: null, completedAt: null,
     },
-    metas: [],
+    attachments: [],
   };
 }
 
@@ -154,14 +154,14 @@ function makeRoot(opts: { tui?: FakeTui; client?: LovelaceClient } = {}) {
 
 function withSession(id: string, state: WorkItemState = 'active'): WorkItemDetails {
   const details = detailsOf(id, state);
-  details.metas.push({
-    id: 'm', workItemId: id, metaType: 'session', provider: 'pi', externalId: 'll-fixture',
-    payloadJson: JSON.stringify({ title: 'Pi', toolId: 'pi', status: 'ended', agentState: 'ended' }), createdAt: '', updatedAt: '',
+  details.attachments.push({
+    id: 'm', workItemId: id, type: 'session',
+    payload: { title: 'Pi', toolId: 'pi', status: 'ended', agentState: 'ended' } as AgentSession, createdAt: '', updatedAt: '',
   });
   return details;
 }
 
-const openSession = (root: AppRoot, metaId = 'm') => (root as unknown as { openSession: (id: string) => Promise<void> }).openSession(metaId);
+const openSession = (root: AppRoot, sessionId = 'm') => (root as unknown as { openSession: (id: string) => Promise<void> }).openSession(sessionId);
 
 // -- Tests ----------------------------------------------------------------
 
@@ -386,7 +386,7 @@ describe('AppRoot session open', () => {
   it('selecting a session asks the server once; Herdr focuses or continues it', async (t) => {
     let finish!: (value: SessionOpenResponse) => void;
     const client = fakeClient();
-    client.openSession = (workItemId, metaId) => { asFake(client).openCalls.push({ workItemId, metaId }); return new Promise(resolve => { finish = resolve; }); };
+    client.openSession = (workItemId, sessionId) => { asFake(client).openCalls.push({ workItemId, sessionId }); return new Promise(resolve => { finish = resolve; }); };
     const { root, tui } = makeRoot({ client });
     const done = root.start();
     t.after(async () => { root.quit(); await done; });
@@ -394,7 +394,7 @@ describe('AppRoot session open', () => {
     root.state.setWorkItemData(withSession('wi'));
     tui.feedInput('\r');
     tui.feedInput('\r');
-    assert.deepEqual(asFake(client).openCalls, [{ workItemId: 'wi', metaId: 'm' }]);
+    assert.deepEqual(asFake(client).openCalls, [{ workItemId: 'wi', sessionId: 'm' }]);
     assert.equal(root.state.pendingConfirm, null, 'no confirmation: selecting is the request');
     finish({ action: 'continued', details: withSession('wi') });
     await waitFor(() => root.state.notice === 'Continued the conversation in Herdr.');
@@ -634,7 +634,7 @@ describe('AppRoot sizing + resize', () => {
         id: 'wi-0', title: 'Big one', state: 'active', notes: 'Lots of notes '.repeat(60),
         createdAt: '', updatedAt: '', startedAt: null, completedAt: null,
       },
-      metas: [],
+      attachments: [],
     });
     const out = root.render(120);
     assertFits(out, 120, 36);
@@ -1174,9 +1174,9 @@ describe('AppRoot mouse', () => {
   it('opens provider cards in the browser and replays clicked help chips', () => {
     const { root, opened } = mouseRoot();
     const details = detailsOf('a');
-    details.metas.push({
-      id: 'pr', workItemId: 'a', metaType: 'pull-request', provider: 'github', externalId: '7',
-      payloadJson: JSON.stringify({ number: 7, url: 'https://github.invalid/org/repo/pull/7', status: 'open' }), createdAt: '', updatedAt: '',
+    details.attachments.push({
+      id: 'pr', workItemId: 'a', type: 'pull-request', provider: 'github', externalId: '7',
+      payload: { number: 7, url: 'https://github.invalid/org/repo/pull/7', status: 'open' } as PullRequestPayload, createdAt: '', updatedAt: '',
     });
     root.state.navigateToWorkItem('a');
     root.state.setWorkItemData(details);

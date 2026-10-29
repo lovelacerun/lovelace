@@ -1,5 +1,4 @@
-import type { LovelaceLink, RepositoryWorkspaceMetaPayload, StartWorkSource, WorkItemMeta } from '@lovelace/core';
-import safeParse from '@nkzw/core/safeParse.js';
+import type { LovelaceLink, StartWorkSource, WorkItemAttachment } from '@lovelace/core';
 
 export const UUID = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
 
@@ -45,22 +44,8 @@ export function dedupeLinks(links: LovelaceLink[]): LovelaceLink[] {
 }
 
 /** Tracker items and change requests attached to a work item. */
-export function metaSources(metas: WorkItemMeta[]): StartWorkSource[] {
-  return metas.flatMap((meta) => meta.metaType === 'tracker-item' || meta.metaType === 'change-request'
-    ? [{ sourceType: meta.metaType, provider: meta.provider ?? 'unknown', externalId: meta.externalId ?? meta.id, payload: safeParse(meta.payloadJson) }]
+export function attachmentSources(attachments: WorkItemAttachment[]): StartWorkSource[] {
+  return attachments.flatMap((attachment) => attachment.type === 'tracker-item' || attachment.type === 'change-request'
+    ? [{ sourceType: attachment.type, provider: attachment.provider, externalId: attachment.externalId, payload: attachment.payload }]
     : []);
-}
-
-function parseRepositoryWorkspacePayload(payloadJson: string | null): RepositoryWorkspaceMetaPayload | null {
-  const payload = safeParse<RepositoryWorkspaceMetaPayload>(payloadJson);
-  if (!payload?.worktreePath || (payload.workspaceMode !== 'fresh' && payload.workspaceMode !== 'change-request')) return null;
-  return payload;
-}
-
-/** Repository workspace metas with a valid payload. */
-export function repositoryWorkspaces(metas: WorkItemMeta[]): Array<{ meta: WorkItemMeta; payload: RepositoryWorkspaceMetaPayload }> {
-  return metas.flatMap((meta) => {
-    const payload = meta.metaType === 'repository' ? parseRepositoryWorkspacePayload(meta.payloadJson) : null;
-    return payload ? [{ meta, payload }] : [];
-  });
 }

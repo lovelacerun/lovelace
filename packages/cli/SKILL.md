@@ -27,8 +27,8 @@ user instead of retrying.
 lovelace work show
 ```
 
-Returns the work item plus its metas: attached repositories (with
-`worktreePath`, `branchName`, `status`) and sessions.
+Returns the work item plus its attachments: worktrees (with `worktreePath`,
+`branchName`, `status`), sessions, Jira issues and pull requests.
 
 ## Add a worktree to the work item
 
@@ -128,7 +128,7 @@ pass an explicit command. Errors are JSON on stderr with a nonzero exit code.
 
 ```sh
 lovelace work launch <pi|codex|claude> (--prompt <text> | --prompt-file <path>)
-lovelace work open <session-meta-id>
+lovelace work open <session-id>
 ```
 
 Launch starts a new agent session in the work item's Herdr workspace; pass

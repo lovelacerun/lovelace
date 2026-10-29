@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { LovelaceClient } from '@lovelace/client';
 import { ApiError } from '@lovelace/client';
-import { isCodingHarnessId, type ToolLaunchDraftPayload, type WorkItemState } from '@lovelace/core';
+import { attachmentsOfType, isCodingHarnessId, type WorkItemState } from '@lovelace/core';
 import { isLaunchFocus, type AppState, type PendingLaunch } from './state.js';
 import type { Action } from './views/common.js';
 import type { KeyIntent } from './keymap.js';
@@ -20,7 +20,7 @@ export interface ControllerDeps {
   /** Submit the current editor text as a launch request. */
   submitLaunch: (prompt: string) => Promise<void>;
   /** Focus a session's Herdr pane, or continue its ended conversation (meta id). */
-  openSession: (metaId: string) => Promise<void>;
+  openSession: (sessionId: string) => Promise<void>;
   /** Open a provider link using the client machine's default browser. */
   openUrl: (url: string) => Promise<void>;
   /** Clear editor contents + focus elsewhere. */
@@ -124,10 +124,9 @@ export async function handleAction(state: AppState, action: Action, deps: Contro
         // with a new UUID. Never infer a prompt or retry an uncertain launch.
         const operation = state.selectedWorkItemData?.launchOperations?.find(operation => operation.requestId === action.requestId);
         if (!operation || operation.status !== 'completed' || operation.launch.ok) return;
-        const meta = state.selectedWorkItemData?.metas.find(meta => meta.id === operation.draftMetaId);
-        if (!meta?.payloadJson) return;
-        const draft = JSON.parse(meta.payloadJson) as ToolLaunchDraftPayload;
-        if (!draft.prompt || !state.selectedWorkItemId || !isCodingHarnessId(draft.toolIds[0])) return;
+        const draft = attachmentsOfType(state.selectedWorkItemData?.attachments ?? [], 'prompt-draft')
+          .find(attachment => attachment.id === operation.draftMetaId)?.payload;
+        if (!draft?.prompt || !state.selectedWorkItemId || !isCodingHarnessId(draft.toolIds[0])) return;
         state.setDraft({
           text: draft.prompt, repoIds: draft.repoIds ?? undefined, promptId: draft.promptId ?? undefined,
           agentId: draft.toolIds[0], toolOptions: draft.toolOptions, retryWorkId: state.selectedWorkItemId,
@@ -151,7 +150,7 @@ export async function handleAction(state: AppState, action: Action, deps: Contro
       return;
 
     case 'session':
-      await deps.openSession(action.metaId);
+      await deps.openSession(action.sessionId);
       return;
 
     case 'edit':

@@ -3,7 +3,7 @@ import { it } from 'node:test';
 import { stripTerminalSequences } from '@earendil-works/pi-tui';
 import type { TuiAltScreen } from '@earendil-works/pi-tui';
 import type { LovelaceClient } from '@lovelace/client';
-import type { DashboardResponse, WorkItemDetails } from '@lovelace/core';
+import type { DashboardResponse, WorkItemAttachment, WorkItemDetails } from '@lovelace/core';
 import { AppRoot } from './app.js';
 
 const dashboard: DashboardResponse = {
@@ -14,15 +14,15 @@ const dashboard: DashboardResponse = {
 };
 const details: WorkItemDetails = {
   workItem: { id: 'work', title: 'Linked work', state: 'active', notes: null, createdAt: '', updatedAt: '', startedAt: null, completedAt: null },
-  metas: [
+  attachments: [
     { key: 'PROJ-1', title: 'A long Jira title '.repeat(8), url: 'https://jira.example/browse/PROJ-1' },
     { key: 'PROJ-2', title: 'Second ticket', url: 'https://jira.example/browse/PROJ-2' },
     { number: 12, repoFullName: 'example/service', url: 'https://github.com/example/service/pull/12' },
     { number: 13, repoFullName: 'example/service', url: 'https://github.com/example/service/pull/13' },
   ].map((data, index) => ({
-    id: String(index), workItemId: 'work', metaType: index < 2 ? 'tracker-item' : 'pull-request', provider: index < 2 ? 'jira' : 'github',
-    externalId: String(index), payloadJson: JSON.stringify(data), createdAt: '', updatedAt: '',
-  })),
+    id: String(index), workItemId: 'work', type: index < 2 ? 'tracker-item' : 'pull-request', provider: index < 2 ? 'jira' : 'github',
+    externalId: String(index), payload: data, createdAt: '', updatedAt: '',
+  }) as WorkItemAttachment),
 };
 
 for (const columns of [50, 80, 120]) {
@@ -55,7 +55,7 @@ for (const columns of [50, 80, 120]) {
       assert.equal(opened.length, index);
       input('\r');
       await new Promise(resolve => setImmediate(resolve));
-      assert.equal(opened.at(-1), JSON.parse(details.metas[index]!.payloadJson!).url);
+      assert.equal(opened.at(-1), (details.attachments[index]!.payload as { url: string }).url);
     }
     input('\x1b[Z');
     assert.equal(root.state.contentSelectedIndex, 3);

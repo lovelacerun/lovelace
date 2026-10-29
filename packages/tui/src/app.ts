@@ -459,7 +459,7 @@ export class AppRoot implements Component {
       startReview: () => this.startReview(),
       refreshDetails: () => this.triggerDetailsRefresh(),
       submitLaunch: (prompt) => this.launchFromEditor(prompt),
-      openSession: (metaId) => this.openSession(metaId),
+      openSession: (sessionId) => this.openSession(sessionId),
       openUrl: this.openUrl,
       resetEditor: () => {
         replaceEditorText(this.editor, '');
@@ -673,7 +673,7 @@ export class AppRoot implements Component {
    * Herdr focuses the session's live pane, or continues its exact native
    * conversation when the agent ended. Selecting the session is the request.
    */
-  private async openSession(metaId: string): Promise<void> {
+  private async openSession(sessionId: string): Promise<void> {
     const workItemId = this.state.selectedWorkItemId;
     if (!workItemId || this.stopped || this.opening) return;
     const details = this.state.selectedWorkItemData;
@@ -685,7 +685,7 @@ export class AppRoot implements Component {
     this.state.setError(null);
     this.state.setNotice('Opening session in Herdr…');
     try {
-      const response = await this.client.openSession(workItemId, metaId, { signal: this.lifetime.signal });
+      const response = await this.client.openSession(workItemId, sessionId, { signal: this.lifetime.signal });
       if (this.stopped || this.state.selectedWorkItemId !== workItemId) return;
       this.state.setWorkItemData(response.details);
       this.state.setNotice(response.action === 'continued' ? 'Continued the conversation in Herdr.' : null);

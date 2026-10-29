@@ -4,14 +4,18 @@ import { randomUUID } from 'node:crypto';
 import { DatabaseSync, type StatementResultingChanges } from 'node:sqlite';
 import type { CacheSnapshot, CacheStorage } from '@lovelace/cache';
 import type {
+  Attachment,
+  AttachmentType,
   InboxMeta,
   InboxSourceType,
+  LinkAttachmentType,
   LovelaceConfig,
   RepoRecord,
   WorkItem,
-  WorkItemMeta,
+  WorkItemAttachment,
   WorkItemState,
 } from '@lovelace/core';
+import { attachmentStore } from './attachments.js';
 import { migrateDatabase } from './migrations.js';
 
 type WorkActivityKind =
@@ -57,7 +61,18 @@ export interface LaunchOperation {
   updatedAt: string;
 }
 
-interface Statement {
+const ATTACHED_ACTIVITY: Partial<Record<AttachmentType, WorkActivityKind>> = {
+  'session': 'session.created',
+  'tracker-item': 'work-item.tracker-attached',
+  'pull-request': 'work-item.pull-request-attached',
+  'worktree': 'work-item.repository-attached',
+};
+
+/** An attachment before the database assigned its ID and timestamps. */
+export type NewAttachment = WorkItemAttachment extends infer A
+  ? A extends WorkItemAttachment ? Omit<A, 'id' | 'createdAt' | 'updatedAt'> : never : never;
+
+export interface Statement {
   run(...params: unknown[]): StatementResultingChanges;
   get(...params: unknown[]): unknown;
   all(...params: unknown[]): unknown[];
@@ -79,10 +94,15 @@ export interface DatabaseState {
   updateWorkItem(id: string, input: { title?: string; notes?: string | null }): WorkItem | null;
   updateWorkItemState(id: string, state: WorkItemState): WorkItem | null;
   touchWorkItem(id: string): WorkItem | null;
-  listWorkItemMeta(workItemId?: string): WorkItemMeta[];
-  createWorkItemMetas(metas: WorkItemMeta[]): WorkItemMeta[];
-  updateWorkItemMetaPayload(id: string, payload: unknown): WorkItemMeta | null;
-  deleteWorkItemMetasByExternalIds(workItemId: string, metaType: WorkItemMeta['metaType'], provider: string | null, externalIds: string[]): void;
+  /** All attachments, oldest first. */
+  listAttachments(workItemId?: string): WorkItemAttachment[];
+  listAttachmentsOfType<Type extends AttachmentType>(type: Type, workItemId?: string): Array<Attachment<Type>>;
+  getAttachment<Type extends AttachmentType>(type: Type, id: string): Attachment<Type> | null;
+  addAttachments(attachments: NewAttachment[]): WorkItemAttachment[];
+  /** Replaces the payload; null when the attachment no longer exists. */
+  updateAttachment<Type extends AttachmentType>(type: Type, id: string, payload: Attachment<Type>['payload']): Attachment<Type> | null;
+  deleteLinkAttachments(workItemId: string, type: LinkAttachmentType, provider: string, externalIds: string[]): void;
+  deleteAttachment(type: AttachmentType, id: string): void;
   listInboxMeta(): InboxMeta[];
   upsertInboxMeta(entry: InboxMeta): InboxMeta;
   deleteInboxMeta(sourceType: InboxSourceType, provider: string | null, externalId: string): void;
@@ -103,7 +123,6 @@ export function openDatabase(config: LovelaceConfig): DatabaseState {
   // Statements bind spread records; columns the SQL does not name are ignored.
   const db = new DatabaseSync(join(config.lovelaceDir, 'state.db'), { allowUnknownNamedParameters: true });
   db.exec('pragma journal_mode = WAL');
-  db.exec('pragma foreign_keys = ON');
   // Records bind by name and rows are cast to their record types at each call site.
   const prepare = (sql: string) => db.prepare(sql) as unknown as Statement;
   let savepoint = 0;
@@ -123,6 +142,7 @@ export function openDatabase(config: LovelaceConfig): DatabaseState {
 
   try {
     migrateDatabase(db, join(config.lovelaceDir, 'backups'));
+    db.exec('pragma foreign_keys = ON');
   } catch (error) {
     db.close();
     throw error;
@@ -171,26 +191,7 @@ export function openDatabase(config: LovelaceConfig): DatabaseState {
     'select id, title, state, notes, created_at as createdAt, updated_at as updatedAt, started_at as startedAt, completed_at as completedAt from work_items where id = ?',
   );
 
-  const insertWorkItemMeta = prepare(`
-    insert into work_item_meta (id, work_item_id, meta_type, provider, external_id, payload_json, created_at, updated_at)
-    values (@id, @workItemId, @metaType, @providerKey, @externalId, @payloadJson, @createdAt, @updatedAt)
-  `);
-
-  const updateWorkItemMetaPayloadStatement = prepare(`
-    update work_item_meta
-    set payload_json = @payloadJson,
-        updated_at = @updatedAt
-    where id = @id
-  `);
-
-  const selectWorkItemMetaById = prepare(
-    "select id, work_item_id as workItemId, meta_type as metaType, nullif(provider, '') as provider, external_id as externalId, payload_json as payloadJson, created_at as createdAt, updated_at as updatedAt from work_item_meta where id = ?",
-  );
-
-  const deleteWorkItemMetaByExternalId = prepare(`
-    delete from work_item_meta
-    where work_item_id = ? and meta_type = ? and provider = ? and external_id = ?
-  `);
+  const attachments = attachmentStore(prepare);
 
   const upsertCacheSnapshot = prepare(`
     insert into cache_snapshots (key, fetched_at, payload_json)
@@ -310,41 +311,39 @@ export function openDatabase(config: LovelaceConfig): DatabaseState {
       touchWorkItemStatement.run({ id, updatedAt: new Date().toISOString() });
       return (selectWorkItemById.get(id) as WorkItem | undefined) ?? null;
     },
-    listWorkItemMeta(workItemId) {
-      const query = workItemId
-        ? "select id, work_item_id as workItemId, meta_type as metaType, nullif(provider, '') as provider, external_id as externalId, payload_json as payloadJson, created_at as createdAt, updated_at as updatedAt from work_item_meta where work_item_id = ? order by created_at asc"
-        : "select id, work_item_id as workItemId, meta_type as metaType, nullif(provider, '') as provider, external_id as externalId, payload_json as payloadJson, created_at as createdAt, updated_at as updatedAt from work_item_meta order by created_at asc";
-      return (workItemId ? prepare(query).all(workItemId) : prepare(query).all()) as WorkItemMeta[];
+    listAttachments(workItemId) {
+      return attachments.list(workItemId);
     },
-    createWorkItemMetas(metas) {
-      transaction(() => {
-        for (const meta of metas) {
-          insertWorkItemMeta.run({ ...meta, providerKey: providerKey(meta.provider) });
-          const kind = meta.metaType === 'session' ? 'session.created'
-            : meta.metaType === 'tracker-item' ? 'work-item.tracker-attached'
-            : meta.metaType === 'pull-request' ? 'work-item.pull-request-attached'
-            : meta.metaType === 'repository' ? 'work-item.repository-attached' : null;
-          if (kind) recordWorkActivity({ workItemId: meta.workItemId, kind, payload: { metaId: meta.id, provider: meta.provider, externalId: meta.externalId } });
+    listAttachmentsOfType(type, workItemId) {
+      return attachments.list(workItemId, type);
+    },
+    getAttachment(type, id) {
+      return attachments.get(type, id);
+    },
+    addAttachments(inputs) {
+      return transaction(() => inputs.map((input) => {
+        const attachment = attachments.insert(input);
+        const kind = ATTACHED_ACTIVITY[attachment.type];
+        if (kind) {
+          recordWorkActivity({
+            workItemId: attachment.workItemId, kind,
+            payload: { metaId: attachment.id, provider: 'provider' in attachment ? attachment.provider : null, externalId: 'externalId' in attachment ? attachment.externalId : null },
+          });
         }
-      });
-      return metas;
+        return attachment;
+      }));
     },
-    updateWorkItemMetaPayload(id, payload) {
-      const existing = (selectWorkItemMetaById.get(id) as WorkItemMeta | undefined) ?? null;
-      if (!existing) return null;
-      updateWorkItemMetaPayloadStatement.run({
-        id,
-        payloadJson: JSON.stringify(payload),
-        updatedAt: new Date().toISOString(),
-      });
-      return (selectWorkItemMetaById.get(id) as WorkItemMeta | undefined) ?? null;
+    updateAttachment(type, id, payload) {
+      attachments.update(type, id, payload);
+      return attachments.get(type, id);
     },
-    deleteWorkItemMetasByExternalIds(workItemId, metaType, provider, externalIds) {
+    deleteLinkAttachments(workItemId, type, provider, externalIds) {
       transaction(() => {
-        for (const externalId of externalIds) {
-          deleteWorkItemMetaByExternalId.run(workItemId, metaType, providerKey(provider), externalId);
-        }
+        for (const externalId of externalIds) attachments.deleteLink(workItemId, type, provider, externalId);
       });
+    },
+    deleteAttachment(type, id) {
+      attachments.delete(type, id);
     },
     listInboxMeta() {
       return prepare(

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { LovelaceClient } from './client.js';
 
-const accepted = { details: { workItem: { id: 'work' }, metas: [] }, launch: { ok: false, error: null, phase: 'accepted' }, operation: { requestId: 'id', status: 'pending' } };
+const accepted = { details: { workItem: { id: 'work' }, attachments: [] }, launch: { ok: false, error: null, phase: 'accepted' }, operation: { requestId: 'id', status: 'pending' } };
 
 test('launch wait:false submits once and returns acceptance; status lookup is a read using the exact UUID', async () => {
   const requests: Array<{ path: string; method: string; body: unknown }> = [];

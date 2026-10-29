@@ -18,11 +18,9 @@ export function isWorkspaceMode(value: string | undefined): value is WorkspaceMo
   return Boolean(value && WORKSPACE_MODES.includes(value as WorkspaceMode));
 }
 
-type WorkItemMetaType = 'tracker-item' | 'change-request' | 'session' | 'repository' | 'pull-request' | 'prompt-draft' | 'herdr-workspace';
-
 export type { GitHubReviewRequest, JiraIssueSummary, RepoRecord };
 
-export interface PullRequestMetaPayload {
+export interface PullRequestPayload {
   repoFullName: string;
   number: number;
   title: string;
@@ -110,16 +108,35 @@ export interface WorkItem {
   completedAt: string | null;
 }
 
-export interface WorkItemMeta {
+interface AttachmentOfType<Type extends string, Payload> {
   id: string;
   workItemId: string;
-  metaType: WorkItemMetaType;
-  provider: string | null;
-  externalId: string | null;
-  payloadJson: string | null;
+  type: Type;
+  payload: Payload;
   createdAt: string;
   updatedAt: string;
 }
+
+/** Upstream records, identified by their provider's ID. */
+interface LinkAttachment<Type extends string, Payload> extends AttachmentOfType<Type, Payload> {
+  provider: string;
+  externalId: string;
+}
+
+/** Everything attached to a work item, discriminated by `type`. */
+export type WorkItemAttachment =
+  | LinkAttachment<'tracker-item', JiraIssueSummary>
+  /** Review request the work item was started from. */
+  | LinkAttachment<'change-request', GitHubReviewRequest>
+  | LinkAttachment<'pull-request', PullRequestPayload>
+  | AttachmentOfType<'prompt-draft', ToolLaunchDraftPayload>
+  | AttachmentOfType<'herdr-workspace', HerdrWorkspacePayload>
+  | AttachmentOfType<'worktree', Worktree>
+  | AttachmentOfType<'session', AgentSession>;
+
+export type AttachmentType = WorkItemAttachment['type'];
+export type Attachment<Type extends AttachmentType> = Extract<WorkItemAttachment, { type: Type }>;
+export type LinkAttachmentType = Extract<WorkItemAttachment, { externalId: string }>['type'];
 
 export interface InboxMeta {
   sourceType: InboxSourceType;
@@ -146,7 +163,7 @@ export interface LaunchOperationSummary {
 
 export interface WorkItemDetails {
   workItem: WorkItem;
-  metas: WorkItemMeta[];
+  attachments: WorkItemAttachment[];
   /** Server-owned launch progress, including drafts available for explicit retry. */
   launchOperations?: LaunchOperationSummary[];
 }
@@ -189,7 +206,7 @@ export interface StartWorkLaunchInput {
   prompt?: string | null;
 }
 
-export interface RepositoryWorkspaceMetaPayload {
+export interface Worktree {
   repoId: string;
   repoName: string;
   repoPath: string;
@@ -236,12 +253,11 @@ export interface RenderedPrompt {
 export type AgentSessionState = 'starting' | 'working' | 'idle' | 'done' | 'blocked' | 'unknown' | 'ended';
 
 /** Herdr workspace that hosts a work item's sessions. */
-export interface HerdrWorkspaceMetaPayload {
+export interface HerdrWorkspacePayload {
   workspaceId: string;
-  createdAt: string;
 }
 
-export interface ToolSessionMetaPayload {
+export interface AgentSession {
   /** Pane that runs (or ran) the agent; null before the first launch. */
   terminalRef: HerdrPaneRef | null;
   /** Herdr agent name; unique among live Herdr agents. */
@@ -261,6 +277,4 @@ export interface ToolSessionMetaPayload {
   status: 'running' | 'ended';
   agentState: AgentSessionState;
   metadata: unknown;
-  createdAt: string;
-  updatedAt: string;
 }

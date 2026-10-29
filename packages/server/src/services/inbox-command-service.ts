@@ -1,6 +1,6 @@
 import type { InboxSourceType, WorkItem } from '@lovelace/core';
 import type { DatabaseState } from '../database.js';
-import { createActiveWorkItemFromMetas } from '../repositories/work-item-repository.js';
+import { createActiveWorkItem, type PendingAttachment } from '../repositories/work-item-repository.js';
 
 export interface InboxActionSource {
   sourceType: InboxSourceType;
@@ -26,14 +26,15 @@ export function activateInboxItem(database: DatabaseState, input: ActivateInboxI
     database.deleteInboxMeta(source.sourceType, source.provider, source.externalId);
   }
 
-  return createActiveWorkItemFromMetas(database, {
+  return createActiveWorkItem(database, {
     title: input.title,
-    metas: input.sources.map((source) => ({
-      metaType: source.sourceType,
+    // Inbox sources carry the provider record the client listed.
+    attachments: input.sources.map((source) => ({
+      type: source.sourceType,
       provider: source.provider,
       externalId: source.externalId,
-      payload: source.payload ?? null,
-    })),
+      payload: source.payload,
+    }) as PendingAttachment),
   });
 }
 

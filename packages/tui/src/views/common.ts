@@ -5,7 +5,7 @@ import { accent, band, cardBg, danger, faint, icons, keyColor, muted, reset, sel
 import { padRight, safeText, truncate } from '@lovelace/tui-components';
 import { clickable } from '../clickable.js';
 
-export type Action = { kind: 'navigate'; entry: NavigationEntry } | { kind: 'session'; metaId: string } |
+export type Action = { kind: 'navigate'; entry: NavigationEntry } | { kind: 'session'; sessionId: string } |
   { kind: 'jira-setup' } | { kind: 'review-start' } | { kind: 'launch-retry'; requestId?: string } | { kind: 'open-url'; url: string } |
   { kind: 'edit' } | { kind: 'state'; state: WorkItemState };
 
@@ -109,10 +109,3 @@ export function meta(parts: Array<string | 0 | false | undefined | null>): strin
 }
 
 export function plural(count: number, noun: string): string { return count + ' ' + noun + (count === 1 ? '' : 's'); }
-
-export function payload(meta: { payloadJson: string | null }): Record<string, unknown> {
-  try {
-    const value: unknown = JSON.parse(meta.payloadJson ?? '{}');
-    return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
-  } catch { return {}; }
-}

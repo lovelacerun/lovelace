@@ -11,7 +11,7 @@ before(async () => { root = await mkdtemp(join(tmpdir(), 'lovelace-cli-fixture-'
 after(async () => { if (originalConfig === undefined) delete process.env.LOVELACE_CONFIG; else process.env.LOVELACE_CONFIG = originalConfig; await rm(root, { recursive: true, force: true }); });
 /** Exact file prompt: leading/trailing whitespace, astral, ZWJ, combining and CJK code points. */
 const filePrompt = '\n  λ 👩🏽‍💻 é 漢字\n\n  ';
-const details: WorkItemDetails = { workItem: { id: 'work', title: 'Fixture', state: 'active', notes: null, createdAt: '', updatedAt: '', startedAt: null, completedAt: null }, metas: [] };
+const details: WorkItemDetails = { workItem: { id: 'work', title: 'Fixture', state: 'active', notes: null, createdAt: '', updatedAt: '', startedAt: null, completedAt: null }, attachments: [] };
 function fixture() {
   const events: unknown[][] = [];
   const deps: AgentCommandDeps = {
@@ -20,7 +20,7 @@ function fixture() {
         events.push(['newSession', { id, prompt, agentId, options, requestId }, rest]);
         return { details, launch: { ok: true, error: null, phase: 'started' } };
       },
-      openSession: async (id, metaId) => { events.push(['open', id, metaId]); return { action: 'focused', details }; },
+      openSession: async (id, sessionId) => { events.push(['open', id, sessionId]); return { action: 'focused', details }; },
     },
     uuid: () => 'fixed-request-id',
     readPrompt: async path => { events.push(['readPrompt', path]); return filePrompt; },
@@ -54,5 +54,5 @@ test('open delegates focus or exact continuation to the server', async () => {
   const f = fixture();
   assert.deepEqual(await openTool(['work', 'meta'], f.deps), { action: 'focused', details });
   assert.deepEqual(f.events, [['open', 'work', 'meta']]);
-  await assert.rejects(openTool(['work'], f.deps), /Usage: lovelace work-items open <id> <session-meta-id>/);
+  await assert.rejects(openTool(['work'], f.deps), /Usage: lovelace work-items open <id> <session-id>/);
 });

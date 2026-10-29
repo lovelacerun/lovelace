@@ -63,3 +63,35 @@ test('a failing migration rolls back and keeps the previous version', async (t) 
   assert.equal(version(db), 1);
   assert.equal(db.prepare("select name from sqlite_master where name = 'second'").get(), undefined);
 });
+
+test('legacy metas move to typed attachments, sessions and worktrees without duplicates', async (t) => {
+  const { db, backupDir } = await fixture(t);
+  migrateDatabase(db, backupDir, migrations.slice(0, 1));
+  const meta = (id: string, type: string, provider: string, externalId: string | null, payload: unknown, at = '2026-01-01') =>
+    db.prepare('insert into work_item_meta values (?, ?, ?, ?, ?, ?, ?, ?)').run(id, 'w1', type, provider, externalId, typeof payload === 'string' ? payload : JSON.stringify(payload), at, at);
+  db.exec("insert into work_items (id, title, state, created_at, updated_at) values ('w1', 'Work', 'active', 'now', 'now')");
+  meta('jira-1', 'tracker-item', 'jira', '10', { key: 'PROJ-1' });
+  meta('jira-2', 'tracker-item', 'jira', '10', { key: 'PROJ-1' }, '2026-01-02');
+  meta('draft', 'prompt-draft', 'lovelace', 'launch:r1', { prompt: 'Keep me' });
+  meta('herdr', 'herdr-workspace', 'herdr', 'ws-1', { workspaceId: 'ws-1', createdAt: '2026-01-01' });
+  meta('old-tree', 'repository', 'github', 'a:/work/a', { repoId: 'a', worktreePath: '/work/a', workspaceMode: 'fresh', status: 'failed' });
+  meta('tree', 'repository', 'github', 'a:/work/a', { repoId: 'a', repoName: 'a', repoPath: '/repos/a', worktreePath: '/work/a', workspaceMode: 'fresh', status: 'ready', dependenciesReused: true }, '2026-01-02');
+  meta('broken', 'repository', 'github', 'b', 'not json');
+  meta('session', 'session', 'pi', 'll-1', { agentName: 'll-1', toolId: 'pi', terminalRef: { workspaceId: 'ws-1', paneId: 'p1' }, status: 'running', agentState: 'idle', options: { model: 'm' }, promptPending: true });
+  db.exec(`insert into work_launch_operations values ('r1', 'quick-start', '{}', 'w1', 'draft', 'pending', null, 'now', 'now')`);
+
+  migrateDatabase(db, backupDir);
+
+  const rows = (sql: string) => db.prepare(sql).all().map(row => ({ ...row }));
+  assert.deepEqual(rows('select id, type, provider, external_id as externalId, payload_json as payload from work_item_attachments order by id'), [
+    { id: 'draft', type: 'prompt-draft', provider: null, externalId: null, payload: '{"prompt":"Keep me"}' },
+    { id: 'herdr', type: 'herdr-workspace', provider: null, externalId: null, payload: '{"workspaceId":"ws-1"}' },
+    { id: 'jira-1', type: 'tracker-item', provider: 'jira', externalId: '10', payload: '{"key":"PROJ-1"}' },
+  ]);
+  assert.deepEqual(rows('select id, repo_id as repoId, status, dependencies_reused as reused from worktrees'), [{ id: 'tree', repoId: 'a', status: 'ready', reused: 1 }]);
+  assert.deepEqual(rows('select id, tool_id as toolId, terminal_pane_id as paneId, options_json as options, prompt_pending as pending from sessions'),
+    [{ id: 'session', toolId: 'pi', paneId: 'p1', options: '{"model":"m"}', pending: 1 }]);
+  assert.deepEqual(rows('select request_id as requestId, draft_meta_id as draftId from work_launch_operations'), [{ requestId: 'r1', draftId: 'draft' }]);
+  assert.equal(db.prepare("select name from sqlite_master where name = 'work_item_meta'").get(), undefined);
+  assert.throws(() => db.exec("insert into sessions select * from sessions where id = 'session'"), /UNIQUE/);
+});

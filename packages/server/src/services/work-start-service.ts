@@ -4,7 +4,7 @@ import type { WorkspaceManager, WorkspaceManagerEvent } from '@lovelace/coriol';
 import {
   matchesRepositorySelection,
   repositorySelectionKey,
-  type RepositoryWorkspaceMetaPayload,
+  type Worktree,
   type StartWorkRepositoryInput,
   type StartWorkSource,
   type WorkspaceMode,
@@ -12,13 +12,13 @@ import {
 } from '@lovelace/core';
 import type { GitHubClient } from '@lovelace/github-client';
 import type { DatabaseState } from '../database.js';
-import { isNonEmptyString, isRecord, managedRepositoryId, metaSources, repositoryWorkspaces, slugify } from '../helpers.js';
+import { attachmentSources, isNonEmptyString, isRecord, managedRepositoryId, slugify } from '../helpers.js';
 import { emitActivity } from './activity-bus.js';
 import { ensureTaskWorkspacePath, deriveTaskLabel } from './task-workspace-service.js';
-import { addWorkItemMetas, getWorkItemDetails } from '../repositories/work-item-repository.js';
+import { addAttachments, getWorkItemDetails } from '../repositories/work-item-repository.js';
 
 const WORKTREE_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
-type PreparationResult = { outcome: 'prepared' | 'reused' | 'failed'; payload: RepositoryWorkspaceMetaPayload };
+type PreparationResult = { outcome: 'prepared' | 'reused' | 'failed'; payload: Worktree };
 const inFlight = new WeakMap<DatabaseState, Map<string, Promise<PreparationResult>>>();
 
 interface WorkspaceActivityLogger {
@@ -53,15 +53,15 @@ export function beginRepositoryPreparation(
 ): { details: WorkItemDetails; completion: Promise<void> } | null {
   const details = getWorkItemDetails(deps.database, workItemId);
   if (!details) return null;
-  const completion = attachRepositoriesToWorkItem(deps, workItemId, details.workItem.title, repositories, metaSources(details.metas));
+  const completion = attachRepositoriesToWorkItem(deps, workItemId, details.workItem.title, repositories, attachmentSources(details.attachments));
   return { details: getWorkItemDetails(deps.database, workItemId)!, completion };
 }
 
 /** A server restart ends its preparations, not their work items or worktrees. */
 export function recoverInterruptedRepositoryPreparations(database: DatabaseState): void {
-  for (const { meta, payload } of repositoryWorkspaces(database.listWorkItemMeta())) {
-    if ((payload.status === 'pending' || payload.status === 'preparing') && !inFlight.get(database)?.has(meta.id)) {
-      database.updateWorkItemMetaPayload(meta.id, {
+  for (const { id, payload } of database.listAttachmentsOfType('worktree')) {
+    if ((payload.status === 'pending' || payload.status === 'preparing') && !inFlight.get(database)?.has(id)) {
+      database.updateAttachment('worktree', id, {
         ...payload, status: 'failed', errorMessage: 'Workspace preparation interrupted by server restart; retry workspace creation.',
       });
     }
@@ -76,8 +76,8 @@ export async function cleanupManagedWorktrees(deps: WorkStartDeps): Promise<{ cl
   });
 
   const pending = workItems.flatMap((workItem) => {
-    const metas = repositoryWorkspaces(deps.database.listWorkItemMeta(workItem.id)).filter(({ payload }) => payload.status === 'ready' || payload.status === 'failed');
-    return metas.length > 0 ? [{ workItem, metas }] : [];
+    const worktrees = deps.database.listAttachmentsOfType('worktree', workItem.id).filter(({ payload }) => payload.status === 'ready' || payload.status === 'failed');
+    return worktrees.length > 0 ? [{ workItem, worktrees }] : [];
   });
 
   if (pending.length === 0) return { cleaned: 0 };
@@ -85,8 +85,8 @@ export async function cleanupManagedWorktrees(deps: WorkStartDeps): Promise<{ cl
   deps.logger.info({ workItemCount: pending.length }, 'Cleaning managed worktrees for completed work items');
 
   let cleaned = 0;
-  for (const { workItem, metas } of pending) {
-    for (const { meta, payload } of metas) {
+  for (const { workItem, worktrees } of pending) {
+    for (const { id, payload } of worktrees) {
       const repository = deps.database.listRepos().find((entry) => entry.id === payload.repoId);
       if (existsSync(payload.worktreePath) && !repository) {
         deps.logger.warn({ workItemId: workItem.id, repoId: payload.repoId, worktreePath: payload.worktreePath }, 'Cannot remove managed workspace because its repository record is missing');
@@ -100,18 +100,13 @@ export async function cleanupManagedWorktrees(deps: WorkStartDeps): Promise<{ cl
             workspacePath: payload.worktreePath,
           });
         } catch (error) {
-          // Leave the meta pending so the next cleanup run retries instead of orphaning the worktree.
+          // Leave the worktree pending so the next cleanup run retries instead of orphaning the worktree.
           deps.logger.warn({ err: error, workItemId: workItem.id, worktreePath: payload.worktreePath }, 'Failed to remove managed worktree, will retry on next run');
           continue;
         }
       }
 
-      const updatedPayload: RepositoryWorkspaceMetaPayload = {
-        ...payload,
-        status: 'cleaned',
-        cleanedAt: new Date().toISOString(),
-      };
-      deps.database.updateWorkItemMetaPayload(meta.id, updatedPayload);
+      deps.database.updateAttachment('worktree', id, { ...payload, status: 'cleaned', cleanedAt: new Date().toISOString() });
       cleaned += 1;
       removeTaskDirIfEmpty(deps, payload.worktreePath);
     }
@@ -146,20 +141,20 @@ function attachRepositoriesToWorkItem(
   deps.logger.info({ workItemId, repositoryCount: repositories.length }, 'Preparing repository workspaces');
   const taskDir = ensureTaskWorkspacePath(deps.workspaceManager.workspacesDirectory, workItemId, sources, workItemTitle);
   const workspaceId = basename(taskDir);
-  const existingWorkspaces = repositoryWorkspaces(deps.database.listWorkItemMeta(workItemId)).filter(({ payload }) => payload.status !== 'cleaned');
+  const existingWorkspaces = deps.database.listAttachmentsOfType('worktree', workItemId).filter(({ payload }) => payload.status !== 'cleaned');
   const reservedNames = new Set(existingWorkspaces.map(entry => basename(entry.payload.worktreePath)));
   let pending = inFlight.get(deps.database);
   if (!pending) { pending = new Map(); inFlight.set(deps.database, pending); }
 
   // Source- and branch-specific worktrees remain distinct. Duplicate selections and
-  // overlapping batches join the same meta/operation before Coriol is called.
+  // overlapping batches join the same worktree/operation before Coriol is called.
   const selected = new Map(repositories.map(repository => [repositorySelectionKey(repository), repository]));
   const tasks = [...selected.values()].map(repository => {
     const record = repoRecords.find(record => record.id === repository.repoId)!;
     const managerId = managedRepositoryId(record);
     const repo = { ...record, managerId, path: deps.workspaceManager.repositoryPath(managerId) };
     const existing = existingWorkspaces.find(entry => matchesRepositorySelection(repository, entry.payload));
-    const current = existing ? pending.get(existing.meta.id) : undefined;
+    const current = existing ? pending.get(existing.id) : undefined;
     if (current) return current;
     if (existing?.payload.status === 'ready' && existsSync(existing.payload.worktreePath)) {
       deps.logger.info({ workItemId, repoId: repo.id, worktreePath: existing.payload.worktreePath }, 'Reusing prepared repository workspace');
@@ -173,21 +168,19 @@ function attachRepositoriesToWorkItem(
       worktreePath, status: 'pending',
       branchName: repository.branchName?.trim() || (workspaceMode === 'fresh' ? deriveFreshBranchName(workItemId, sources, repo.name) : null),
     });
-    const meta = existing?.meta ?? addWorkItemMetas(deps.database, workItemId, [{
-      metaType: 'repository', provider: repo.provider, externalId: `${repo.id}:${worktreePath}`, payload: initialPayload,
-    }])[0]!;
-    if (existing) deps.database.updateWorkItemMetaPayload(meta.id, initialPayload);
+    const worktreeId = existing?.id ?? addAttachments(deps.database, workItemId, [{ type: 'worktree', payload: initialPayload }])[0]!.id;
+    if (existing) deps.database.updateAttachment('worktree', worktreeId, initialPayload);
 
-    // Deferring execution ensures the in-flight entry and every pending meta
+    // Deferring execution ensures the in-flight entry and every pending worktree
     // exist before provider calls, fetches or dependency installs can begin.
     const task = Promise.resolve().then(async (): Promise<PreparationResult> => {
       deps.logger.info({ workItemId, repoId: repo.id, repoPath: repo.path, workspaceMode, worktreePath }, 'Preparing repository workspace');
       emitActivity({ type: 'workspace.preparing', workItemId, repoName: repo.name, message: `Preparing workspace for ${repo.name}` });
-      let payload: RepositoryWorkspaceMetaPayload;
+      let payload: Worktree;
       let outcome: 'prepared' | 'failed';
       try {
         payload = await prepareRepositoryWorkspace({
-          deps, repo, worktreePath, workItemId, workspaceMode, repository, sources, workspaceId, metaId: meta.id,
+          deps, repo, worktreePath, workItemId, workspaceMode, repository, sources, workspaceId, worktreeId,
         });
         outcome = 'prepared';
       } catch (error) {
@@ -197,15 +190,15 @@ function attachRepositoriesToWorkItem(
         outcome = 'failed';
       }
       // Commit each result independently: a slow sibling must not hide it.
-      deps.database.updateWorkItemMetaPayload(meta.id, payload);
+      deps.database.updateAttachment('worktree', worktreeId, payload);
       emitActivity({
         type: outcome === 'prepared' ? 'workspace.ready' : 'workspace.failed',
         workItemId, repoName: repo.name,
         message: outcome === 'prepared' ? `Workspace ready for ${repo.name}` : `Workspace failed for ${repo.name}: ${payload.errorMessage}`,
       });
       return { outcome, payload };
-    }).finally(() => { if (pending!.get(meta.id) === task) pending!.delete(meta.id); });
-    pending.set(meta.id, task);
+    }).finally(() => { if (pending!.get(worktreeId) === task) pending!.delete(worktreeId); });
+    pending.set(worktreeId, task);
     return task;
   });
 
@@ -232,18 +225,15 @@ async function prepareRepositoryWorkspace(input: {
   workspaceId: string;
   worktreePath: string;
   workItemId: string;
-  metaId: string;
+  worktreeId: string;
   workspaceMode: WorkspaceMode;
   repository: StartWorkRepositoryInput;
   sources: StartWorkSource[];
-}): Promise<RepositoryWorkspaceMetaPayload> {
+}): Promise<Worktree> {
   const { deps, repo, workspaceMode, repository, sources } = input;
   const updateProgress = (preparationStep: string) => {
-    const meta = deps.database.listWorkItemMeta(input.workItemId).find(meta => meta.id === input.metaId)!;
-    const payload = JSON.parse(meta.payloadJson!) as RepositoryWorkspaceMetaPayload;
-    deps.database.updateWorkItemMetaPayload(input.metaId, {
-      ...payload, status: 'preparing', preparationStep,
-    });
+    const { payload } = deps.database.getAttachment('worktree', input.worktreeId)!;
+    deps.database.updateAttachment('worktree', input.worktreeId, { ...payload, status: 'preparing', preparationStep });
   };
   if (workspaceMode === 'change-request') updateProgress('Resolving review source');
   const preparedAt = new Date().toISOString();
@@ -318,8 +308,8 @@ function repositoryWorkspacePayload(
   repo: { id: string; name: string; path: string },
   repository: StartWorkRepositoryInput,
   workspaceMode: WorkspaceMode,
-  details: Partial<RepositoryWorkspaceMetaPayload> & Pick<RepositoryWorkspaceMetaPayload, 'worktreePath' | 'status'>,
-): RepositoryWorkspaceMetaPayload {
+  details: Partial<Worktree> & Pick<Worktree, 'worktreePath' | 'status'>,
+): Worktree {
   return {
     repoId: repo.id,
     repoName: repo.name,

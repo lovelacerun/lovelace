@@ -6,7 +6,7 @@ import test, { type TestContext } from 'node:test';
 import type { JiraIssueSummary, LovelaceConfig } from '@lovelace/core';
 import { openDatabase } from '../database.js';
 import type { CachedJira } from '../cached-providers.js';
-import { createActiveWorkItemFromMetas } from '../repositories/work-item-repository.js';
+import { createActiveWorkItem } from '../repositories/work-item-repository.js';
 import { attachJiraIssueToWorkItem, detachJiraIssueFromWorkItem, refreshAttachedTrackerIssues } from './tracker-item-service.js';
 
 const logger = { info() {}, warn() {}, error() {} };
@@ -26,8 +26,8 @@ function client(fetchIssue: CachedJira['fetchIssue']) {
 
 test('five-minute tracker refresh includes done work, coalesces and never changes local state/activity', async (t) => {
   const database = await fixture(t);
-  const first = createActiveWorkItemFromMetas(database, { title: 'One', metas: [{ metaType: 'tracker-item', provider: 'jira', externalId: '1', payload: issue('1') }] });
-  const second = createActiveWorkItemFromMetas(database, { title: 'Two', metas: [{ metaType: 'tracker-item', provider: 'jira', externalId: '1', payload: issue('1') }] });
+  const first = createActiveWorkItem(database, { title: 'One', attachments: [{ type: 'tracker-item', provider: 'jira', externalId: '1', payload: issue('1') }] });
+  const second = createActiveWorkItem(database, { title: 'Two', attachments: [{ type: 'tracker-item', provider: 'jira', externalId: '1', payload: issue('1') }] });
   database.updateWorkItemState(second.id, 'done');
   const beforeActivity = database.listWorkActivity();
   const beforeWork = database.listWorkItems();
@@ -38,34 +38,34 @@ test('five-minute tracker refresh includes done work, coalesces and never change
   assert.deepEqual(results, [{ refreshed: 2, failed: 0 }, { refreshed: 2, failed: 0 }]);
   assert.deepEqual(database.listWorkActivity(), beforeActivity);
   assert.deepEqual(database.listWorkItems(), beforeWork, 'upstream updates cannot complete or reactivate local work');
-  for (const id of [first.id, second.id]) assert.equal(JSON.parse(database.listWorkItemMeta(id)[0]!.payloadJson!).status, 'Erledigt');
+  for (const id of [first.id, second.id]) assert.equal(database.listAttachmentsOfType('tracker-item', id)[0]!.payload.status, 'Erledigt');
 });
 
 test('failed refresh keeps last-good attached payload and allows subsequent retry', async (t) => {
   const database = await fixture(t);
-  const work = createActiveWorkItemFromMetas(database, { title: 'One', metas: [{ metaType: 'tracker-item', provider: 'jira', externalId: '1', payload: issue('1') }] });
-  const before = database.listWorkItemMeta(work.id);
+  const work = createActiveWorkItem(database, { title: 'One', attachments: [{ type: 'tracker-item', provider: 'jira', externalId: '1', payload: issue('1') }] });
+  const before = database.listAttachments(work.id);
   const failed = await refreshAttachedTrackerIssues({ database, jira: client(async () => { throw new Error('fixture unavailable'); }), logger });
   assert.deepEqual(failed, { refreshed: 0, failed: 1 });
-  assert.deepEqual(database.listWorkItemMeta(work.id), before);
+  assert.deepEqual(database.listAttachments(work.id), before);
   const retried = await refreshAttachedTrackerIssues({ database, jira: client(async () => issue('1')), logger });
   assert.deepEqual(retried, { refreshed: 1, failed: 0 });
 });
 
 test('explicit Jira attachment records a local event but repeated upsert does not duplicate creation', async (t) => {
   const database = await fixture(t);
-  const work = createActiveWorkItemFromMetas(database, { title: 'One', metas: [] });
+  const work = createActiveWorkItem(database, { title: 'One', attachments: [] });
   const jira = client(async () => issue('1'));
   await attachJiraIssueToWorkItem(database, jira, work.id, { key: 'PROJ-1' });
   await attachJiraIssueToWorkItem(database, jira, work.id, { key: 'PROJ-1' });
-  assert.equal(database.listWorkItemMeta(work.id).length, 1);
+  assert.equal(database.listAttachments(work.id).length, 1);
   assert.equal(database.listWorkActivity().filter((row) => row.kind === 'work-item.tracker-attached').length, 1);
 });
 
 test('attaching Jira leads an unkeyed title with the issue key; detaching removes only that key', async (t) => {
   const database = await fixture(t);
-  const work = createActiveWorkItemFromMetas(database, { title: 'Fix the sync', metas: [] });
-  const keyed = createActiveWorkItemFromMetas(database, { title: 'OTHER-7: Started from Jira', metas: [] });
+  const work = createActiveWorkItem(database, { title: 'Fix the sync', attachments: [] });
+  const keyed = createActiveWorkItem(database, { title: 'OTHER-7: Started from Jira', attachments: [] });
   const jira = client(async (key) => issue(key.replace('PROJ-', '')));
   await attachJiraIssueToWorkItem(database, jira, work.id, { key: 'PROJ-1' });
   await attachJiraIssueToWorkItem(database, jira, work.id, { key: 'PROJ-2' });

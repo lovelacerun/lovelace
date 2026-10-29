@@ -1,9 +1,9 @@
-import type { WorkItemDetails } from '@lovelace/core';
+import { attachmentsOfType, type WorkItemDetails } from '@lovelace/core';
 import { visibleWidth } from '@earendil-works/pi-tui';
 import { Card, columns, columnWidths, COLUMNS_MIN_WIDTH, LinkCard, safeText, type LinkCardTheme } from '@lovelace/tui-components';
 import { warning, bold, accent, muted, success, heading, icons, jiraCardTheme, prCardTheme, danger, reset, special } from '../theme.js';
 import { browserUrl } from '../browser.js';
-import { payload, type DocumentBuilder } from './common.js';
+import type { DocumentBuilder } from './common.js';
 
 type Status = [glyph: string, label: string, color: string];
 
@@ -44,26 +44,27 @@ function linkCard(lines: string[], width: number, theme: LinkCardTheme, url: unk
   return card.render(width);
 }
 
-export function renderAttachments(metas: WorkItemDetails['metas'], width: number, document?: DocumentBuilder): string[] {
+export function renderAttachments(attachments: WorkItemDetails['attachments'], width: number, document?: DocumentBuilder): string[] {
   const startRow = document?.lines.length ?? 0;
   const [leftWidth, rightWidth] = columnWidths(width);
-  const issues = metas.filter(meta => meta.metaType === 'tracker-item');
-  const requests = metas.filter(meta => meta.metaType === 'pull-request' || meta.metaType === 'change-request');
+  const issues = attachmentsOfType(attachments, 'tracker-item');
+  const requests = [...attachmentsOfType(attachments, 'pull-request'), ...attachmentsOfType(attachments, 'change-request')]
+    .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
   const jira = [heading('Attached Jira', issues.length, icons.jira), ''];
   const prs = [heading('Pull requests', requests.length, icons.pr), ''];
-  for (const [index, meta] of issues.entries()) {
-    const data = payload(meta);
+  for (const [index, issue] of issues.entries()) {
+    const data = issue.payload;
     if (index) jira.push('');
     jira.push(...linkCard([
-      accent + bold + safeText(data.key ?? meta.externalId) + reset,
+      accent + bold + safeText(data.key || issue.externalId) + reset,
       safeText(data.title, true),
       jiraStatus(data.status),
     ], leftWidth, jiraCardTheme, data.url, startRow + jira.length, document));
   }
   if (!issues.length) jira.push(muted + '  None attached.' + reset);
   const prStartRow = startRow + (width < COLUMNS_MIN_WIDTH ? jira.length + 1 : 0);
-  for (const [index, meta] of requests.entries()) {
-    const data = payload(meta);
+  for (const [index, request] of requests.entries()) {
+    const data = request.payload;
     if (index) prs.push('');
     const review = safeText(data.reviewDecision).toUpperCase();
     const reviewLabel = lookup(reviewStatus(), review,
@@ -73,7 +74,7 @@ export function renderAttachments(metas: WorkItemDetails['metas'], width: number
     const status = safeText(data.status).toLowerCase();
     const checks = reviewLabel + '  ' + buildLabel;
     prs.push(...linkCard([
-      bold + '#' + safeText(String(data.number ?? meta.externalId ?? '')) + reset + '  ' + lookup(prStatus(), status, status || 'Unknown'),
+      bold + '#' + safeText(String(data.number ?? request.externalId)) + reset + '  ' + lookup(prStatus(), status, status || 'Unknown'),
       muted + safeText(data.repoFullName) + reset,
       ...(visibleWidth(checks) <= Card.contentWidth(rightWidth) ? [checks] : [reviewLabel, buildLabel]),
     ], rightWidth, prCardTheme, data.url, prStartRow + prs.length, document));

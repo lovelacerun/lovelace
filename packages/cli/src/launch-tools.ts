@@ -44,6 +44,6 @@ export async function launchTools(args: string[], overrides: Partial<AgentComman
 /** Focus the session's Herdr pane, or continue its exact conversation when the agent ended. */
 export async function openTool(args: string[], overrides: Partial<AgentCommandDeps> = {}): Promise<unknown> {
   const deps = dependencies(overrides);
-  if (args.length !== 2 || !args[0] || !args[1]) throw new Error('Usage: lovelace work-items open <id> <session-meta-id>');
+  if (args.length !== 2 || !args[0] || !args[1]) throw new Error('Usage: lovelace work-items open <id> <session-id>');
   return deps.client.openSession(args[0], args[1]);
 }

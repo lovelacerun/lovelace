@@ -9,9 +9,9 @@ In order:
 2. ~~Removals: pull request release checks, `jira-software-client`, review
    request grouping and link inference; a review list in the TUI that starts
    review work in the pull request's branch.~~ Done.
-3. Typed attachments: a discriminated union instead of `metaType` +
+3. ~~Typed attachments: a discriminated union instead of `metaType` +
    `payloadJson`, parsed once at the database boundary and sent typed over
-   HTTP; real tables for sessions and worktrees; unique indexes.
+   HTTP; real tables for sessions and worktrees; unique indexes.~~ Done.
 4. Lighter launches, in the same migration as 3: one `launches` table with a
    single state column and a boot ID, server-side retry, the TUI keeping only
    the prompt, selections and in-flight request ID. Keep the invariants in

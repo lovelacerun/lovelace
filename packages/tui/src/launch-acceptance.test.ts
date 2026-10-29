@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test, { type TestContext } from 'node:test';
 import { stripTerminalSequences, visibleWidth, type Component, type TuiAltScreen } from '@earendil-works/pi-tui';
 import { ApiError, LovelaceClient, type LaunchRequestOptions, type NewSessionOptions } from '@lovelace/client';
-import type { CodingHarnessId, DashboardResponse, QuickStartResponse, ToolLaunchDraftPayload, WorkItemDetails, WorkItemSummary } from '@lovelace/core';
+import { attachmentsOfType, type AgentSession, type CodingHarnessId, type DashboardResponse, type QuickStartResponse, type ToolLaunchDraftPayload, type WorkItemDetails, type WorkItemSummary, type Worktree } from '@lovelace/core';
 import { AppRoot } from './app.js';
 import { handleAction, type ControllerDeps } from './controller.js';
 import { JiraStartModal } from './jira-start-modal.js';
@@ -32,9 +32,9 @@ class FakeClient extends LovelaceClient {
   opened = 0;
   constructor() { super('http://127.0.0.1:48999', async () => { throw new Error('No fixture network access'); }); }
   override async getDashboard(): Promise<DashboardResponse> {
-    const activeWorkItems: WorkItemSummary[] = [...this.records.values()].map(({ workItem, metas, launchOperations }) => {
+    const activeWorkItems: WorkItemSummary[] = [...this.records.values()].map(({ workItem, attachments, launchOperations }) => {
       const operation = launchOperations!.findLast(operation => operation.status === 'pending') ?? launchOperations!.at(-1)!;
-      return { ...workItem, sessionCount: metas.filter(meta => meta.metaType === 'session').length, repositoryCount: 1,
+      return { ...workItem, sessionCount: attachments.filter(meta => meta.type === 'session').length, repositoryCount: 1,
         trackerIssueKeys: [], pullRequestRefs: [], ...(operation.launch.phase === 'started' ? {} : { launchPhase: operation.launch.phase }) };
     });
     return {
@@ -68,17 +68,17 @@ class FakeClient extends LovelaceClient {
   private accept(id: string, prompt: string, requestId: string, agentId?: CodingHarnessId, overrides?: NewSessionOptions, options?: LaunchRequestOptions) {
     const details: WorkItemDetails = this.records.get(id) ?? {
       workItem: { id, title: `Saved ${id}`, state: 'active', notes: null, createdAt: '', updatedAt: '', startedAt: '', completedAt: null },
-      metas: [], launchOperations: [],
+      attachments: [], launchOperations: [],
     };
     const draftMetaId = `draft:${requestId}`;
     const draft: ToolLaunchDraftPayload = {
       revision: requestId, requestId, prompt, repoIds: options?.repoIds ?? null, promptId: options?.promptId ?? null,
       toolIds: [agentId ?? 'pi'], toolOptions: overrides, status: 'pending', createdAt: '', updatedAt: '',
     };
-    details.metas.push({ id: draftMetaId, workItemId: id, metaType: 'prompt-draft', provider: 'lovelace', externalId: requestId, payloadJson: JSON.stringify(draft), createdAt: '', updatedAt: '' });
-    if (!details.metas.some(meta => meta.metaType === 'repository') && options?.repoIds?.length) {
-      details.metas.push({ id: `repo:${id}`, workItemId: id, metaType: 'repository', provider: 'github', externalId: 'repo', createdAt: '', updatedAt: '',
-        payloadJson: JSON.stringify({ repoId: 'repo', repoName: 'api', status: 'preparing', preparationStep: 'seed.preparing: npm ci' }) });
+    details.attachments.push({ id: draftMetaId, workItemId: id, type: 'prompt-draft', payload: draft, createdAt: '', updatedAt: '' });
+    if (!details.attachments.some(meta => meta.type === 'worktree') && options?.repoIds?.length) {
+      details.attachments.push({ id: `repo:${id}`, workItemId: id, type: 'worktree', createdAt: '', updatedAt: '',
+        payload: { repoId: 'repo', repoName: 'api', status: 'preparing', preparationStep: 'seed.preparing: npm ci' } as Worktree });
     }
     details.launchOperations!.push({ requestId, draftMetaId, status: 'pending', launch: { ok: false, error: null, phase: options?.repoIds?.length ? 'preparing' : 'starting' } });
     this.records.set(id, details);
@@ -90,10 +90,10 @@ class FakeClient extends LovelaceClient {
     operation.status = 'completed';
     operation.launch = { ok: !failed, error: failed ? 'npm ci failed in api' : null, phase: failed ? 'failed' : 'started' };
     if (failed) {
-      const repository = details.metas.find(meta => meta.metaType === 'repository');
-      if (repository) repository.payloadJson = JSON.stringify({ ...JSON.parse(repository.payloadJson!), status: 'failed', errorMessage: 'fixture dependency error' });
+      const repository = attachmentsOfType(details.attachments, 'worktree')[0];
+      if (repository) repository.payload = { ...repository.payload, status: 'failed', errorMessage: 'fixture dependency error' };
     }
-    if (!failed) details.metas.push({ id: `session:${id}`, workItemId: id, metaType: 'session', provider: 'pi', externalId: id, createdAt: '', updatedAt: '', payloadJson: JSON.stringify({ title: 'Pi', toolId: 'pi', agentState: 'working' }) });
+    if (!failed) details.attachments.push({ id: `session:${id}`, workItemId: id, type: 'session', createdAt: '', updatedAt: '', payload: { title: 'Pi', toolId: 'pi', agentState: 'working' } as AgentSession });
   }
   response(id: string, requestId: string): QuickStartResponse {
     const details = structuredClone(this.records.get(id)!);
@@ -175,10 +175,8 @@ test('background failure stays on its work item and retries the saved prompt/sel
   await startIssue(root, tui, '1', exact);
   const firstId = client.calls[0]!.requestId;
   const details = client.records.get('work-1')!;
-  const draftMeta = details.metas.find(meta => meta.metaType === 'prompt-draft')!;
-  const draft = JSON.parse(draftMeta.payloadJson!) as ToolLaunchDraftPayload;
+  const draft = attachmentsOfType(details.attachments, 'prompt-draft')[0]!.payload;
   draft.toolOptions = { pi: { model: 'fixture/model', thinkingLevel: 'high' } };
-  draftMeta.payloadJson = JSON.stringify(draft);
   client.finish('work-1', true);
   await hooks(root).fetchDetails(new AbortController().signal);
   root.state.setDraft({ text: 'Another local draft must not become the retry prompt' });

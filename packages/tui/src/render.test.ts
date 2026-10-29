@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { visibleWidth } from '@earendil-works/pi-tui';
-import type { DashboardResponse, WorkItemDetails } from '@lovelace/core';
+import type { AgentSession, DashboardResponse, JiraIssueSummary, PullRequestPayload, WorkItemDetails } from '@lovelace/core';
 import { AppState } from './state.js';
 import { renderDashboard } from './views/dashboard.js';
 import { renderWorkItem } from './views/work-item.js';
@@ -83,27 +83,27 @@ describe('renderWorkItem', () => {
         id: 'wi-1', title: 'Big change', state: 'active', notes: 'important notes',
         createdAt: '', updatedAt: '', startedAt: null, completedAt: null,
       },
-      metas: [
+      attachments: [
         {
-          id: 'm-session', workItemId: 'wi-1', metaType: 'session', externalId: 'sess-1',
-          payloadJson: JSON.stringify({
+          id: 'm-session', workItemId: 'wi-1', type: 'session',
+          payload: {
             title: 'Claude session',
             agentState: 'blocked',
-          }),
-          createdAt: '', updatedAt: '', provider: null,
+          } as AgentSession,
+          createdAt: '', updatedAt: '',
         },
         {
-          id: 'm-pr', workItemId: 'wi-1', metaType: 'pull-request', externalId: '12',
-          payloadJson: JSON.stringify({
+          id: 'm-pr', workItemId: 'wi-1', type: 'pull-request', externalId: '12',
+          payload: {
             repoFullName: 'examplecom/api', number: 12, status: 'open',
             reviewDecision: 'approved', buildStatus: 'success',
-          }),
-          createdAt: '', updatedAt: '', provider: null,
+          } as unknown as PullRequestPayload,
+          createdAt: '', updatedAt: '', provider: 'github',
         },
         {
-          id: 'm-ji', workItemId: 'wi-1', metaType: 'tracker-item', externalId: 'PROJ-1',
-          payloadJson: JSON.stringify({ key: 'PROJ-1', status: 'In Progress', title: 'Fix bug' }),
-          createdAt: '', updatedAt: '', provider: null,
+          id: 'm-ji', workItemId: 'wi-1', type: 'tracker-item', externalId: 'PROJ-1',
+          payload: { key: 'PROJ-1', status: 'In Progress', title: 'Fix bug' } as JiraIssueSummary,
+          createdAt: '', updatedAt: '', provider: 'jira',
         },
       ],
     };

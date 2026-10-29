@@ -62,12 +62,10 @@ def details(work_id):
     payload = dict(toolId="pi", agentName="ll-fixture", title="Fixture agent session", cwd=str(REPO),
                    status="ended", agentState="ended", nativeSessionId=None,
                    nativeSessionPath="/fixture/session.jsonl",
-                   terminalRef=dict(workspaceId="w1", paneId="w1:p1"),
-                   createdAt=NOW, updatedAt=NOW, metadata={})
-    meta = dict(id="fixture-session", workItemId=work_id, metaType="session",
-                provider="pi", externalId="ll-fixture", payloadJson=json.dumps(payload),
-                createdAt=NOW, updatedAt=NOW)
-    return dict(workItem=work(work_id), metas=[meta])
+                   terminalRef=dict(workspaceId="w1", paneId="w1:p1"), metadata={})
+    session = dict(id="fixture-session", workItemId=work_id, type="session", payload=payload,
+                   createdAt=NOW, updatedAt=NOW)
+    return dict(workItem=work(work_id), attachments=[session])
 
 
 class Handler(BaseHTTPRequestHandler):

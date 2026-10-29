@@ -6,9 +6,9 @@ import type { FastifyInstance } from 'fastify';
 import { buildDashboard } from '../services/dashboard-service.js';
 import { markToolLaunchDraftLaunched, saveToolLaunchDraft } from '../services/tool-launch-draft-service.js';
 import { launchSessions, openSession, SessionRequestError } from '../services/session-service.js';
-import { getWorkItemDetails, createActiveWorkItemFromMetas } from '../repositories/work-item-repository.js';
+import { getWorkItemDetails, createActiveWorkItem } from '../repositories/work-item-repository.js';
 import { getLaunchOperationResponse, LaunchRequestError, performLaunchOperation } from '../services/launch-operation-service.js';
-import { asRecord, metaSources, repositoryWorkspaces, UUID } from '../helpers.js';
+import { UUID } from '../helpers.js';
 import { refreshTools as discoverTools } from '../tools/tool-loader.js';
 import type { RouteDeps } from './deps.js';
 import { attachRepositoriesToExistingWorkItem } from '../services/work-start-service.js';
@@ -34,24 +34,24 @@ export function registerDashboardRoutes(app: FastifyInstance, deps: RouteDeps) {
           const review = reviewSourceFor(workItemId, repoId);
           return { repoId, role: index === 0 ? 'primary' : 'secondary', workspaceMode: review ? 'change-request' : 'fresh', sourceExternalId: review?.externalId ?? null };
         }));
-      const failed = repositoryWorkspaces(details?.metas ?? [])
-        .filter(({ payload }) => input.repoIds!.includes(payload.repoId) && payload.status !== 'ready');
+      const failed = (details?.attachments ?? [])
+        .filter(attachment => attachment.type === 'worktree' && input.repoIds!.includes(attachment.payload.repoId) && attachment.payload.status !== 'ready');
       if (failed.length) throw new Error('Repository preparation failed. Retry on this work item to prepare the selected repositories again.');
     }
     database.updateLaunchOperationPhase(requestId, 'starting');
     refreshTools(tools);
     // Captured before launching: a prompt replaced meanwhile stays pending.
-    const draft = database.listWorkItemMeta(workItemId).find((meta) => meta.id === draftMetaId);
-    const metas = await launchSessions(sessionDeps, workItemId, input);
-    if (!metas.length) return { ok: false, phase: 'failed', error: 'launch produced no sessions' };
+    const draft = database.getAttachment('prompt-draft', draftMetaId);
+    const sessions = await launchSessions(sessionDeps, workItemId, input);
+    if (!sessions.length) return { ok: false, phase: 'failed', error: 'launch produced no sessions' };
     if (draft) markToolLaunchDraftLaunched(database, draft);
     return { ok: true, phase: 'started', error: null };
   }
 
   function reviewSourceFor(workItemId: string, repoId: string) {
     const fullName = database.listRepos().find(repo => repo.id === repoId)?.fullName.toLowerCase();
-    return metaSources(database.listWorkItemMeta(workItemId)).find(source => source.sourceType === 'change-request'
-      && String(asRecord(source.payload).repoFullName ?? '').toLowerCase() === fullName);
+    return database.listAttachmentsOfType('change-request', workItemId)
+      .find(attachment => attachment.payload.repoFullName.toLowerCase() === fullName);
   }
 
   function validateSelection(input: QuickStartRequest | NewSessionRequest): void {
@@ -82,11 +82,11 @@ export function registerDashboardRoutes(app: FastifyInstance, deps: RouteDeps) {
           if (review && !database.listRepos().some(repo => intent.repoIds?.includes(repo.id) && repo.fullName.toLowerCase() === review.repoFullName.toLowerCase())) {
             throw new LaunchRequestError(400, `Select ${review.repoFullName} to review its pull request`);
           }
-          const work = createActiveWorkItemFromMetas(database, {
+          const work = createActiveWorkItem(database, {
             title: issue ? `${issue.key}: ${issue.title}` : review ? `${review.repoFullName}#${review.number}: ${review.title}` : deriveTitleFromPrompt(intent.prompt),
-            metas: [
-              ...issue ? [{ metaType: 'tracker-item' as const, provider: 'jira', externalId: issue.id, payload: issue }] : [],
-              ...review ? [{ metaType: 'change-request' as const, provider: 'github', externalId: review.id, payload: review }] : [],
+            attachments: [
+              ...issue ? [{ type: 'tracker-item' as const, provider: 'jira', externalId: issue.id, payload: issue }] : [],
+              ...review ? [{ type: 'change-request' as const, provider: 'github', externalId: review.id, payload: review }] : [],
             ],
           });
           const draft = saveToolLaunchDraft(database, work.id, launchInput, id);
@@ -138,15 +138,15 @@ export function registerDashboardRoutes(app: FastifyInstance, deps: RouteDeps) {
     return response;
   });
 
-  app.post('/work-items/:id/sessions/:metaId/open', async (request, reply): Promise<SessionOpenResponse | void> => {
-    const params = request.params as { id: string; metaId: string };
+  app.post('/work-items/:id/sessions/:sessionId/open', async (request, reply): Promise<SessionOpenResponse | void> => {
+    const params = request.params as { id: string; sessionId: string };
     try {
       refreshTools(tools);
-      const action = await openSession(sessionDeps, params.id, params.metaId);
+      const action = await openSession(sessionDeps, params.id, params.sessionId);
       return { action, details: getWorkItemDetails(database, params.id)! };
     } catch (error) {
       if (error instanceof SessionRequestError) return reply.code(error.status).send({ ok: false, error: error.message });
-      app.log.error({ err: error, workItemId: params.id, sessionMetaId: params.metaId }, 'Failed to open session');
+      app.log.error({ err: error, workItemId: params.id, sessionId: params.sessionId }, 'Failed to open session');
       return reply.code(502).send({ ok: false, error: error instanceof Error ? error.message : 'failed to open session' });
     }
   });

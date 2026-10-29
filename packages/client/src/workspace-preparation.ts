@@ -1,15 +1,15 @@
-import { matchesRepositorySelection, repositorySelectionKey, type RepositoryWorkspaceMetaPayload, type StartWorkRepositoryInput, type WorkItemDetails } from '@lovelace/core';
+import { attachmentsOfType, matchesRepositorySelection, repositorySelectionKey, type Worktree, type StartWorkRepositoryInput, type WorkItemDetails } from '@lovelace/core';
 import { ApiError, type LovelaceClient, type RequestOptions } from './client.js';
 
 export interface PrepareRepositoriesOptions extends RequestOptions {
   /** Each HTTP call is bounded separately; preparation itself has no fixed deadline. */
   pollIntervalMs?: number;
-  onProgress?: (workspaces: RepositoryWorkspaceMetaPayload[]) => void;
+  onProgress?: (workspaces: Worktree[]) => void;
 }
 
 /** A lost reply or cancelled wait is not a workspace preparation failure. */
 export class WorkspacePreparationWaitError extends Error {
-  constructor(workItemId: string, lastKnown: RepositoryWorkspaceMetaPayload[], cause: unknown) {
+  constructor(workItemId: string, lastKnown: Worktree[], cause: unknown) {
     const state = lastKnown.length
       ? lastKnown.map(workspace => `${workspace.repoName}: ${workspace.status}`).join(', ')
       : 'unknown (the submission may have reached the server)';
@@ -28,11 +28,10 @@ export async function prepareRepositories(
   const pollIntervalMs = options.pollIntervalMs ?? 1_000;
   if (!Number.isFinite(pollIntervalMs) || pollIntervalMs <= 0) throw new RangeError('pollIntervalMs must be positive');
   const selections = new Map(repositories.map(repository => [repositorySelectionKey(repository), repository]));
-  let lastKnown: RepositoryWorkspaceMetaPayload[] = [];
+  let lastKnown: Worktree[] = [];
   const selected = (details: WorkItemDetails) => {
-    const workspaces = details.metas.flatMap(meta => meta.metaType === 'repository' && meta.payloadJson
-      ? [{ id: meta.id, payload: JSON.parse(meta.payloadJson) as RepositoryWorkspaceMetaPayload }] : []);
-    // Match the server's selected workspace, then poll its stable meta identity.
+    const workspaces = attachmentsOfType(details.attachments, 'worktree');
+    // Match the server's selected workspace, then poll its stable attachment identity.
     return [...selections.values()].flatMap(repository => {
       const workspace = workspaces.find(entry => matchesRepositorySelection(repository, entry.payload));
       return workspace ? [workspace] : [];
@@ -43,12 +42,11 @@ export async function prepareRepositories(
     let details = await client.requestJson<WorkItemDetails>(`/work-items/${encodeURIComponent(workItemId)}/repositories`, {
       method: 'POST', body: JSON.stringify({ repositories, wait: false }),
     }, options);
-    const metaIds = selected(details).map(entry => entry.id);
-    if (metaIds.length !== selections.size) throw new Error('Server did not record every selected repository');
+    const worktreeIds = selected(details).map(entry => entry.id);
+    if (worktreeIds.length !== selections.size) throw new Error('Server did not record every selected repository');
     while (true) {
-      const workspaces = details.metas.flatMap(meta => metaIds.includes(meta.id) && meta.payloadJson
-        ? [{ id: meta.id, payload: JSON.parse(meta.payloadJson) as RepositoryWorkspaceMetaPayload }] : []);
-      if (workspaces.length !== metaIds.length) throw new Error('Workspace preparation records are missing');
+      const workspaces = attachmentsOfType(details.attachments, 'worktree').filter(entry => worktreeIds.includes(entry.id));
+      if (workspaces.length !== worktreeIds.length) throw new Error('Workspace preparation records are missing');
       lastKnown = workspaces.map(entry => entry.payload);
       options.onProgress?.(lastKnown);
       // Partial failures are returned as data, preserving the automation contract.

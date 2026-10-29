@@ -50,11 +50,11 @@ test('launch retries freeze repositories/template and authoritative failure retr
     quickStart: async (prompt, jiraIssueId, _agent, _overrides, requestId, options) => {
       calls.push({ prompt, jiraIssueId, requestId, repoIds: options?.repoIds, promptId: options?.promptId });
       if (++attempt === 1) throw new ApiError(0, 'lost reply');
-      return { details: { workItem: { id: 'work' }, metas: [] }, launch: { ok: false, error: 'install failed' } } as never;
+      return { details: { workItem: { id: 'work' }, attachments: [] }, launch: { ok: false, error: 'install failed' } } as never;
     },
     newSession: async (workItemId, prompt, _agent, _overrides, requestId, options) => {
       calls.push({ workItemId, prompt, requestId, repoIds: options?.repoIds, promptId: options?.promptId });
-      return { details: { workItem: { id: 'work' }, metas: [] }, launch: { ok: false, error: 'still failed' } } as never;
+      return { details: { workItem: { id: 'work' }, attachments: [] }, launch: { ok: false, error: 'still failed' } } as never;
     },
   });
   const deps = { client: api, refreshDashboard() {}, newRequestId: () => String(attempt) };

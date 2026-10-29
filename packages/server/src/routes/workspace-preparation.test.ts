@@ -5,10 +5,9 @@ import { basename, join } from 'node:path';
 import test, { type TestContext } from 'node:test';
 import { LovelaceClient, WorkspacePreparationWaitError } from '@lovelace/client';
 import type { CreateWorkspaceRequest, PreparedRepositoryWorkspace } from '@lovelace/coriol';
-import type { LovelaceConfig, WorkItemDetails } from '@lovelace/core';
+import { attachmentsOfType, type LovelaceConfig, type WorkItemDetails } from '@lovelace/core';
 import { buildServer } from '../app.js';
 import { openDatabase } from '../database.js';
-import { repositoryWorkspaces } from '../helpers.js';
 import { createManualWorkItem } from '../repositories/work-item-repository.js';
 import { FakeHerdr } from '../test-support/fake-herdr.js';
 import { fixtureProviders } from '../test-support/providers.js';
@@ -39,7 +38,7 @@ async function fixture(t: TestContext) {
     repositoryPath: (id: string) => join(config.lovelaceDir, 'repos', id),
     createWorkspace(request: CreateWorkspaceRequest): Promise<PreparedRepositoryWorkspace> {
       calls.push(request);
-      assert.equal(repositoryWorkspaces(database.listWorkItemMeta(work.id)).find(entry => basename(entry.payload.worktreePath) === request.directoryName)?.payload.status, 'pending');
+      assert.equal(database.listAttachmentsOfType('worktree', work.id).find(entry => basename(entry.payload.worktreePath) === request.directoryName)?.payload.status, 'pending');
       return new Promise((resolve, reject) => { pending.set(request, { resolve, reject }); });
     },
   } as unknown as RouteDeps['workspaceManager'];
@@ -51,7 +50,7 @@ async function fixture(t: TestContext) {
   const submit = (repoIds: string[], wait = false) => app.inject({
     method: 'POST', url, payload: { repositories: repoIds.map(repoId => ({ repoId })), wait },
   });
-  const payloads = () => repositoryWorkspaces(database.listWorkItemMeta(work.id)).map(entry => entry.payload);
+  const payloads = () => database.listAttachmentsOfType('worktree', work.id).map(entry => entry.payload);
   const latestCall = (repoId: string) => calls.findLast(request => request.repository.id.endsWith(`/${repoId}`))!;
   const start = (repoId: string) => {
     const request = latestCall(repoId);
@@ -85,25 +84,25 @@ test('slow preparation is accepted immediately with durable pending/preparing st
   const f = await fixture(t);
   const accepted = await f.submit(['a', 'b']);
   assert.equal(accepted.statusCode, 202);
-  assert.deepEqual(repositoryWorkspaces(accepted.json<WorkItemDetails>().metas).map(entry => entry.payload.status), ['pending', 'pending']);
+  assert.deepEqual(attachmentsOfType(accepted.json<WorkItemDetails>().attachments, 'worktree').map(entry => entry.payload.status), ['pending', 'pending']);
   assert.equal(f.calls.length, 2);
   f.start('a');
   const details = (await f.app.inject(`/work-items/${f.work.id}`)).json<WorkItemDetails>();
-  const states = repositoryWorkspaces(details.metas).map(entry => entry.payload);
+  const states = attachmentsOfType(details.attachments, 'worktree').map(entry => entry.payload);
   assert.equal(states[0]!.status, 'preparing');
   assert.equal(states[0]!.preparationStep, 'seed.preparing: npm ci');
   assert.equal(states[1]!.status, 'pending');
   const reader = openDatabase(f.config);
-  try { assert.equal(repositoryWorkspaces(reader.listWorkItemMeta(f.work.id))[0]!.payload.status, 'preparing'); }
+  try { assert.equal(reader.listAttachmentsOfType('worktree', f.work.id)[0]!.payload.status, 'preparing'); }
   finally { reader.db.close(); }
   await f.finish('a');
   assert.deepEqual(f.payloads().map(payload => payload.status), ['ready', 'pending']);
   assert.equal(f.payloads()[0]!.dependenciesReused, true);
   await f.finish('b');
-  const ids = f.database.listWorkItemMeta(f.work.id).map(meta => meta.id);
+  const ids = f.database.listAttachments(f.work.id).map(meta => meta.id);
   assert.equal((await f.submit(['a', 'b'], true)).statusCode, 200, 'legacy route still waits and returns details');
   assert.equal(f.calls.length, 2, 'ready worktrees are reused without fetching/installing again');
-  assert.deepEqual(f.database.listWorkItemMeta(f.work.id).map(meta => meta.id), ids);
+  assert.deepEqual(f.database.listAttachments(f.work.id).map(meta => meta.id), ids);
   assert.equal(f.herdr.calls.length, 0);
 });
 
@@ -122,7 +121,7 @@ test('duplicate selections, overlapping batches and concurrent legacy retries sh
   await f.finish('a');
   const response = await legacy;
   assert.equal(response.statusCode, 200);
-  assert.equal(repositoryWorkspaces(response.json<WorkItemDetails>().metas).find(entry => entry.payload.repoId === 'a')!.payload.status, 'ready');
+  assert.equal(attachmentsOfType(response.json<WorkItemDetails>().attachments, 'worktree').find(entry => entry.payload.repoId === 'a')!.payload.status, 'ready');
   await f.finish('b'); await f.finish('c');
   assert.equal(f.calls.length, 3);
   assert.ok(f.payloads().every(payload => payload.status === 'ready'));
@@ -188,7 +187,7 @@ test('lost client reply times out without cancelling server preparation; error p
   await new Promise(resolve => setImmediate(resolve));
   assert.equal(f.calls.length, 1);
   await f.finish('a');
-  assert.equal(repositoryWorkspaces((await retry).metas)[0]!.payload.status, 'ready');
+  assert.equal(attachmentsOfType((await retry).attachments, 'worktree')[0]!.payload.status, 'ready');
   assert.equal(f.calls.length, 1);
 });
 
@@ -206,7 +205,7 @@ test('HTTP timeout of a synchronous caller leaves preparation running and concur
   assert.equal(accepted.statusCode, 202);
   assert.equal(f.calls.length, 1);
   await f.finish('a');
-  assert.equal(repositoryWorkspaces((await client.getWorkItem(f.work.id)).metas)[0]!.payload.status, 'ready');
+  assert.equal(attachmentsOfType((await client.getWorkItem(f.work.id)).attachments, 'worktree')[0]!.payload.status, 'ready');
 });
 
 test('invalid batches do not start preparation or leave repository records', async t => {
@@ -222,13 +221,13 @@ test('orphaned preparation after restart becomes an explicit retryable failure w
   const f = await fixture(t);
   await f.submit(['a']);
   await f.finish('a');
-  const original = repositoryWorkspaces(f.database.listWorkItemMeta(f.work.id))[0]!;
+  const original = f.database.listAttachmentsOfType('worktree', f.work.id)[0]!;
   // Emulate durable state left by a process that exited mid-preparation.
-  f.database.updateWorkItemMetaPayload(original.meta.id, { ...original.payload, status: 'preparing' });
+  f.database.updateAttachment('worktree', original.id, { ...original.payload, status: 'preparing' });
   const separate = openDatabase(f.config);
   try {
     recoverInterruptedRepositoryPreparations(separate);
-    const payload = repositoryWorkspaces(separate.listWorkItemMeta(f.work.id))[0]!.payload;
+    const payload = separate.listAttachmentsOfType('worktree', f.work.id)[0]!.payload;
     assert.equal(payload.status, 'failed');
     assert.match(payload.errorMessage!, /server restart/);
     assert.equal(separate.getWorkItem(f.work.id)!.state, 'active');

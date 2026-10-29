@@ -82,7 +82,7 @@ describe('LovelaceClient', () => {
       let captured = { url: '', method: '' };
       const fetchFn: typeof fetch = async (input, init) => {
         captured = { url: input.toString(), method: init?.method ?? 'GET' };
-        return new Response(JSON.stringify({ action: 'continued', details: { workItem: {}, metas: [] } }), { status: 200, headers: { 'content-type': 'application/json' } });
+        return new Response(JSON.stringify({ action: 'continued', details: { workItem: {}, attachments: [] } }), { status: 200, headers: { 'content-type': 'application/json' } });
       };
       const client = new LovelaceClient('http://localhost:27421', fetchFn);
       assert.equal((await client.openSession('w/1', 'm 1')).action, 'continued');
@@ -94,7 +94,7 @@ describe('LovelaceClient', () => {
     it('returns work item details on 200', async () => {
       const mockDetails = {
         workItem: { id: 'abc', title: 'Test', state: 'active', notes: null, createdAt: '', updatedAt: '', startedAt: null, completedAt: null },
-        metas: [],
+        attachments: [],
       };
       const client = new LovelaceClient('http://localhost:27421', makeFetch(200, mockDetails));
       const result = await client.getWorkItem('abc');
@@ -116,7 +116,7 @@ describe('LovelaceClient', () => {
       let capturedBody: unknown;
       const fetchFn: typeof fetch = async (_input, init) => {
         capturedBody = JSON.parse(init?.body as string);
-        const resp = { details: { workItem: {}, metas: [] }, launch: { ok: true, error: null } };
+        const resp = { details: { workItem: {}, attachments: [] }, launch: { ok: true, error: null } };
         return new Response(JSON.stringify(resp), { status: 200, headers: { 'content-type': 'application/json' } });
       };
       const client = new LovelaceClient('http://localhost:27421', fetchFn);
@@ -128,7 +128,7 @@ describe('LovelaceClient', () => {
       let capturedBody: unknown;
       const fetchFn: typeof fetch = async (_input, init) => {
         capturedBody = JSON.parse(init?.body as string);
-        const resp = { details: { workItem: {}, metas: [] }, launch: { ok: true, error: null } };
+        const resp = { details: { workItem: {}, attachments: [] }, launch: { ok: true, error: null } };
         return new Response(JSON.stringify(resp), { status: 200, headers: { 'content-type': 'application/json' } });
       };
       const client = new LovelaceClient('http://localhost:27421', fetchFn);
@@ -140,7 +140,7 @@ describe('LovelaceClient', () => {
       let capturedBody: unknown;
       const fetchFn: typeof fetch = async (_input, init) => {
         capturedBody = JSON.parse(init?.body as string);
-        const resp = { details: { workItem: {}, metas: [] }, launch: { ok: true, error: null } };
+        const resp = { details: { workItem: {}, attachments: [] }, launch: { ok: true, error: null } };
         return new Response(JSON.stringify(resp), { status: 200, headers: { 'content-type': 'application/json' } });
       };
       const client = new LovelaceClient('http://localhost:27421', fetchFn);
@@ -157,7 +157,7 @@ describe('LovelaceClient', () => {
       const fetchFn: typeof fetch = async (input, init) => {
         capturedUrl = input.toString();
         capturedBody = JSON.parse(init?.body as string);
-        const resp = { details: { workItem: {}, metas: [] }, launch: { ok: true, error: null } };
+        const resp = { details: { workItem: {}, attachments: [] }, launch: { ok: true, error: null } };
         return new Response(JSON.stringify(resp), { status: 200, headers: { 'content-type': 'application/json' } });
       };
       const client = new LovelaceClient('http://localhost:27421', fetchFn);

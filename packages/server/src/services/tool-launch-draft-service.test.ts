@@ -32,14 +32,14 @@ test('launch drafts preserve the exact prompt and options until marked launched'
       toolOptions: { claude: { model: 'opus', thinkingLevel: 'high' } },
     }, randomUUID());
 
-    const saved = JSON.parse(draft.payloadJson!) as ToolLaunchDraftPayload;
+    const saved = draft.payload as ToolLaunchDraftPayload;
     assert.equal(saved?.prompt, prompt);
     assert.deepEqual(saved?.toolOptions, { claude: { model: 'opus', thinkingLevel: 'high' } });
     assert.equal(saved?.status, 'pending');
 
     markToolLaunchDraftLaunched(database, draft);
-    const [current] = database.listWorkItemMeta(workItem.id).filter((meta) => meta.metaType === 'prompt-draft');
-    assert.equal(JSON.parse(current!.payloadJson!).status, 'launched');
+    const [current] = database.listAttachmentsOfType('prompt-draft', workItem.id);
+    assert.equal(current!.payload.status, 'launched');
   } finally {
     database.db.close();
     await rm(root, { recursive: true, force: true });

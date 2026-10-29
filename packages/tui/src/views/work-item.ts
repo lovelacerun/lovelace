@@ -1,9 +1,10 @@
+import { attachmentsOfType } from '@lovelace/core';
 import type { AppState } from '../state.js';
 import { keyColor, warning, bold, accent, muted, faint, success, heading, icons, reset, special } from '../theme.js';
 import { safeText, wrap } from '@lovelace/tui-components';
 import { renderLaunchProgress } from './launch-progress.js';
 import { renderAttachments } from './work-attachments.js';
-import { DocumentBuilder, meta, payload, plural, splitIssueKey, stateBadge, type Document } from './common.js';
+import { DocumentBuilder, meta, plural, splitIssueKey, stateBadge, type Document } from './common.js';
 
 /** Herdr's agent state: blocked needs input, done finished unseen work. */
 function agentState(status: string): string {
@@ -16,9 +17,9 @@ export function renderWorkItem(state: AppState, width: number): Document {
   const b = new DocumentBuilder(state, width);
   const details = state.selectedWorkItemData;
   if (!details) { b.line(state.offline || state.error ? 'Work item unavailable.' : 'Loading work item…'); b.line(muted + 'Press r to retry if unavailable.' + reset); return b.build(); }
-  const { workItem, metas } = details;
-  const sessions = metas.filter(meta => meta.metaType === 'session');
-  const repositories = metas.filter(meta => meta.metaType === 'repository').length;
+  const { workItem, attachments } = details;
+  const sessions = attachmentsOfType(attachments, 'session');
+  const repositories = attachmentsOfType(attachments, 'worktree').length;
   const { key, title } = splitIssueKey(safeText(workItem.title));
   const gap = () => { if (!state.layout.compact) b.line(); };
 
@@ -31,11 +32,10 @@ export function renderWorkItem(state: AppState, width: number): Document {
 
   b.line(heading('Agent sessions', sessions.length || '', icons.session));
   gap();
-  for (const sessionMeta of sessions) {
-    const session = payload(sessionMeta);
-    const status = safeText(session.agentState ?? session.status ?? 'unknown');
+  for (const { id, payload: session } of sessions) {
+    const status = safeText(session.agentState);
     const harness = safeText(session.toolId);
-    b.action(special + icons.session + reset + '  ' + safeText(session.title ?? (harness || 'Session')), { kind: 'session', metaId: sessionMeta.id }, agentState(status));
+    b.action(special + icons.session + reset + '  ' + safeText(session.title ?? (harness || 'Session')), { kind: 'session', sessionId: id }, agentState(status));
   }
   const hasLaunchProgress = renderLaunchProgress(state, b, width);
   if (!sessions.length && !hasLaunchProgress) b.line(muted + '  No sessions yet.' + reset);
@@ -43,7 +43,7 @@ export function renderWorkItem(state: AppState, width: number): Document {
   else b.action(accent + icons.new + reset + '  New session', { kind: 'edit' }, faint + 'n' + reset);
   b.line();
   gap();
-  for (const line of renderAttachments(metas, width, b)) b.line(line);
+  for (const line of renderAttachments(attachments, width, b)) b.line(line);
   b.line();
   gap();
 
