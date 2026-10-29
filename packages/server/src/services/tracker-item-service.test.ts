@@ -3,7 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test, { type TestContext } from 'node:test';
-import type { LovelaceConfig, TrackerIssue } from '@lovelace/core';
+import type { ServerConfig, TrackerIssue } from '@lovelace/core';
 import { openDatabase } from '../database.js';
 import type { CachedTracker } from '../cached-providers.js';
 import { createActiveWorkItem } from '../repositories/work-item-repository.js';
@@ -16,7 +16,7 @@ function issue(id: string): TrackerIssue {
 }
 async function fixture(t: TestContext) {
   const root = await mkdtemp(join(tmpdir(), 'lovelace-tracker-sync-'));
-  const config: LovelaceConfig = { domainRoot: root, lovelaceDir: join(root, '.lovelace'), port: 27421, logLevel: 'info', syncIntervalMs: 300_000, defaultAgent: 'pi', tui: { sidebarSide: 'right' } };
+  const config: ServerConfig = { domainRoot: root, lovelaceDir: join(root, '.lovelace'), port: 27421, logLevel: 'info', syncIntervalMs: 300_000, defaultAgent: 'pi' };
   const database = openDatabase(config);
   t.after(async () => { database.db.close(); await rm(root, { recursive: true, force: true }); });
   return database;

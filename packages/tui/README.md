@@ -14,22 +14,23 @@ tsx packages/tui/bin/lovelace-tui.ts --sidebar left --icons unicode --theme ligh
 ```
 
 No-argument `lovelace` prints help, not the TUI. Interactive stdin/stdout are
-required; help works through pipes. The default address uses the same root
-configuration port as the server (`LOVELACE_PORT` overrides it). `LOVELACE_HOST`
-sets the host. URLs must be HTTP loopback without credentials. The header
+required; help works through pipes. The default address is 127.0.0.1 at the
+config file's `port`, the same one the server uses; `--url` picks another. URLs
+must be HTTP loopback without credentials. The header
 shows the actual configured address on terminals of 80+ columns, including on
 first-load failure.
 
 Icons use Nerd Font glyphs by default. Terminals without a Nerd Font, such as
-many phone SSH clients, can use `--icons unicode`, `LOVELACE_TUI_ICONS=unicode`
-or `"tui": { "icons": "unicode" }` in the config file.
+many phone SSH clients, can use `--icons unicode` or
+`"tui": { "icons": "unicode" }` in the config file. The sidebar side comes from
+`--sidebar` or `"tui": { "sidebarSide": "left" }`.
 
 ## Theme
 
 The TUI paints its own canvas with a Gruvbox palette, so it looks the same in
-any terminal theme. Dark is the default; choose light with `--theme light`,
-`LOVELACE_TUI_THEME=light` or `"tui": { "theme": "light" }`. Override any colour
-per mode in `.lovelace/config.jsonc` with `#rrggbb`, or `none` for the
+any terminal theme. Dark is the default; choose light with `--theme light` or
+`"tui": { "theme": "light" }`. Override any colour per mode in
+`~/.config/lovelace/config.jsonc` with `#rrggbb`, or `none` for the
 terminal's own default (e.g. a transparent background):
 
 ```jsonc
@@ -143,7 +144,7 @@ opens above the unchanged Jira page:
 - **Left:** repository multi-select with separate name and topic filters.
   `Space`/`Enter` toggles a repository; `/` focuses name search and `t` topics.
   Name terms intersect; comma-separated topics are alternatives. Topics start
-  with the server's `github.repositoryTopics` from `.lovelace/config.jsonc`
+  with the server's `github.repositoryTopics` from `~/.config/lovelace/config.jsonc`
   (default: none); clear the field to show all topics.
   **Select all** (`Ctrl+A` in the list) adds every filtered match, including off-screen
   matches; **Unselect all** (`Ctrl+U`) clears the entire selection, including hidden

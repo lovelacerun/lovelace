@@ -37,7 +37,7 @@ function fixture(client = api(), text = '', repositoryTopics = ['infra', 'exampl
   state.applyDashboardResponse({
     activeWorkItems: [], pendingIssues: [issue], pendingReviews: [],
     recent: { since: '', workItems: [], sessionCount: 0, completedCount: 0, activityCount: 0 },
-    settings: { defaultAgent: 'pi', sidebarSide: 'right', repositoryTopics },
+    settings: { defaultAgent: 'pi', repositoryTopics },
     freshness: { trackerFetchedAt: null, codeHostFetchedAt: null, trackerStale: false, codeHostStale: false },
   });
   state.view = 'jira'; state.selectedJira = issue;

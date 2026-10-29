@@ -17,7 +17,7 @@ function stateWith(defaultAgent: 'pi' | 'codex' = 'pi', detected: AvailableHarne
   state.applyDashboardResponse({
     activeWorkItems: [], pendingIssues: [], pendingReviews: [],
     recent: { since: '', workItems: [], sessionCount: 0, completedCount: 0, activityCount: 0 },
-    settings: { defaultAgent, sidebarSide: 'right', repositoryTopics: [] },
+    settings: { defaultAgent, repositoryTopics: [] },
     freshness: { trackerFetchedAt: null, codeHostFetchedAt: null, trackerStale: false, codeHostStale: false },
   } satisfies DashboardResponse);
   if (detected) state.setTools(detected);

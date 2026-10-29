@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import type { LovelaceConfig } from '@lovelace/core';
+import type { ServerConfig } from '@lovelace/core';
 import type { Execute } from '@lovelace/secrets';
 import { resolveProviderSecrets } from './secrets.js';
 
@@ -22,7 +22,7 @@ function logger() {
 }
 
 test('prefers the Keychain, then op:// references and plaintext values, and logs only sources', async () => {
-  const config = { github: { token: 'op://v/gh/f', account: 'me' }, jira: { apiToken: 'plain' } } as LovelaceConfig;
+  const config = { github: { token: 'op://v/gh/f', account: 'me' }, jira: { apiToken: 'plain' } } as ServerConfig;
   const log = logger();
   await resolveProviderSecrets(config, log.logger, { execute: fakeExecute({ keychain: { 'jira-api-token': 'kc' }, op: { 'op://v/gh/f': 'op' }, gh: { 'me@github.com': 'gh' } }) });
   assert.equal(config.github?.token, 'op');
@@ -31,7 +31,7 @@ test('prefers the Keychain, then op:// references and plaintext values, and logs
 });
 
 test('never falls back to the reference text when 1Password cannot read it', async () => {
-  const config = { github: {}, jira: { apiToken: 'op://v/missing/f' } } as LovelaceConfig;
+  const config = { github: {}, jira: { apiToken: 'op://v/missing/f' } } as ServerConfig;
   const log = logger();
   await resolveProviderSecrets(config, log.logger, { execute: fakeExecute({}) });
   assert.equal(config.jira?.apiToken, undefined);
@@ -40,16 +40,16 @@ test('never falls back to the reference text when 1Password cannot read it', asy
 
 test('falls back to the configured GitHub CLI account only without a configured GitHub token', async () => {
   const execute = fakeExecute({ gh: { 'me@github.example.com': 'from-gh', 'me@github.com': 'from-gh' } });
-  const unset = { github: { host: 'https://github.example.com/', account: 'me' }, jira: {} } as LovelaceConfig;
+  const unset = { github: { host: 'https://github.example.com/', account: 'me' }, jira: {} } as ServerConfig;
   await resolveProviderSecrets(unset, logger().logger, { execute });
   assert.equal(unset.github?.token, 'from-gh');
-  const configured = { github: { token: 'plain', account: 'me' }, jira: {} } as LovelaceConfig;
+  const configured = { github: { token: 'plain', account: 'me' }, jira: {} } as ServerConfig;
   await resolveProviderSecrets(configured, logger().logger, { execute });
   assert.equal(configured.github?.token, 'plain');
 });
 
 test('never borrows the active GitHub CLI account implicitly', async () => {
-  const config = { github: {}, jira: {} } as LovelaceConfig;
+  const config = { github: {}, jira: {} } as ServerConfig;
   const log = logger();
   await resolveProviderSecrets(config, log.logger, { execute: fakeExecute({ gh: { 'me@github.com': 'from-gh' } }) });
   assert.equal(config.github?.token, undefined);

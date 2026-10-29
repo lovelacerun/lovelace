@@ -65,7 +65,7 @@ class FakeServer {
     return {
       activeWorkItems, pendingIssues: issues.filter(issue => !this.linkedIssues.has(issue.id)), pendingReviews: [],
       recent: { since: '', workItems: activeWorkItems, sessionCount: 0, completedCount: 0, activityCount: 0 },
-      settings: { defaultAgent: 'pi', sidebarSide: 'right', repositoryTopics: [] },
+      settings: { defaultAgent: 'pi', repositoryTopics: [] },
       freshness: { trackerFetchedAt: null, codeHostFetchedAt: null, trackerStale: false, codeHostStale: false },
     };
   }

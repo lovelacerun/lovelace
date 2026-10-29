@@ -31,7 +31,7 @@ function makeDashboard(overrides: Partial<DashboardResponse> = {}): DashboardRes
       ],
       sessionCount: 1, completedCount: 1, activityCount: 2,
     },
-    settings: { defaultAgent: 'pi', sidebarSide: 'right', repositoryTopics: [] },
+    settings: { defaultAgent: 'pi', repositoryTopics: [] },
     freshness: { trackerFetchedAt: null, codeHostFetchedAt: null, trackerStale: false, codeHostStale: false },
     ...overrides,
   };

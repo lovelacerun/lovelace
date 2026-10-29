@@ -1,9 +1,8 @@
 import { ProcessTerminal, TuiAltScreen } from '@earendil-works/pi-tui';
 import { createLovelaceClient } from '@lovelace/client';
-import type { SidebarSide } from '@lovelace/core';
+import { loadClientSettings, type SidebarSide } from '@lovelace/core';
 
 import { AppRoot } from './app.js';
-import { getAppearance, getServerUrl } from './config.js';
 import { useIcons, useTheme, type IconSet, type ThemeMode } from './theme.js';
 
 interface ParsedArgs {
@@ -84,38 +83,34 @@ function helpText(): string {
     '',
     'Usage: lovelace-tui [--sidebar left|right] [--icons nerd|unicode] [--theme dark|light] [--url http://host:port]',
     '',
-    'Env:',
-    '  LOVELACE_PORT   Override daemon port (default 27421).',
-    '  LOVELACE_HOST   Override daemon host (default 127.0.0.1).',
-    '  LOVELACE_TUI_ICONS  nerd (Nerd Font, default) or unicode.',
-    '  LOVELACE_TUI_THEME  dark (Gruvbox, default) or light.',
+    'Defaults come from port and tui in ~/.config/lovelace/config.jsonc ($LOVELACE_CONFIG).',
     '',
   ].join('\n');
 }
 
 export async function runTui(argv: readonly string[]): Promise<void> {
-  // Help/noninteractive rejection must not load provider credentials from config.
+  // Help and the non-TTY rejection work even with an invalid config file.
   const passive = argv.includes('--help') || argv.includes('-h') || !process.stdin.isTTY || !process.stdout.isTTY;
-  const parsed = parseArgs(argv, { url: passive ? 'http://127.0.0.1:27421' : getServerUrl() });
+  const settings = passive ? undefined : loadClientSettings();
+  const parsed = parseArgs(argv, { url: `http://127.0.0.1:${settings?.port ?? 27421}` });
   if (parsed.help) {
     process.stdout.write(helpText());
     return;
   }
-  if (!process.stdin.isTTY || !process.stdout.isTTY) {
+  if (!settings) {
     process.stderr.write('lovelace-tui requires a TTY. Launch from an interactive terminal.\n');
     process.exitCode = 1;
     return;
   }
-  const appearance = getAppearance();
-  const theme = parsed.theme ?? appearance.theme;
-  useIcons(parsed.icons ?? appearance.icons);
-  useTheme(theme, appearance.colors?.[theme]);
+  const theme = parsed.theme ?? settings.tui.theme;
+  useIcons(parsed.icons ?? settings.tui.icons);
+  useTheme(theme, settings.tui.colors[theme]);
   const terminal = new ProcessTerminal();
   // Clicked OSC 8 links (rows, help chips, provider URLs) route through the app.
   let root: AppRoot | undefined;
   const tui = new TuiAltScreen(terminal, undefined, undefined, { openUrl: url => root?.openLink(url) });
   const client = createLovelaceClient(parsed.url);
-  root = new AppRoot({ tui, client, serverUrl: parsed.url, sidebarSide: parsed.sidebarSide });
+  root = new AppRoot({ tui, client, serverUrl: parsed.url, sidebarSide: parsed.sidebarSide ?? settings.tui.sidebarSide });
   tui.setLayoutRoot(root);
 
   const onSignal = () => {

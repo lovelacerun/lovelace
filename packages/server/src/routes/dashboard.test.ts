@@ -5,7 +5,7 @@ import type { CreateWorkspaceRequest } from '@lovelace/coriol';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test, { type TestContext } from 'node:test';
-import { attachmentsOfType, isLaunchInProgress, type TrackerIssue, type LovelaceConfig, type LaunchResponse, type AgentSession } from '@lovelace/core';
+import { attachmentsOfType, isLaunchInProgress, type TrackerIssue, type ServerConfig, type LaunchResponse, type AgentSession } from '@lovelace/core';
 import { createTRPCClient, httpLink, TRPCClientError } from '@trpc/client';
 import { openDatabase } from '../database.js';
 import { buildServer } from '../app.js';
@@ -25,9 +25,9 @@ const tools = (): LoadedTool[] => (['pi', 'claude', 'codex'] as const).map((id, 
 
 async function fixture(t: TestContext, fail = false, providers = fixtureProviders()) {
   const root = await mkdtemp(join(tmpdir(), 'lovelace-dashboard-route-'));
-  const config: LovelaceConfig = {
+  const config: ServerConfig = {
     domainRoot: root, lovelaceDir: join(root, '.lovelace'), port: 27421, logLevel: 'info',
-    syncIntervalMs: 300_000, defaultAgent: 'pi', tui: { sidebarSide: 'right' },
+    syncIntervalMs: 300_000, defaultAgent: 'pi',
   };
   const database = openDatabase(config);
   const herdr = new FakeHerdr();
@@ -457,7 +457,7 @@ test('excluded v3 routes are not mounted and malformed Jira hydration is safe', 
     for (const url of [`/${name}`, `/trpc/${name}`]) assert.equal((await app.inject(url)).statusCode, 404, url);
   }
   const dashboard = await api.dashboard.get();
-  assert.deepEqual(dashboard.settings, { defaultAgent: 'pi', sidebarSide: 'right', repositoryTopics: [] });
+  assert.deepEqual(dashboard.settings, { defaultAgent: 'pi', repositoryTopics: [] });
   assert.equal(dashboard.freshness.trackerStale, true);
 });
 

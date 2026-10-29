@@ -12,6 +12,7 @@ const loader = import.meta.resolve('tsx');
 test('no-argument CLI prints help; JSON agent/server commands never open TUI; explicit tui requires TTY', async t => {
   const root = await mkdtemp(join(tmpdir(), 'lovelace-cli-entry-'));
   t.after(() => rm(root, { recursive: true, force: true }));
+  await writeFile(join(root, 'config.jsonc'), JSON.stringify({ domainRoot: root, port: 48999 }));
   const preload = join(root, 'fake-http.mjs');
   await writeFile(preload, `globalThis.fetch = async (url, init) => {
     if (!String(url).startsWith('http://127.0.0.1:48999/trpc/')) throw new Error('Nonlocal fixture request');
@@ -22,7 +23,7 @@ test('no-argument CLI prints help; JSON agent/server commands never open TUI; ex
     return Response.json({ result: { data: { path, body: input } } });
   };\n`);
   const run = (args: string[]) => spawnSync(process.execPath, ['--import', loader, '--import', preload, entry, ...args], {
-    env: { ...process.env, LOVELACE_ROOT: root, LOVELACE_CONFIG: join(root, 'config.jsonc'), LOVELACE_PORT: '48999', LOVELACE_NO_AUTOSTART: '1' }, encoding: 'utf8', timeout: 5_000,
+    env: { ...process.env, LOVELACE_CONFIG: join(root, 'config.jsonc'), LOVELACE_NO_AUTOSTART: '1' }, encoding: 'utf8', timeout: 5_000,
   });
   for (const args of [[], ['--'], ['help'], ['--help']]) {
     const result = run(args);
@@ -57,6 +58,7 @@ test('no-argument CLI prints help; JSON agent/server commands never open TUI; ex
 test('work-items update sends only passed fields', async t => {
   const root = await mkdtemp(join(tmpdir(), 'lovelace-cli-update-'));
   t.after(() => rm(root, { recursive: true, force: true }));
+  await writeFile(join(root, 'config.jsonc'), JSON.stringify({ domainRoot: root, port: 48999 }));
   const preload = join(root, 'fake-http.mjs');
   await writeFile(preload, `globalThis.fetch = async (url, init) => {
     if (!String(url).startsWith('http://127.0.0.1:48999/trpc/')) throw new Error('Nonlocal fixture request');
@@ -66,7 +68,7 @@ test('work-items update sends only passed fields', async t => {
   const notesFile = join(root, 'notes.md');
   await writeFile(notesFile, 'From file\n');
   const run = (args: string[]) => spawnSync(process.execPath, ['--import', loader, '--import', preload, entry, ...args], {
-    env: { ...process.env, LOVELACE_ROOT: root, LOVELACE_CONFIG: join(root, 'config.jsonc'), LOVELACE_PORT: '48999', LOVELACE_NO_AUTOSTART: '1' }, encoding: 'utf8', timeout: 5_000,
+    env: { ...process.env, LOVELACE_CONFIG: join(root, 'config.jsonc'), LOVELACE_NO_AUTOSTART: '1' }, encoding: 'utf8', timeout: 5_000,
   });
   const cases: Array<[string[], { title?: string; notes?: string | null }]> = [
     [['--title', 'New title'], { title: 'New title' }],

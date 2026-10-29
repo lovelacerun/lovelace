@@ -109,7 +109,8 @@ interface JiraConfig {
 
 export type TuiThemeMode = 'dark' | 'light';
 
-export interface LovelaceConfig {
+/** The server's configuration; `loadServerConfig` fills every default. */
+export interface ServerConfig {
   domainRoot: string;
   lovelaceDir: string;
   port: number;
@@ -117,21 +118,26 @@ export interface LovelaceConfig {
   syncIntervalMs: number;
   defaultAgent: CodingHarnessId;
   herdr?: HerdrConfig;
+  github?: GitHubConfig;
+  jira?: JiraConfig;
+  /** Set by the process that starts the server, never read from the file. */
+  agentCli?: AgentCli;
+  version?: string;
+}
+
+/** What clients read from the same file: the server's port and TUI appearance. */
+export interface ClientSettings {
+  port: number;
   /**
    * `icons`: Nerd Font glyphs, or plain Unicode for terminals without one.
    * `colors`: per-theme overrides of TUI colour tokens, `#rrggbb` or `none`.
    */
   tui: {
     sidebarSide: SidebarSide;
-    icons?: 'nerd' | 'unicode';
-    theme?: TuiThemeMode;
-    colors?: Partial<Record<TuiThemeMode, Record<string, string>>>;
+    icons: 'nerd' | 'unicode';
+    theme: TuiThemeMode;
+    colors: Partial<Record<TuiThemeMode, Record<string, string>>>;
   };
-  github?: GitHubConfig;
-  jira?: JiraConfig;
-  /** Set by the process that starts the server, never read from the file. */
-  agentCli?: AgentCli;
-  version?: string;
 }
 
 export interface AgentCli {

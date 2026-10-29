@@ -12,6 +12,7 @@ const loader = import.meta.resolve('tsx');
 test('work-items add-worktree polls after submission and preserves final JSON including failed siblings', async t => {
   const root = await mkdtemp(join(tmpdir(), 'lovelace-cli-workspaces-'));
   t.after(() => rm(root, { recursive: true, force: true }));
+  await writeFile(join(root, 'config.jsonc'), JSON.stringify({ domainRoot: root, port: 48999 }));
   const preload = join(root, 'fake-http.mjs');
   await writeFile(preload, `
     let posts = 0;
@@ -40,7 +41,7 @@ test('work-items add-worktree polls after submission and preserves final JSON in
     };
   `);
   const result = spawnSync(process.execPath, ['--import', loader, '--import', preload, entry, 'work-items', 'add-worktree', 'work', 'a', '--branch', 'feature', '--base', 'parent'], {
-    env: { ...process.env, LOVELACE_ROOT: root, LOVELACE_CONFIG: join(root, 'config.jsonc'), LOVELACE_PORT: '48999', LOVELACE_NO_AUTOSTART: '1' }, encoding: 'utf8', timeout: 5_000,
+    env: { ...process.env, LOVELACE_CONFIG: join(root, 'config.jsonc'), LOVELACE_NO_AUTOSTART: '1' }, encoding: 'utf8', timeout: 5_000,
   });
   assert.equal(result.status, 0, result.stderr);
   assert.equal(result.stderr, '', 'non-TTY automation does not receive progress text');
@@ -55,6 +56,7 @@ test('work-items add-worktree polls after submission and preserves final JSON in
 test('Ctrl-C during workspace preparation emits a JSON interruption error with an inspection command', async t => {
   const root = await mkdtemp(join(tmpdir(), 'lovelace-cli-workspace-interrupt-'));
   t.after(() => rm(root, { recursive: true, force: true }));
+  await writeFile(join(root, 'config.jsonc'), JSON.stringify({ domainRoot: root, port: 48999 }));
   const preload = join(root, 'fake-http.mjs');
   await writeFile(preload, `globalThis.fetch = async (url, init) => {
     if (!String(url).startsWith('http://127.0.0.1:48999/trpc/')) throw new Error('Nonlocal fixture request');
@@ -64,7 +66,7 @@ test('Ctrl-C during workspace preparation emits a JSON interruption error with a
     return Response.json({ result: { data: { workItem: { id: 'work' }, attachments: [{ id: 'a', type: 'worktree', payload: { repoId: 'a', repoName: 'a', sourceExternalId: null, status: 'preparing' } }] } } });
   };`);
   const result = spawnSync(process.execPath, ['--import', loader, '--import', preload, entry, 'work-items', 'add-worktree', 'work', 'a'], {
-    env: { ...process.env, LOVELACE_ROOT: root, LOVELACE_CONFIG: join(root, 'config.jsonc'), LOVELACE_PORT: '48999', LOVELACE_NO_AUTOSTART: '1' }, encoding: 'utf8', timeout: 5_000,
+    env: { ...process.env, LOVELACE_CONFIG: join(root, 'config.jsonc'), LOVELACE_NO_AUTOSTART: '1' }, encoding: 'utf8', timeout: 5_000,
   });
   assert.equal(result.status, 1);
   assert.equal(result.stdout, '');

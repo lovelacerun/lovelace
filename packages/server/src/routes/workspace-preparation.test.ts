@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import test, { type TestContext } from 'node:test';
 import type { CreateWorkspaceRequest, PreparedRepositoryWorkspace } from '@lovelace/coriol';
-import { attachmentsOfType, type LovelaceConfig, type StartWorkRepositoryInput } from '@lovelace/core';
+import { attachmentsOfType, type ServerConfig, type StartWorkRepositoryInput } from '@lovelace/core';
 import { createTRPCClient, httpLink, TRPCClientError } from '@trpc/client';
 import { buildServer } from '../app.js';
 import { openDatabase } from '../database.js';
@@ -18,9 +18,9 @@ import type { RouteDeps } from './deps.js';
 
 async function fixture(t: TestContext) {
   const root = await mkdtemp(join(tmpdir(), 'lovelace-workspace-preparation-'));
-  const config: LovelaceConfig = {
+  const config: ServerConfig = {
     domainRoot: root, lovelaceDir: join(root, '.lovelace'), port: 27421, logLevel: 'info',
-    syncIntervalMs: 300_000, defaultAgent: 'pi', tui: { sidebarSide: 'right' },
+    syncIntervalMs: 300_000, defaultAgent: 'pi',
   };
   const database = openDatabase(config);
   const providers = fixtureProviders();

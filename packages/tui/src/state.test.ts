@@ -22,7 +22,7 @@ function dashboard(overrides: Partial<DashboardResponse> = {}): DashboardRespons
       { id: 'J-1', key: 'PROJ-100', title: 'Fix docs', url: 'https://x', status: 'open', issueType: 'Task', updatedAt: '' },
     ],
     recent: { since: '2026-10-06T00:00:00.000Z', workItems: [], sessionCount: 0, completedCount: 0, activityCount: 0 },
-    settings: { defaultAgent: 'pi', sidebarSide: 'right', repositoryTopics: [] },
+    settings: { defaultAgent: 'pi', repositoryTopics: [] },
     freshness: { trackerFetchedAt: null, codeHostFetchedAt: null, trackerStale: false, codeHostStale: false },
     ...overrides,
   };
@@ -71,16 +71,11 @@ describe('AppState drafts', () => {
   });
 });
 
-describe('AppState sidebar override', () => {
-  it('CLI override takes precedence over server setting', () => {
+describe('AppState sidebar side', () => {
+  it('keeps the side it was started with across dashboard responses', () => {
     const state = new AppState({ onInvalidate() {}, sidebarSide: 'left' });
-    state.applyDashboardResponse(dashboard({ settings: { defaultAgent: 'pi', sidebarSide: 'right', repositoryTopics: [] } }));
+    state.applyDashboardResponse(dashboard());
     assert.equal(state.sidebarSide, 'left');
-  });
-
-  it('server setting applies when no CLI override', () => {
-    const state = new AppState({ onInvalidate() {} });
-    state.applyDashboardResponse(dashboard({ settings: { defaultAgent: 'pi', sidebarSide: 'right', repositoryTopics: [] } }));
-    assert.equal(state.sidebarSide, 'right');
+    assert.equal(new AppState({ onInvalidate() {} }).sidebarSide, 'right');
   });
 });

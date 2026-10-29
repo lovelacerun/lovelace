@@ -1,7 +1,7 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { appendFileSync, closeSync, mkdirSync, openSync, readFileSync, rmSync, writeSync } from 'node:fs';
 import { join } from 'node:path';
-import { loadConfig } from '@lovelace/core';
+import { loadServerConfig } from '@lovelace/core';
 import { selfInvocation, version } from './self.js';
 
 const USAGE = 'Usage: lovelace server [start|stop|restart|status]';
@@ -23,7 +23,7 @@ export interface BackgroundDeps {
 }
 
 export function backgroundDeps(overrides: Partial<BackgroundDeps> = {}): BackgroundDeps {
-  const config = loadConfig();
+  const config = loadServerConfig();
   return {
     port: config.port,
     lovelaceDir: config.lovelaceDir,
@@ -157,7 +157,7 @@ async function fetchStatus(port: number): Promise<ServerStatus | null> {
   }
 }
 
-const INHERITED = /^(PATH|HOME|USER|LOGNAME|SHELL|TMPDIR|LANG|LC_\w+|TZ|SSH_AUTH_SOCK|XDG_\w+|NODE_EXTRA_CA_CERTS|SSL_CERT_(FILE|DIR)|LOVELACE_(CONFIG|ROOT|PORT|EXECUTABLE|LOG_LEVEL))$/;
+const INHERITED = /^(PATH|HOME|USER|LOGNAME|SHELL|TMPDIR|LANG|LC_\w+|TZ|SSH_AUTH_SOCK|XDG_\w+|NODE_EXTRA_CA_CERTS|SSL_CERT_(FILE|DIR)|LOVELACE_(CONFIG|EXECUTABLE))$/;
 
 /**
  * Whichever shell first needs the server starts it, often an agent's worktree
@@ -196,7 +196,7 @@ export function serverEnvironment(env: NodeJS.ProcessEnv, proxy: string | null):
  * stops it on SIGTERM.
  */
 export async function superviseServer(env: NodeJS.ProcessEnv = process.env): Promise<void> {
-  const { lovelaceDir } = loadConfig();
+  const { lovelaceDir } = loadServerConfig();
   if (!claimPidFile(lovelaceDir)) {
     console.log('Another Lovelace server supervisor is running');
     return;

@@ -3,7 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test, { type TestContext } from 'node:test';
-import type { AgentSession, LovelaceConfig, TrackerIssue } from '@lovelace/core';
+import type { AgentSession, ServerConfig, TrackerIssue } from '@lovelace/core';
 import { DatabaseSync } from 'node:sqlite';
 import { openDatabase } from '../database.js';
 import { migrations } from '../migrations.js';
@@ -14,7 +14,7 @@ import { syncSessions } from './session-service.js';
 
 async function fixture(t: TestContext) {
   const root = await mkdtemp(join(tmpdir(), 'lovelace-work-activity-'));
-  const config: LovelaceConfig = { domainRoot: root, lovelaceDir: join(root, '.lovelace'), port: 27421, logLevel: 'info', syncIntervalMs: 300_000, defaultAgent: 'pi', tui: { sidebarSide: 'right' } };
+  const config: ServerConfig = { domainRoot: root, lovelaceDir: join(root, '.lovelace'), port: 27421, logLevel: 'info', syncIntervalMs: 300_000, defaultAgent: 'pi' };
   const database = openDatabase(config);
   t.after(async () => { if (database.db.isOpen) database.db.close(); await rm(root, { recursive: true, force: true }); });
   return { config, database };

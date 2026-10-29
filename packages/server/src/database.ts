@@ -11,7 +11,7 @@ import type {
   Launch,
   LaunchState,
   LinkAttachmentType,
-  LovelaceConfig,
+  ServerConfig,
   Repository,
   WorkItem,
   WorkItemAttachment,
@@ -124,7 +124,7 @@ export interface DatabaseState {
   listWorkActivity(input?: { workItemId?: string; sinceIso?: string; untilIso?: string }): WorkActivityRow[];
 }
 
-export function openDatabase(config: LovelaceConfig): DatabaseState {
+export function openDatabase(config: ServerConfig): DatabaseState {
   mkdirSync(config.lovelaceDir, { recursive: true });
   // Statements bind spread records; columns the SQL does not name are ignored.
   const db = new DatabaseSync(join(config.lovelaceDir, 'state.db'), { allowUnknownNamedParameters: true });

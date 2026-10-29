@@ -1,16 +1,11 @@
 import type { CodingHarnessId, ToolLaunchOptionsById } from './harnesses.js';
 import type { ChangeRequest, Launch, LaunchState, TrackerIssue, WorkItemDetails, WorkItemState } from './types.js';
 
-const SIDEBAR_SIDES = ['left', 'right'] as const;
+export const SIDEBAR_SIDES = ['left', 'right'] as const;
 export type SidebarSide = (typeof SIDEBAR_SIDES)[number];
-
-export function isSidebarSide(value: unknown): value is SidebarSide {
-  return value === 'left' || value === 'right';
-}
 
 export interface DashboardSettings {
   defaultAgent: CodingHarnessId;
-  sidebarSide: SidebarSide;
   /** Initial editable Jira repository topic filter; empty means all topics. */
   repositoryTopics: string[];
 }

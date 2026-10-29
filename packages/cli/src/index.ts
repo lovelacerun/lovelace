@@ -35,7 +35,7 @@ async function main() {
       const { findExecutable, startServer } = await import('@lovelace/server');
       return startServer({
         version,
-        agentCli: port => ({ command: agentCommand(port, findExecutable('lovelace')) }),
+        agentCli: { command: agentCommand(findExecutable('lovelace')) },
       });
     }
     case 'init': {

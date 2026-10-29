@@ -9,7 +9,7 @@ import { AppRoot } from './app.js';
 const dashboard: DashboardResponse = {
   activeWorkItems: [], pendingIssues: [], pendingReviews: [],
   recent: { since: '', workItems: [], sessionCount: 0, completedCount: 0, activityCount: 0 },
-  settings: { defaultAgent: 'pi', sidebarSide: 'right', repositoryTopics: [] },
+  settings: { defaultAgent: 'pi', repositoryTopics: [] },
   freshness: { trackerFetchedAt: null, codeHostFetchedAt: null, trackerStale: false, codeHostStale: false },
 };
 const details: WorkItemDetails = {

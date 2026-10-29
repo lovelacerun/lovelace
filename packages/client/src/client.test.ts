@@ -67,7 +67,7 @@ describe('createLovelaceClient', () => {
       activeWorkItems: [],
       pendingJiraIssues: [],
       recent: { since: '2026-10-06T00:00:00.000Z', workItems: [], sessionCount: 0, completedCount: 0, activityCount: 0 },
-      settings: { defaultAgent: 'pi', sidebarSide: 'left', repositoryTopics: [] },
+      settings: { defaultAgent: 'pi', repositoryTopics: [] },
       freshness: { jiraFetchedAt: null, githubFetchedAt: null, jiraStale: false, githubStale: false },
     };
     const { client } = recording(() => dashboard);

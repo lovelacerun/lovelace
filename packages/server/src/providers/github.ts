@@ -6,7 +6,7 @@ import {
   type GitHubRepository,
   type ReviewDecision,
 } from '@lovelace/github-client';
-import type { ChangeRequest, ChangeRequestReview, LovelaceConfig, Repository } from '@lovelace/core';
+import type { ChangeRequest, ChangeRequestReview, ServerConfig, Repository } from '@lovelace/core';
 import { changeRequestId, type ChangeRequestRef, type CodeHost } from './types.js';
 
 type GitHubCodeHostOptions = Pick<GitHubClientOptions, 'fetch' | 'octokit' | 'requestTimeoutMs'>;
@@ -18,7 +18,7 @@ const REVIEWS: Record<Exclude<ReviewDecision, null>, ChangeRequestReview> = {
 };
 
 /** Application authentication belongs here, not in the reusable client package. */
-export function createGitHubCodeHost(config: LovelaceConfig, options: GitHubCodeHostOptions = {}): CodeHost {
+export function createGitHubCodeHost(config: ServerConfig, options: GitHubCodeHostOptions = {}): CodeHost {
   let current: GitHubClient | undefined;
   let identity: string | undefined;
   // The auth routes update the token in place; rebuild the client when the identity changes.

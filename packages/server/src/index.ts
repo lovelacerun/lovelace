@@ -1,7 +1,7 @@
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { WorkspaceManager } from '@lovelace/coriol';
-import { loadConfig, type AgentCli } from '@lovelace/core';
+import { loadServerConfig, type AgentCli } from '@lovelace/core';
 import { buildServer } from './app.js';
 import { createCacheStore } from '@lovelace/cache';
 import { createCachedCodeHost, createCachedModels, createCachedTracker } from './cached-providers.js';
@@ -23,15 +23,15 @@ export type { AppRouter } from './router.js';
 
 export interface StartServerOptions {
   /** How launched agents call the CLI back; without it prompts get no Lovelace context. */
-  agentCli?: (port: number) => AgentCli;
+  agentCli?: AgentCli;
   /** Reported by /status so clients notice a server left running across an upgrade. */
   version?: string;
 }
 
 /** Runs the server in this process until SIGTERM/SIGINT. */
 export async function startServer(options: StartServerOptions = {}): Promise<void> {
-  const config = loadConfig();
-  config.agentCli = options.agentCli?.(config.port);
+  const config = loadServerConfig();
+  config.agentCli = options.agentCli;
   config.version = options.version;
   mkdirSync(join(config.lovelaceDir, 'prompts'), { recursive: true });
 

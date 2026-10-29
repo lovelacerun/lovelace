@@ -61,8 +61,8 @@ credentials. The server looks for each token in this order:
 
 1. macOS Keychain, service `lovelace`, account `github-token` or
    `jira-api-token`
-2. An `op://vault/item/field` reference in the config or environment
-3. A plaintext value in the config or environment
+2. An `op://vault/item/field` reference in the config
+3. A plaintext value in the config
 4. GitHub only: the `gh` login of `github.account`
 
 Least privilege: a fine-grained GitHub token with read-only Metadata, Pull
@@ -87,8 +87,8 @@ background; `lovelace server start|stop|restart|status` manage it.
 
 | Path | Contents |
 | --- | --- |
-| `~/.config/lovelace/config.jsonc` | Configuration |
-| `~/projects/.lovelace/` | State root (`LOVELACE_ROOT` moves `~/projects`) |
+| `~/.config/lovelace/config.jsonc` | Configuration (`LOVELACE_CONFIG` selects another file) |
+| `~/projects/.lovelace/` | State root (`domainRoot` moves `~/projects`) |
 | `…/.lovelace/state.db` | Work items, attachments, sessions |
 | `…/.lovelace/repos/`, `workspaces/` | Seed clones and per-work-item worktrees |
 | `…/.lovelace/prompts/` | Your prompt templates and overrides |

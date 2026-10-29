@@ -13,7 +13,7 @@ import { newSessionInput, quickStartInput, uuid } from './schemas.js';
 export const dashboardRouter = router({
   get: procedure.query(({ ctx: { database, codeHost, tracker, config } }) => buildDashboard({
     database, codeHost, tracker, settings: {
-      defaultAgent: config.defaultAgent, sidebarSide: config.tui.sidebarSide,
+      defaultAgent: config.defaultAgent,
       repositoryTopics: config.github?.repositoryTopics ?? [],
     }, syncIntervalMs: config.syncIntervalMs,
   })),

@@ -3,12 +3,15 @@
   // Tokens: macOS Keychain (service "lovelace", accounts github-token and
   // jira-api-token) first, then op:// references, then plaintext; GitHub
   // falls back to the GitHub CLI login of github.account. See readme.
-  // Where Lovelace keeps clones, worktrees and state (LOVELACE_ROOT overrides).
+  // Unknown keys and invalid values stop Lovelace with the offending path.
+  // Where Lovelace keeps clones, worktrees and state.
   "domainRoot": "~/projects",
+  "port": 27421,
   "logLevel": "info",
   "syncIntervalMs": 300000,
   "defaultAgent": "pi",
-  "tui": { "sidebarSide": "right" },
+  // Read by the TUI only: sidebar side, nerd|unicode icons, dark|light theme.
+  "tui": { "sidebarSide": "right", "icons": "nerd", "theme": "dark" },
 
   // Install and run Herdr yourself; Lovelace never starts it. Optional
   // absolute paths select another binary or a named session's socket.
@@ -33,5 +36,4 @@
   }
 
   // Agent executables (pi/claude/codex) are auto-detected by the server.
-  // Override defaults with LOVELACE_DEFAULT_AGENT and LOVELACE_TUI_SIDEBAR.
 }

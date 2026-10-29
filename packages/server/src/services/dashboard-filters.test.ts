@@ -3,7 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test, { type TestContext } from 'node:test';
-import type { LovelaceConfig, TrackerIssue } from '@lovelace/core';
+import type { ServerConfig, TrackerIssue } from '@lovelace/core';
 import { openDatabase } from '../database.js';
 import { createActiveWorkItem, createManualWorkItem } from '../repositories/work-item-repository.js';
 import { fixtureProviders, storedSnapshot, trackerIssue } from '../test-support/providers.js';
@@ -15,12 +15,12 @@ function jiraIssue(id: string): TrackerIssue {
 
 async function fixture(t: TestContext) {
   const root = await mkdtemp(join(tmpdir(), 'lovelace-dashboard-filter-'));
-  const config: LovelaceConfig = { domainRoot: root, lovelaceDir: join(root, '.lovelace'), port: 27421, logLevel: 'info', syncIntervalMs: 300_000, defaultAgent: 'pi', tui: { sidebarSide: 'right' } };
+  const config: ServerConfig = { domainRoot: root, lovelaceDir: join(root, '.lovelace'), port: 27421, logLevel: 'info', syncIntervalMs: 300_000, defaultAgent: 'pi' };
   const database = openDatabase(config);
   const providers = fixtureProviders();
   const now = new Date();
   t.after(async () => { database.db.close(); await rm(root, { recursive: true, force: true }); });
-  const dashboard = () => buildDashboard({ database, codeHost: providers.codeHost, tracker: providers.tracker, settings: { defaultAgent: 'codex', sidebarSide: 'left', repositoryTopics: [] }, syncIntervalMs: 300_000, now });
+  const dashboard = () => buildDashboard({ database, codeHost: providers.codeHost, tracker: providers.tracker, settings: { defaultAgent: 'codex', repositoryTopics: [] }, syncIntervalMs: 300_000, now });
   return { database, providers, now, dashboard };
 }
 
@@ -37,13 +37,13 @@ test('pending issues respect completion, dismissal, snooze and all non-cancelled
     database.updateWorkItemState(work.id, state);
   }
   assert.deepEqual(dashboard().pendingIssues.map((issue) => issue.id), ['1', '4', '6', '7', '8', '11', '12']);
-  assert.deepEqual(dashboard().settings, { defaultAgent: 'codex', sidebarSide: 'left', repositoryTopics: [] });
+  assert.deepEqual(dashboard().settings, { defaultAgent: 'codex', repositoryTopics: [] });
   assert.equal(database.listWorkItems().find((work) => work.title === '10')!.state, 'done');
 });
 
 test('persisted assigned issues render before the first sync; malformed payloads count as missing', async (t) => {
   const { database, now } = await fixture(t);
-  const render = (providers: ReturnType<typeof fixtureProviders>) => buildDashboard({ database, codeHost: providers.codeHost, tracker: providers.tracker, settings: { defaultAgent: 'pi', sidebarSide: 'right', repositoryTopics: [] }, syncIntervalMs: 300_000, now });
+  const render = (providers: ReturnType<typeof fixtureProviders>) => buildDashboard({ database, codeHost: providers.codeHost, tracker: providers.tracker, settings: { defaultAgent: 'pi', repositoryTopics: [] }, syncIntervalMs: 300_000, now });
   const restored = render(fixtureProviders([storedSnapshot('tracker.jira.assignedIssues', [jiraIssue('1')], now)]));
   assert.deepEqual(restored.pendingIssues.map((issue) => issue.id), ['1']);
   assert.equal(restored.freshness.trackerStale, false);

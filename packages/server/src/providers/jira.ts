@@ -1,5 +1,5 @@
 import { createJiraClient, type JiraClientOptions, type JiraIssueSummary } from '@lovelace/jira-client';
-import type { LovelaceConfig, TrackerIssue } from '@lovelace/core';
+import type { ServerConfig, TrackerIssue } from '@lovelace/core';
 import type { Tracker } from './types.js';
 
 type JiraTrackerOptions = Pick<JiraClientOptions, 'fetch' | 'now' | 'requestTimeoutMs'>;
@@ -9,7 +9,7 @@ const ISSUE_ID_PATTERN = /^\d+$/;
 /** Status names treated as finished when Jira reports no status category. */
 const TERMINAL_STATUSES = new Set(['done', 'closed', 'resolved', 'cancelled', 'canceled']);
 
-export function createJiraTracker(config: LovelaceConfig, options: JiraTrackerOptions = {}): Tracker {
+export function createJiraTracker(config: ServerConfig, options: JiraTrackerOptions = {}): Tracker {
   const jira = createJiraClient({ ...config.jira, ...options });
   return {
     provider: 'jira',

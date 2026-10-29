@@ -33,7 +33,7 @@ export type PendingConfirm =
 
 interface AppStateOptions {
   onInvalidate: () => void;
-  /** CLI --sidebar override; takes priority over server-provided setting. */
+  /** `--sidebar`, else `tui.sidebarSide` from the config file. */
   sidebarSide?: SidebarSide;
 }
 
@@ -90,10 +90,7 @@ export class AppState {
   /** Per-view scroll offset. Keyed by `draftKey`. */
   readonly scrollOffsets: Record<string, number> = {};
 
-  private readonly cliSidebarSide?: SidebarSide;
-
   constructor(private readonly options: AppStateOptions) {
-    this.cliSidebarSide = options.sidebarSide;
     if (options.sidebarSide) this.sidebarSide = options.sidebarSide;
   }
 
@@ -227,7 +224,6 @@ export class AppState {
     const previouslySelected = this.sidebarEntries[this.sidebarSelectedIndex];
 
     this.dashboardData = data;
-    this.sidebarSide = this.cliSidebarSide ?? data.settings.sidebarSide;
 
     if (previouslySelected) {
       const index = this.sidebarEntries.findIndex(

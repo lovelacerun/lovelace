@@ -1,4 +1,5 @@
 import { readFileSync, realpathSync } from 'node:fs';
+import { resolve } from 'node:path';
 
 /**
  * The argv that runs this same CLI again. Homebrew's wrapper exports its
@@ -12,12 +13,12 @@ export function selfInvocation(env: NodeJS.ProcessEnv = process.env): string[] {
 
 /**
  * How launched agents call this server back: plain `lovelace` when that is
- * this executable on PATH, and the port only when an override chose it.
+ * this executable on PATH, and the config file only when an override chose it.
  */
-export function agentCommand(port: number, onPath: string | null, env: NodeJS.ProcessEnv = process.env): string {
+export function agentCommand(onPath: string | null, env: NodeJS.ProcessEnv = process.env): string {
   const argv = selfInvocation(env);
   const executable = argv.length === 1 && onPath && sameFile(onPath, argv[0]!) ? 'lovelace' : argv.map(shellQuote).join(' ');
-  return env.LOVELACE_PORT ? `LOVELACE_PORT=${port} ${executable}` : executable;
+  return env.LOVELACE_CONFIG ? `LOVELACE_CONFIG=${shellQuote(resolve(env.LOVELACE_CONFIG))} ${executable}` : executable;
 }
 
 function sameFile(a: string, b: string): boolean {

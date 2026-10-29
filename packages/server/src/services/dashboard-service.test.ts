@@ -3,13 +3,13 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
-import type { LovelaceConfig, TrackerIssue } from '@lovelace/core';
+import type { ServerConfig, TrackerIssue } from '@lovelace/core';
 import { fixtureProviders, storedSnapshot, trackerIssue } from '../test-support/providers.js';
 import { openDatabase } from '../database.js';
 import { createActiveWorkItem, createManualWorkItem } from '../repositories/work-item-repository.js';
 import { buildDashboard, startOfPreviousLocalDay } from './dashboard-service.js';
 
-function configForRoot(root: string): LovelaceConfig {
+function configForRoot(root: string): ServerConfig {
   return {
     domainRoot: root,
     lovelaceDir: join(root, '.lovelace'),
@@ -17,7 +17,7 @@ function configForRoot(root: string): LovelaceConfig {
     logLevel: 'info',
     syncIntervalMs: 300_000,
     defaultAgent: 'pi',
-    tui: { sidebarSide: 'right' },
+
   };
 }
 
@@ -45,7 +45,7 @@ test('dashboard pendingIssues excludes attached + terminal issues', async () => 
       database,
       codeHost: providers.codeHost,
       tracker: providers.tracker,
-      settings: { defaultAgent: 'pi', sidebarSide: 'right', repositoryTopics: [] },
+      settings: { defaultAgent: 'pi', repositoryTopics: [] },
       syncIntervalMs: 300_000,
     });
 
@@ -53,7 +53,6 @@ test('dashboard pendingIssues excludes attached + terminal issues', async () => 
     assert.equal(dashboard.activeWorkItems.length, 1);
     assert.deepEqual(dashboard.activeWorkItems[0]!.trackerIssueKeys, [attached.key]);
     assert.equal(dashboard.settings.defaultAgent, 'pi');
-    assert.equal(dashboard.settings.sidebarSide, 'right');
   } finally {
     database.db.close();
     await rm(root, { recursive: true, force: true });
@@ -81,7 +80,7 @@ test('dashboard recent counts work_activity rows from yesterday and today', asyn
       database,
       codeHost: providers.codeHost,
       tracker: providers.tracker,
-      settings: { defaultAgent: 'pi', sidebarSide: 'right', repositoryTopics: [] },
+      settings: { defaultAgent: 'pi', repositoryTopics: [] },
       syncIntervalMs: 300_000,
       now,
     });
@@ -113,7 +112,7 @@ test('dashboard freshness marks stale caches', async () => {
       database,
       codeHost: providers.codeHost,
       tracker: providers.tracker,
-      settings: { defaultAgent: 'pi', sidebarSide: 'right', repositoryTopics: [] },
+      settings: { defaultAgent: 'pi', repositoryTopics: [] },
       syncIntervalMs: 300_000,
       now,
     });

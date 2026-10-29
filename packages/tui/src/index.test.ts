@@ -37,7 +37,7 @@ describe('TUI argument validation', () => {
     const root = await mkdtemp(join(tmpdir(), 'lovelace-tui-help-'));
     t.after(() => rm(root, { recursive: true, force: true }));
     const result = spawnSync(process.execPath, ['--import', import.meta.resolve('tsx'), bin, '--help'], {
-      encoding: 'utf8', env: { ...process.env, LOVELACE_ROOT: root, LOVELACE_CONFIG: join(root, 'config.jsonc'), LOVELACE_HOST: '127.0.0.1', LOVELACE_PORT: '27421' },
+      encoding: 'utf8', env: { ...process.env, LOVELACE_CONFIG: join(root, 'config.jsonc') },
     });
     assert.equal(result.status, 0, result.stderr);
     assert.match(result.stdout, /Usage:/);
@@ -48,7 +48,7 @@ describe('TUI argument validation', () => {
     const root = await mkdtemp(join(tmpdir(), 'lovelace-tui-pipe-'));
     t.after(() => rm(root, { recursive: true, force: true }));
     const result = spawnSync(process.execPath, ['--import', import.meta.resolve('tsx'), bin], {
-      encoding: 'utf8', env: { ...process.env, LOVELACE_ROOT: root, LOVELACE_CONFIG: join(root, 'config.jsonc'), LOVELACE_HOST: '127.0.0.1', LOVELACE_PORT: '1' },
+      encoding: 'utf8', env: { ...process.env, LOVELACE_CONFIG: join(root, 'config.jsonc') },
     });
     assert.equal(result.status, 1);
     assert.equal(result.stdout, '');

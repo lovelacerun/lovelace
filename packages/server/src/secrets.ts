@@ -1,4 +1,4 @@
-import type { LovelaceConfig } from '@lovelace/core';
+import type { ServerConfig } from '@lovelace/core';
 import {
   command, findExecutable, isOnePasswordReference, keychain, onePassword, plaintext, resolveSecret,
   type CommandOptions, type ResolvedSecret,
@@ -14,7 +14,7 @@ export const KEYCHAIN_SERVICE = 'lovelace';
  * Order: Keychain, then an `op://` reference or the plaintext value, then (GitHub
  * only) the GitHub CLI login of `github.account`.
  */
-export async function resolveProviderSecrets(config: LovelaceConfig, logger: Logger, options: CommandOptions = {}): Promise<void> {
+export async function resolveProviderSecrets(config: ServerConfig, logger: Logger, options: CommandOptions = {}): Promise<void> {
   const onError = (error: unknown, source: string) => logger.warn({ source, err: { message: (error as Error).message } }, 'Secret source failed');
   const configured = (value: string | undefined) => isOnePasswordReference(value) ? onePassword(value, options) : plaintext(value);
 
@@ -34,7 +34,7 @@ export async function resolveProviderSecrets(config: LovelaceConfig, logger: Log
  * Borrow the GitHub CLI login of the configured account only: `gh`'s active
  * account changes with `gh auth switch`, which must not change Lovelace's identity.
  */
-function githubCli(config: LovelaceConfig, logger: Logger, options: CommandOptions) {
+function githubCli(config: ServerConfig, logger: Logger, options: CommandOptions) {
   const account = config.github?.account;
   if (!account) {
     // Only reached when nothing earlier supplied a token.

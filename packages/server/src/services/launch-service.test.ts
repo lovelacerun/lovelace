@@ -4,14 +4,14 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import test from 'node:test';
-import type { LovelaceConfig } from '@lovelace/core';
+import type { ServerConfig } from '@lovelace/core';
 import { openDatabase } from '../database.js';
 import { createActiveWorkItem } from '../repositories/work-item-repository.js';
 import { retryLaunch, startLaunch } from './launch-service.js';
 
 async function fixture(t: test.TestContext) {
   const root = await mkdtemp(join(tmpdir(), 'lovelace-launch-'));
-  const config: LovelaceConfig = { domainRoot: root, lovelaceDir: join(root, '.lovelace'), port: 27421, logLevel: 'info', syncIntervalMs: 300_000, defaultAgent: 'pi', tui: { sidebarSide: 'right' } };
+  const config: ServerConfig = { domainRoot: root, lovelaceDir: join(root, '.lovelace'), port: 27421, logLevel: 'info', syncIntervalMs: 300_000, defaultAgent: 'pi' };
   const state = { database: openDatabase(config) };
   t.after(async () => { state.database.db.close(); await rm(root, { recursive: true, force: true }); });
   return { state, reopen: () => { state.database.db.close(); state.database = openDatabase(config); state.database.recoverInterruptedLaunches(); } };

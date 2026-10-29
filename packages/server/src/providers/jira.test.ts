@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import type { LovelaceConfig } from '@lovelace/core';
+import type { ServerConfig } from '@lovelace/core';
 import { createJiraTracker } from './jira.js';
 
 test('assigned issue sync uses fetch with the Jira search endpoint', async () => {
@@ -72,14 +72,14 @@ test('assigned issue sync reports non-successful Jira responses', async () => {
   );
 });
 
-function config(): LovelaceConfig {
+function config(): ServerConfig {
   return {
     domainRoot: '/tmp/lovelace-test',
     lovelaceDir: '/tmp/lovelace-test/.lovelace',
     port: 27421,
     logLevel: 'info',
     syncIntervalMs: 300_000,
-    defaultAgent: 'pi', tui: { sidebarSide: 'right' },
+    defaultAgent: 'pi',
     jira: {
       baseUrl: 'https://api.atlassian.test/ex/jira/cloud-id',
       siteUrl: 'https://jira.atlassian.test',

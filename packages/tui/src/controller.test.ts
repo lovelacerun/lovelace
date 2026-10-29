@@ -16,7 +16,7 @@ function dash(overrides: Partial<DashboardResponse> = {}): DashboardResponse {
     ],
     pendingIssues: [], pendingReviews: [],
     recent: { since: '2026-10-06T00:00:00.000Z', workItems: [], sessionCount: 0, completedCount: 0, activityCount: 0 },
-    settings: { defaultAgent: 'pi', sidebarSide: 'right', repositoryTopics: [] },
+    settings: { defaultAgent: 'pi', repositoryTopics: [] },
     freshness: { trackerFetchedAt: null, codeHostFetchedAt: null, trackerStale: false, codeHostStale: false },
     ...overrides,
   };

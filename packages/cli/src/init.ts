@@ -3,7 +3,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'n
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { createInterface } from 'node:readline/promises';
-import { CODING_HARNESSES, configPath, loadConfig } from '@lovelace/core';
+import { CODING_HARNESSES, configPath, loadServerConfig } from '@lovelace/core';
 import { findExecutable } from '@lovelace/server';
 import {
   DEPENDENCIES, editConfigText, jiraApiBaseUrl, jiraCloudId, normalizeJiraSite, parseIntegrationStatus, parseTopics,
@@ -58,7 +58,7 @@ export async function init(): Promise<void> {
     const path = configPath();
     const text = existsSync(path) ? readFileSync(path, 'utf8') : '';
     const current = readConfigText(text) as { github?: Record<string, unknown>; jira?: Record<string, unknown> };
-    const defaults = loadConfig();
+    const defaults = loadServerConfig();
     console.log(`\n${text ? 'Updating' : 'Creating'} ${path}`);
     const edits: ConfigEdits = [];
 

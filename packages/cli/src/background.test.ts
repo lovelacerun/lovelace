@@ -77,7 +77,7 @@ test('the background server inherits only tool, locale and Lovelace location set
     PATH: '/bin', HOME: '/home', SSH_AUTH_SOCK: '/agent', LC_ALL: 'C', LOVELACE_CONFIG: '/c.jsonc', LOVELACE_PORT: '1',
     JIRA_API_TOKEN: 'secret', GITHUB_TOKEN: 'secret', DIRENV_DIR: '/worktree', HERDR_PANE_ID: 'w1:p1', HTTPS_PROXY: 'http://stale',
   });
-  assert.deepEqual(env, { PATH: '/bin', HOME: '/home', SSH_AUTH_SOCK: '/agent', LC_ALL: 'C', LOVELACE_CONFIG: '/c.jsonc', LOVELACE_PORT: '1' });
+  assert.deepEqual(env, { PATH: '/bin', HOME: '/home', SSH_AUTH_SOCK: '/agent', LC_ALL: 'C', LOVELACE_CONFIG: '/c.jsonc' });
 });
 
 test('the server gets the system proxy, or none at all', () => {

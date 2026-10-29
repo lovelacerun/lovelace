@@ -19,8 +19,8 @@ In order:
    procedure's types from it.~~ Done.
 6. ~~Provider-neutral domain types (`Repository`, `TrackerIssue`,
    `ChangeRequest`) with tracker and code host interfaces in the server.~~ Done.
-7. Validated config, split into server config and client settings; fewer
-   environment overrides.
+7. ~~Validated config, split into server config and client settings; fewer
+   environment overrides.~~ Done.
 8. TUI: a route union for navigation, split `app.ts`, one launch dialog.
 9. Coriol: inject environment policy (direnv, Volta, PATH); prepare it for
    publishing.

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import type { LovelaceConfig } from '@lovelace/core';
+import type { ServerConfig } from '@lovelace/core';
 import { resolveGitHubCloneUrl } from '@lovelace/github-client';
 import { createGitHubCodeHost } from './github.js';
 
@@ -52,12 +52,12 @@ test('only pull request URLs name change requests', () => {
   assert.equal(github.parseChangeRequestUrl('not a url'), null);
 });
 
-function config(): LovelaceConfig {
+function config(): ServerConfig {
   return {
     domainRoot: '/tmp/lovelace-provider-fixture-no-user-state',
     lovelaceDir: '/tmp/lovelace-provider-fixture-no-user-state/.lovelace',
     port: 27421, logLevel: 'info', syncIntervalMs: 300_000,
-    defaultAgent: 'pi', tui: { sidebarSide: 'right' },
+    defaultAgent: 'pi',
     github: { org: 'example', token: 'fixture-only' },
   };
 }
