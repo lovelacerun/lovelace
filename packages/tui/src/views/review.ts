@@ -1,17 +1,12 @@
-import type { AppState } from '../state.js';
+import type { AppState, Route } from '../state.js';
 import { accent, bold, faint, icons, keyColor, muted, reset } from '../theme.js';
 import { browserUrl } from '../browser.js';
 import { hyperlink } from '@earendil-works/pi-tui';
 import { safeText, wrap } from '@lovelace/tui-components';
 import { DocumentBuilder, meta, type Document } from './common.js';
 
-export function renderReview(state: AppState, width: number): Document {
+export function renderReview(state: AppState, { review }: Extract<Route, { kind: 'review' }>, width: number): Document {
   const b = new DocumentBuilder(state, width);
-  const review = state.selectedReview;
-  if (!review) {
-    b.line('Review request unavailable. Refresh the dashboard.');
-    return b.build();
-  }
   const gap = () => { if (!state.layout.compact) b.line(); };
   b.line(keyColor + bold + safeText(`${review.repository}#${review.number}`) + reset);
   for (const line of wrap(review.title, width)) b.line(bold + line + reset);

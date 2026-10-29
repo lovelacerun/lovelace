@@ -16,26 +16,38 @@ const control = (text: string, data: string) => clickable(text, { kind: 'modal',
 const button = (label: string, selected: boolean, data: string) =>
   control((selected ? selectedBg : '') + accent + label + reset, data);
 
-type ModalFocus = 'name' | 'topics' | 'selection' | 'repositories' | 'template' | 'prompt' | LaunchField | 'actions';
-const focusOrder: ModalFocus[] = ['name', 'topics', 'selection', 'repositories', 'template', 'prompt', ...LAUNCH_FIELDS, 'actions'];
-const isLaunchField = (focus: ModalFocus): focus is LaunchField => (LAUNCH_FIELDS as readonly string[]).includes(focus);
-const repositoryFocus: ModalFocus[] = ['name', 'topics', 'selection', 'repositories'];
+type DialogFocus = 'name' | 'topics' | 'selection' | 'repositories' | 'template' | 'prompt' | LaunchField | 'actions';
+const isLaunchField = (focus: DialogFocus): focus is LaunchField => (LAUNCH_FIELDS as readonly string[]).includes(focus);
+const repositoryFocus: DialogFocus[] = ['name', 'topics', 'selection', 'repositories'];
 /** Below this inner width the dialog shows one pane at a time, following focus. */
 const SPLIT_MIN_WIDTH = 56;
 
-interface JiraStartModalOptions {
+/**
+ * What the dialog starts: work on an issue, in repositories and from a
+ * template chosen here, or another session in a work item's ready worktrees.
+ */
+export type LaunchSubject =
+  | { kind: 'issue'; issue: DashboardIssue | TrackerIssue }
+  | { kind: 'session'; title: string };
+
+interface LaunchDialogOptions {
   tui: TuiAltScreen;
   state: AppState;
   client: LovelaceClient;
   signal: AbortSignal;
+  subject: LaunchSubject;
   onClose: () => void;
   onStart: (prompt: string) => Promise<void>;
 }
 
-/** One native overlay; its controls never navigate or dispatch dashboard shortcuts. */
-export class JiraStartModal implements Component {
+/**
+ * The one launch dialog: a prompt above the shared agent, thinking and model
+ * fields, plus repositories and templates when starting work on an issue. A
+ * native overlay; its controls never navigate or dispatch dashboard shortcuts.
+ */
+export class LaunchDialog implements Component {
   focused = true;
-  focus: ModalFocus = 'repositories';
+  focus: DialogFocus;
   readonly nameFilter = new Input({ prompt: 'Name: ', placeholder: 'Search repositories' });
   readonly topicFilter = new Input({ prompt: 'Topic: ', placeholder: 'infra, examplecom' });
   readonly editor: Editor;
@@ -43,7 +55,7 @@ export class JiraStartModal implements Component {
   readonly templateMenu = new Dropdown(selectTheme('template'), value => void this.chooseTemplate(value || undefined));
   repositories: Repository[];
   templates: PromptTemplate[];
-  loading = true;
+  loading: boolean;
   renderingPrompt = false;
   refreshing = false;
   launching = false;
@@ -69,12 +81,17 @@ export class JiraStartModal implements Component {
   private templateId?: string;
   private readonly lifetime = new AbortController();
   private readonly draftKey: string;
-  private issue: DashboardIssue | TrackerIssue;
+  private subject: LaunchSubject;
+  private readonly focusOrder: DialogFocus[];
   private readonly abort = () => this.lifetime.abort();
 
-  constructor(private readonly options: JiraStartModalOptions) {
+  constructor(private readonly options: LaunchDialogOptions) {
     this.draftKey = options.state.draftKey;
-    this.issue = options.state.jiraDetails ?? options.state.selectedJira!;
+    this.subject = options.subject;
+    const issue = this.subject.kind === 'issue';
+    this.focus = issue ? 'repositories' : 'prompt';
+    this.focusOrder = [...(issue ? ['name', 'topics', 'selection', 'repositories', 'template'] as const : []), 'prompt', ...LAUNCH_FIELDS, 'actions'];
+    this.loading = issue;
     this.repositories = options.state.repositories ?? [];
     this.templates = options.state.promptTemplates ?? [];
     this.templateId = options.state.draft.promptId;
@@ -105,7 +122,10 @@ export class JiraStartModal implements Component {
 
   private changed(): void { if (this.active) this.options.tui.requestRender(); }
 
+  /** Templates, repositories and the full issue for starting work; nothing for a session. */
   async load(): Promise<void> {
+    const subject = this.subject;
+    if (subject.kind !== 'issue') return;
     this.loading = true;
     const { client, state } = this.options;
     const signal = this.lifetime.signal;
@@ -120,7 +140,7 @@ export class JiraStartModal implements Component {
     }
     if (templates.status === 'fulfilled') state.promptTemplates = this.templates = templates.value;
     if (repositories.status === 'fulfilled') state.repositories = this.repositories = repositories.value;
-    if (issues.status === 'fulfilled') this.issue = issues.value.find(issue => issue.id === this.issue.id) ?? this.issue;
+    if (issues.status === 'fulfilled') this.subject = { kind: 'issue', issue: issues.value.find(issue => issue.id === subject.issue.id) ?? subject.issue };
     if (!state.draft.text.trim()) {
       const template = this.templates.find(template => template.id === (state.draft.promptId ?? 'implement')) ?? this.templates[0];
       if (template) await this.chooseTemplate(template.id);
@@ -132,7 +152,8 @@ export class JiraStartModal implements Component {
   }
 
   async chooseTemplate(promptId?: string): Promise<void> {
-    if (!this.active || this.locked) return;
+    const subject = this.subject;
+    if (!this.active || this.locked || subject.kind !== 'issue') return;
     const request = ++this.templateRequest;
     this.templateId = promptId;
     if (!promptId) {
@@ -146,8 +167,8 @@ export class JiraStartModal implements Component {
     this.changed();
     try {
       const rendered = await this.options.client.prompts.render.mutate({
-        promptId, title: `${this.issue.key}: ${this.issue.title}`,
-        sources: [{ sourceType: 'tracker-item', provider: 'jira', externalId: this.issue.id, payload: this.issue }],
+        promptId, title: `${subject.issue.key}: ${subject.issue.title}`,
+        sources: [{ sourceType: 'tracker-item', provider: 'jira', externalId: subject.issue.id, payload: subject.issue }],
       }, { signal: this.lifetime.signal });
       if (!this.active || request !== this.templateRequest) return;
       // Rendered prompts embed provider text; it must not carry terminal links or controls.
@@ -231,7 +252,7 @@ export class JiraStartModal implements Component {
   async start(): Promise<void> {
     if (!this.active || this.launching || this.loading || this.renderingPrompt) return;
     if (!this.editor.getExpandedText().trim()) {
-      this.error = 'Write a prompt before starting work.';
+      this.error = `Write a prompt before starting ${this.subject.kind === 'issue' ? 'work' : 'the session'}.`;
       this.focus = 'prompt';
       this.changed();
       return;
@@ -244,7 +265,7 @@ export class JiraStartModal implements Component {
       if (!this.active) return;
       this.error = this.options.state.error;
     } catch (error) {
-      if (this.active) this.error = error instanceof Error ? error.message : 'Could not start work.';
+      if (this.active) this.error = error instanceof Error ? error.message : 'Could not start.';
     } finally {
       this.launching = false;
       this.changed();
@@ -289,7 +310,7 @@ export class JiraStartModal implements Component {
       this.selectedIndex = Number(value);
       const repo = this.visibleRepositories[this.selectedIndex];
       if (repo) this.toggleRepository(repo.id);
-    } else if (target === 'focus') this.focus = value as ModalFocus;
+    } else if (target === 'focus') this.focus = value as DialogFocus;
     // Clicks move the keyboard selection too, so Enter repeats what was clicked.
     else if (target === 'all' || target === 'none') {
       this.focus = 'selection';
@@ -334,7 +355,8 @@ export class JiraStartModal implements Component {
     if (matchesKey(data, 'escape')) { this.close(); return; }
     if (matchesKey(data, 'tab') || matchesKey(data, 'shift+tab')) {
       const delta = matchesKey(data, 'shift+tab') ? -1 : 1;
-      this.focus = focusOrder[(focusOrder.indexOf(this.focus) + delta + focusOrder.length) % focusOrder.length]!;
+      const order = this.focusOrder;
+      this.focus = order[(order.indexOf(this.focus) + delta + order.length) % order.length]!;
     } else if (textInput) {
       if (this.focus !== 'prompt' && matchesKey(data, 'enter')) this.focus = 'repositories';
       else this.handleTextInput(this.focus === 'prompt' && matchesKey(data, 'enter') ? '\n' : data);
@@ -348,7 +370,7 @@ export class JiraStartModal implements Component {
         if (this.selectionActionIndex) this.unselectAll();
         else this.selectAll();
       } else if (matchesKey(data, 'down')) this.focus = 'repositories';
-    } else if (this.focus === 'repositories') {
+    } else if (this.focus === 'repositories' && this.subject.kind === 'issue') {
       if (matchesKey(data, 'down') || data === 'j') this.selectedIndex = Math.min(this.visibleRepositories.length - 1, this.selectedIndex + 1);
       else if (matchesKey(data, 'up') || data === 'k') this.selectedIndex = Math.max(0, this.selectedIndex - 1);
       else if (matchesKey(data, 'space') || matchesKey(data, 'enter')) {
@@ -388,8 +410,9 @@ export class JiraStartModal implements Component {
     this.changed();
   }
 
-  /** The only pane shown on narrow terminals, or undefined when both fit. */
+  /** The only pane shown for a session or on narrow terminals, or undefined when both fit. */
   private get single(): 'repositories' | 'prompt' | undefined {
+    if (this.subject.kind !== 'issue') return 'prompt';
     if (this.body.width >= SPLIT_MIN_WIDTH) return undefined;
     return repositoryFocus.includes(this.focus) ? 'repositories' : 'prompt';
   }
@@ -400,6 +423,7 @@ export class JiraStartModal implements Component {
     const compact = height < 16;
     this.body = { width: innerWidth, height: height - (compact ? 5 : 7), compact };
     const { secondaryWidth: leftWidth, primaryWidth: rightWidth } = this.split.layout(innerWidth);
+    const issue = this.subject.kind === 'issue' ? this.subject.issue : undefined;
     this.editor.focused = this.focused && this.focus === 'prompt';
     this.nameFilter.focused = this.focused && this.focus === 'name';
     this.topicFilter.focused = this.focused && this.focus === 'topics';
@@ -407,16 +431,18 @@ export class JiraStartModal implements Component {
     const selected = this.options.state.draft.repoIds?.length ?? 0;
     const lines = [
       muted + '╭' + '─'.repeat(Math.max(0, width - 2)) + '╮' + reset,
-      this.row(bold + 'Start work' + reset + '  ' + safeText(`${this.issue.key}: ${this.issue.title}`), innerWidth),
+      this.row(bold + (issue ? 'Start work' : 'New session') + reset + '  ' + safeText(issue ? `${issue.key}: ${issue.title}` : this.subject.kind === 'session' ? this.subject.title : ''), innerWidth),
       ...(compact ? [] : [this.separator(leftWidth, rightWidth, '┬')]),
-      ...(this.single === 'repositories' ? this.renderRepositoryPane(innerWidth) : this.split.render(innerWidth))
+      ...(this.single === 'repositories' ? this.renderRepositoryPane(innerWidth)
+        : this.single === 'prompt' ? this.renderPromptPane(innerWidth) : this.split.render(innerWidth))
         .map(line => this.row(line, innerWidth)),
     ];
     const action = (label: string, index: number) =>
       button(`[ ${label} ]`, this.focus === 'actions' && this.actionIndex === index, index ? 'cancel' : 'start');
     if (!compact) lines.push(this.separator(leftWidth, rightWidth, '┴'));
-    lines.push(this.row(action(this.launching ? 'Starting…' : this.locked ? 'Retry start' : 'Start work', 0) + '  ' + action('Cancel', 1) + muted + `  ${selected} repositories · r refresh · a archived` + reset, innerWidth));
-    const status = this.error ?? (this.launching ? 'Saving work and the launch request…' : this.refreshing ? 'Refreshing GitHub repositories…' : this.loading ? 'Loading templates and repositories…' : this.help(innerWidth));
+    const start = this.launching ? 'Starting…' : this.locked ? 'Retry start' : issue ? 'Start work' : 'Start session';
+    lines.push(this.row(action(start, 0) + '  ' + action('Cancel', 1) + (issue ? muted + `  ${selected} repositories · r refresh · a archived` + reset : ''), innerWidth));
+    const status = this.error ?? (this.launching ? 'Saving the launch request…' : this.refreshing ? 'Refreshing GitHub repositories…' : this.loading ? 'Loading templates and repositories…' : this.help(innerWidth));
     lines.push(this.row((this.error ? danger : muted) + safeText(status) + reset, innerWidth));
     lines.push(muted + '╰' + '─'.repeat(Math.max(0, width - 2)) + '╯' + reset);
     // A raised surface over the page.
@@ -456,23 +482,28 @@ export class JiraStartModal implements Component {
 
   /** Template above the prompt, the less important agent/thinking/model fields below it. */
   private renderPromptPane(width: number): string[] {
-    const templateFocused = this.focused && this.focus === 'template';
-    if (!templateFocused) this.templateMenu.close();
-    this.syncTemplateMenu();
-    const label = (templateFocused ? accent : muted) + 'Template ' + reset;
-    const templateList = this.templateMenu.renderList(Math.max(1, Math.min(48, width - 9))).map(line => ' '.repeat(Math.min(9, width - 1)) + line);
+    const template = this.subject.kind === 'issue' ? this.renderTemplate(width) : [];
     const launch = this.launchOptions.render(width, this.focused && isLaunchField(this.focus) ? this.focus : undefined);
-    const promptHeight = Math.max(3, this.body.height - 2 - templateList.length - launch.length);
+    const promptHeight = Math.max(3, this.body.height - 1 - template.length - launch.length);
     return [
-      label + this.templateMenu.renderField(Math.max(8, Math.min(40, width - 9)), templateFocused),
-      ...templateList,
+      ...template,
       bold + 'Prompt' + reset + muted + (this.renderingPrompt ? '  rendering…' : '  editable preview') + reset,
       ...this.renderPrompt(width, promptHeight).map(line => this.focus === 'prompt' ? line : control(line, 'focus:prompt')),
       ...launch,
     ].slice(0, this.body.height);
   }
 
-  private renderFilter(input: Input, width: number, focus: ModalFocus): string {
+  /** The template field, and its list below it while expanded. */
+  private renderTemplate(width: number): string[] {
+    const focused = this.focused && this.focus === 'template';
+    if (!focused) this.templateMenu.close();
+    this.syncTemplateMenu();
+    const label = (focused ? accent : muted) + 'Template ' + reset;
+    return [label + this.templateMenu.renderField(Math.max(8, Math.min(40, width - 9)), focused),
+      ...this.templateMenu.renderList(Math.max(1, Math.min(48, width - 9))).map(line => ' '.repeat(Math.min(9, width - 1)) + line)];
+  }
+
+  private renderFilter(input: Input, width: number, focus: DialogFocus): string {
     if (this.focus === focus) return input.render(width)[0]!;
     return control(muted + (focus === 'name' ? 'Name: ' : 'Topic: ') + reset + safeText(input.getValue() || (focus === 'name' ? 'all repositories' : 'all topics')), 'focus:' + focus);
   }
@@ -504,6 +535,7 @@ export class JiraStartModal implements Component {
     if (this.focus === 'name' || this.focus === 'topics') return `Enter list · Tab next · ${start} · Esc cancel`;
     if ((this.focus === 'template' && this.templateMenu.open) || (isLaunchField(this.focus) && this.launchOptions.openField)) return '↑/↓ move · Enter choose · type filter · Esc close';
     if (this.focus === 'template' || isLaunchField(this.focus)) return `Enter open · type search · Tab next · ${start} · Esc cancel`;
+    if (this.focus === 'actions') return `←/→ choose · Enter apply · Tab next · Esc cancel`;
     if (this.focus === 'selection') return width < 60 ? 'All = matches · None = clear all · ←/→ · Enter' : 'Select all matches / Unselect all repositories · ←/→ choose · Enter apply · Tab next';
     return width < 60 ? `^A all · ^U clear · Tab · ${start} · Esc` : `Space select · Ctrl+A all · Ctrl+U clear · Tab · ${start} · Esc`;
   }

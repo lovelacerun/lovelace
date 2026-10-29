@@ -12,14 +12,10 @@ export interface ControllerDeps {
   /** Called after state mutations when the AppRoot should also re-fetch details. */
   refreshDetails: () => void;
   refreshDashboard: () => void;
-  /** Open the single Jira start-work overlay without navigating. */
-  startJiraWork: () => void;
-  /** Start the selected review request with the review template. */
-  startReview: () => Promise<void>;
-  /** Submit the current editor text as a launch request. */
-  submitLaunch: (prompt: string) => Promise<void>;
-  /** Focus a session's Herdr pane, or continue its ended conversation (meta id). */
-  openSession: (sessionId: string) => Promise<void>;
+  /** Open the launch dialog for the open Jira issue or work item, without navigating. */
+  openLaunchDialog: () => void;
+  /** Submit a prompt for the current draft; true once the server accepted it. */
+  submitLaunch: (prompt: string) => Promise<boolean>;
   /** Open a provider link using the client machine's default browser. */
   openUrl: (url: string) => Promise<void>;
   /** Clear editor contents + focus elsewhere. */
@@ -43,7 +39,7 @@ export function handleKey(state: AppState, intent: CommandIntent, deps: Controll
 
     case 'refresh':
       deps.refreshDashboard();
-      if (state.view !== 'dashboard') deps.refreshDetails();
+      if (state.route.kind !== 'home') deps.refreshDetails();
       return;
 
     case 'tab':
@@ -56,8 +52,8 @@ export function handleKey(state: AppState, intent: CommandIntent, deps: Controll
         state.setNotice(null);
       } else if (state.focus === 'editor' || isLaunchFocus(state.focus)) {
         state.setFocus('content');
-      } else if (state.view !== 'dashboard') {
-        state.navigateToDashboard();
+      } else if (state.route.kind !== 'home') {
+        state.navigateHome();
       } else {
         state.setNotice(null);
         state.setError(null);
@@ -78,7 +74,7 @@ export function handleKey(state: AppState, intent: CommandIntent, deps: Controll
       return;
 
     case 'state-shortcut':
-      if (state.view === 'work-item' && state.selectedWorkItemId) {
+      if (state.route.kind === 'work') {
         state.pendingConfirm = { kind: 'state', state: intent.target };
         state.changed();
       }
@@ -109,11 +105,11 @@ export async function handleAction(state: AppState, action: Action, deps: Contro
       return;
 
     case 'jira-setup':
-      deps.startJiraWork();
+      deps.openLaunchDialog();
       return;
 
     case 'review-start':
-      await deps.startReview();
+      await startReview(state, deps);
       return;
 
     case 'launch-retry':
@@ -132,7 +128,7 @@ export async function handleAction(state: AppState, action: Action, deps: Contro
       return;
 
     case 'session':
-      await deps.openSession(action.sessionId);
+      await openSession(state, deps, action.sessionId);
       return;
 
     case 'edit':
@@ -146,9 +142,8 @@ export async function handleAction(state: AppState, action: Action, deps: Contro
 }
 
 async function changeWorkItemState(state: AppState, deps: ControllerDeps, target: WorkItemState): Promise<void> {
-  const workItemId = state.selectedWorkItemId;
-  if (!workItemId) return;
-  if (state.mutationInFlight) return;
+  if (state.route.kind !== 'work' || state.mutationInFlight) return;
+  const workItemId = state.route.id;
   state.mutationInFlight = true;
   state.setNotice(`Updating state → ${target}…`);
   try {
@@ -175,7 +170,7 @@ async function retryLaunch(state: AppState, deps: ControllerDeps, launchId: stri
   try {
     const response = await deps.client.launches.retry.mutate({ id: launchId }, { signal: deps.signal });
     if (deps.signal?.aborted) return;
-    if (state.selectedWorkItemId === response.details.workItem.id) state.setWorkItemData(response.details);
+    state.setWorkItemData(response.details);
     deps.refreshDashboard();
   } catch (error) {
     if (deps.signal?.aborted) return;
@@ -184,6 +179,68 @@ async function retryLaunch(state: AppState, deps: ControllerDeps, launchId: stri
   } finally {
     state.mutationInFlight = false;
     deps.invalidate();
+  }
+}
+
+/**
+ * Reviews start without a dialog: the review template, the pull request's
+ * repository at its branch, and the agent chosen on Home.
+ */
+export async function startReview(state: AppState, deps: ControllerDeps): Promise<void> {
+  const route = state.route;
+  if (route.kind !== 'review' || !route.review.repoId || state.mutationInFlight) return;
+  if (state.draft.requestId) {
+    state.setError('Resend or discard (x) the unanswered launch before starting the review again.');
+    return;
+  }
+  const { review } = route;
+  const draftKey = state.draftKey;
+  state.setError(null);
+  state.setNotice('Rendering review prompt…');
+  try {
+    const rendered = await deps.client.prompts.render.mutate({
+      promptId: 'review', title: `${review.repository}#${review.number}: ${review.title}`,
+      sources: [{ sourceType: 'change-request', provider: 'github', externalId: review.id, payload: review }],
+    }, { signal: deps.signal });
+    if (deps.signal?.aborted || state.draftKey !== draftKey) return;
+    state.setDraft({ text: rendered.content, promptId: rendered.promptId, repoIds: [route.review.repoId] });
+    await deps.submitLaunch(rendered.content);
+  } catch (error) {
+    if (deps.signal?.aborted || state.draftKey !== draftKey) return;
+    state.setNotice(null);
+    if (isOffline(error)) state.setOffline();
+    else state.setError(errorMessage(error, 'Rendering the review prompt failed'));
+  }
+}
+
+/**
+ * Herdr focuses the session's live pane, or continues its exact native
+ * conversation when the agent ended. Selecting the session is the request.
+ */
+async function openSession(state: AppState, deps: ControllerDeps, sessionId: string): Promise<void> {
+  const route = state.route;
+  if (route.kind !== 'work' || deps.signal?.aborted || state.openingSession) return;
+  if (route.details && route.details.workItem.state !== 'active') {
+    state.setError('Reactivate local work explicitly (press a, then y) before opening or continuing this session.');
+    return;
+  }
+  const draftKey = state.draftKey;
+  state.openingSession = true;
+  state.setError(null);
+  state.setNotice('Opening session in Herdr…');
+  try {
+    const response = await deps.client.sessions.open.mutate({ workItemId: route.id, sessionId }, { signal: deps.signal });
+    if (deps.signal?.aborted || state.draftKey !== draftKey) return;
+    state.setWorkItemData(response.details);
+    state.setNotice(response.action === 'continued' ? 'Continued the conversation in Herdr.' : null);
+    deps.refreshDashboard();
+  } catch (error) {
+    if (deps.signal?.aborted || state.draftKey !== draftKey) return;
+    state.setNotice(null);
+    if (isOffline(error)) state.setOffline();
+    else state.setError(errorMessage(error, 'Opening the session failed'));
+  } finally {
+    state.openingSession = false;
   }
 }
 
@@ -197,6 +254,8 @@ async function retryLaunch(state: AppState, deps: ControllerDeps, launchId: stri
  *   draft cannot turn a recorded launch into a conflict; an unknown ID is sent.
  * - Any answer hands the launch to the server: the draft is cleared and the
  *   work item shows its progress, failure and retry.
+ *
+ * Resolves true once the server accepted the launch.
  */
 export async function submitLaunch(
   state: AppState,
@@ -205,11 +264,11 @@ export async function submitLaunch(
     newRequestId?: () => string;
   },
   prompt: string,
-): Promise<void> {
-  if (state.mutationInFlight) return;
+): Promise<boolean> {
+  if (state.mutationInFlight) return false;
   if (!prompt.trim()) {
     state.setError('Prompt is empty.');
-    return;
+    return false;
   }
   state.mutationInFlight = true;
   const draftKey = state.draftKey;
@@ -223,20 +282,20 @@ export async function submitLaunch(
   const requestId = draft.requestId ?? (deps.newRequestId ?? randomUUID)();
   setDraft({ requestId });
 
+  const route = state.route;
   try {
-    const workItemId = state.view === 'work-item' ? state.selectedWorkItemId ?? undefined : undefined;
     const launch = {
       prompt, agentId: state.launchAgent, options: state.launchToolOptions, requestId,
       repoIds: draft.repoIds, promptId: draft.promptId, wait: false,
     };
     const request = { signal: deps.signal };
     // A resent request the server already recorded is answered by its launch, whatever the draft says now.
-    const response = (resend ? await recordedLaunch(deps.client, requestId, deps.signal) : null) ?? (workItemId
-      ? await deps.client.launches.newSession.mutate({ workItemId, ...launch }, request)
+    const response = (resend ? await recordedLaunch(deps.client, requestId, deps.signal) : null) ?? (route.kind === 'work'
+      ? await deps.client.launches.newSession.mutate({ workItemId: route.id, ...launch }, request)
       : await deps.client.launches.quickStart.mutate({
         ...launch,
-        trackerIssueId: state.view === 'jira' ? state.selectedJira?.id : undefined,
-        reviewRequestId: state.view === 'review' ? state.selectedReview?.id : undefined,
+        trackerIssueId: route.kind === 'jira' ? route.issue.id : undefined,
+        reviewRequestId: route.kind === 'review' ? route.review.id : undefined,
       }, request));
     deps.signal?.throwIfAborted();
     const currentText = state.drafts.get(draftKey)?.text ?? '';
@@ -247,6 +306,7 @@ export async function submitLaunch(
       state.navigateToWorkItem(response.details.workItem.id);
       state.setWorkItemData(response.details);
     }
+    return true;
   } catch (error) {
     setNotice(null);
     if (isOffline(error) || isAborted(error)) {
@@ -258,6 +318,7 @@ export async function submitLaunch(
       if (!resend) setDraft({ requestId: undefined });
       setError(errorMessage(error, 'Launch failed'));
     }
+    return false;
   } finally {
     state.mutationInFlight = false;
     state.changed();

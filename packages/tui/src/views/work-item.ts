@@ -1,5 +1,5 @@
 import { attachmentsOfType } from '@lovelace/core';
-import type { AppState } from '../state.js';
+import type { AppState, Route } from '../state.js';
 import { keyColor, warning, bold, accent, muted, faint, success, heading, icons, reset, special } from '../theme.js';
 import { safeText, wrap } from '@lovelace/tui-components';
 import { renderLaunchProgress } from './launch-progress.js';
@@ -13,9 +13,8 @@ function agentState(status: string): string {
   return color + glyph + ' ' + (color === faint ? muted : '') + status + reset;
 }
 
-export function renderWorkItem(state: AppState, width: number): Document {
+export function renderWorkItem(state: AppState, { details }: Extract<Route, { kind: 'work' }>, width: number): Document {
   const b = new DocumentBuilder(state, width);
-  const details = state.selectedWorkItemData;
   if (!details) { b.line(state.offline || state.error ? 'Work item unavailable.' : 'Loading work item…'); b.line(muted + 'Press r to retry if unavailable.' + reset); return b.build(); }
   const { workItem, attachments } = details;
   const sessions = attachmentsOfType(attachments, 'session');
@@ -37,7 +36,7 @@ export function renderWorkItem(state: AppState, width: number): Document {
     const harness = safeText(session.toolId);
     b.action(special + icons.session + reset + '  ' + safeText(session.title ?? (harness || 'Session')), { kind: 'session', sessionId: id }, agentState(status));
   }
-  const hasLaunchProgress = renderLaunchProgress(state, b, width);
+  const hasLaunchProgress = renderLaunchProgress(details, b, width);
   if (!sessions.length && !hasLaunchProgress) b.line(muted + '  No sessions yet.' + reset);
   if (workItem.state !== 'active') b.line(warning + '  Resume local work before launching or attaching.' + reset);
   else b.action(accent + icons.new + reset + '  New session', { kind: 'edit' }, faint + 'n' + reset);

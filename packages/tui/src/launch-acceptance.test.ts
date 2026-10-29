@@ -6,8 +6,9 @@ import { fakeClient } from '@lovelace/client/testing';
 import { attachmentsOfType, isLaunchInProgress, type AgentSession, type CodingHarnessId, type DashboardResponse, type LaunchResponse, type ToolLaunchOptionsById, type WorkItemDetails, type WorkItemSummary, type Worktree } from '@lovelace/core';
 import { AppRoot } from './app.js';
 import { handleAction, type ControllerDeps } from './controller.js';
-import { JiraStartModal } from './jira-start-modal.js';
-import { renderWorkItem } from './views/work-item.js';
+import { LaunchDialog } from './launch-dialog.js';
+import { renderPage } from './views/page.js';
+import { openWork } from './test-support.js';
 
 class FakeTui {
   terminal = { columns: 120, rows: 40 };
@@ -118,10 +119,9 @@ class FakeServer {
 }
 
 interface Hooks {
-  openJiraStart(): void;
-  fetchDashboard(signal: AbortSignal): Promise<void>;
-  fetchDetails(signal: AbortSignal): Promise<void>;
-  launchFromEditor(prompt: string): Promise<void>;
+  openLaunchDialog(): void;
+  refresh: { fetchDashboard(signal: AbortSignal): Promise<void>; fetchDetails(signal: AbortSignal): Promise<void> };
+  launch(prompt: string): Promise<boolean>;
   makeDeps(): ControllerDeps;
 }
 const hooks = (root: AppRoot) => root as unknown as Hooks;
@@ -140,9 +140,9 @@ async function fixture(t: TestContext) {
 async function startIssue(root: AppRoot, tui: FakeTui, id: string, prompt: string) {
   root.state.navigate({ kind: 'jira', id });
   root.state.setDraft({ text: prompt, repoIds: ['repo'], promptId: 'refine' });
-  hooks(root).openJiraStart();
+  hooks(root).openLaunchDialog();
   const overlay = tui.overlays.at(-1)!;
-  const modal = overlay.component as JiraStartModal;
+  const modal = overlay.component as LaunchDialog;
   await settle();
   assert.equal(modal.loading, false);
   await modal.start();
@@ -153,16 +153,16 @@ test('Jira overlay closes on acceptance and a second task can start before eithe
   const { root, tui, server } = await fixture(t);
   const first = await startIssue(root, tui, '1', '  First exact prompt\n\n');
   assert.equal(first.visible, false);
-  assert.equal(root.state.selectedWorkItemId, 'work-1');
+  assert.equal(openWork(root.state).id, 'work-1');
   assert.equal(root.state.mutationInFlight, false);
   assert.equal(root.state.drafts.get('jira:1')!.requestId, undefined);
   assert.equal(root.state.drafts.get('jira:1')!.text, '');
   assert.match(stripTerminalSequences(root.render(120).join('\n')), /Preparing repositories/);
   assert.match(stripTerminalSequences(root.render(120).join('\n')), /npm ci/);
-  await hooks(root).fetchDashboard(new AbortController().signal);
+  await hooks(root).refresh.fetchDashboard(new AbortController().signal);
   const second = await startIssue(root, tui, '2', 'Second prompt');
   assert.equal(second.visible, false);
-  assert.equal(root.state.selectedWorkItemId, 'work-2');
+  assert.equal(openWork(root.state).id, 'work-2');
   assert.equal(root.state.mutationInFlight, false);
   assert.equal(server.calls.length, 2);
   assert.ok(server.calls.every(call => call.wait === false));
@@ -171,13 +171,13 @@ test('Jira overlay closes on acceptance and a second task can start before eithe
   assert.equal(server.opened, 0);
 
   // Completing another task never selects it or disturbs the new Home draft.
-  root.state.navigateToDashboard();
+  root.state.navigateHome();
   root.state.setDraft({ text: 'Third task, not submitted' });
   root.state.setFocus('editor');
   server.finish('work-1');
-  await hooks(root).fetchDashboard(new AbortController().signal);
-  await hooks(root).fetchDetails(new AbortController().signal);
-  assert.equal(root.state.view, 'dashboard');
+  await hooks(root).refresh.fetchDashboard(new AbortController().signal);
+  await hooks(root).refresh.fetchDetails(new AbortController().signal);
+  assert.equal(root.state.route.kind, 'home');
   assert.equal(root.state.draft.text, 'Third task, not submitted');
   assert.equal(root.state.focus, 'editor');
   assert.equal(server.calls.length, 2);
@@ -189,9 +189,9 @@ test('background failure stays on its work item and the server retries its saved
   await startIssue(root, tui, '1', '  Saved prompt\n\n  Keep whitespace\n');
   const firstId = server.calls[0]!.requestId;
   server.finish('work-1', true);
-  await hooks(root).fetchDetails(new AbortController().signal);
+  await hooks(root).refresh.fetchDetails(new AbortController().signal);
   root.state.setDraft({ text: 'Another local draft must not become the retry prompt' });
-  const doc = renderWorkItem(root.state, 80);
+  const doc = renderPage(root.state, 80);
   assert.match(stripTerminalSequences(doc.lines.join('\n')), /Launch failed/);
   assert.match(stripTerminalSequences(doc.lines.join('\n')), /npm ci failed/);
   assert.match(stripTerminalSequences(doc.lines.join('\n')), /fixture dependency error/);
@@ -203,7 +203,7 @@ test('background failure stays on its work item and the server retries its saved
   assert.equal(root.state.draft.text, 'Another local draft must not become the retry prompt');
   assert.equal(server.records.size, 1);
   assert.equal(tui.overlays.filter(overlay => overlay.visible).length, 0, 'retry never reopens the setup window');
-  assert.doesNotMatch(stripTerminalSequences(renderWorkItem(root.state, 80).lines.join('\n')), /Launch failed/);
+  assert.doesNotMatch(stripTerminalSequences(renderPage(root.state, 80).lines.join('\n')), /Launch failed/);
 });
 
 test('read failure retains launch progress and quitting stops client polling, not accepted work', async t => {
@@ -211,9 +211,9 @@ test('read failure retains launch progress and quitting stops client polling, no
   await startIssue(root, tui, '1', 'Start this');
   await settle();
   server.failReads = true;
-  await hooks(root).fetchDetails(new AbortController().signal);
+  await hooks(root).refresh.fetchDetails(new AbortController().signal);
   assert.equal(root.state.offline, true);
-  assert.equal(root.state.selectedWorkItemData!.launches[0]!.state, 'preparing');
+  assert.equal(openWork(root.state).details!.launches[0]!.state, 'preparing');
   assert.equal(server.calls.length, 1);
   root.quit();
   server.finish('work-1');
@@ -229,7 +229,7 @@ for (const phase of ['preparing', 'starting', 'failed', 'uncertain'] as const) {
     Object.assign(details.launches[0]!, { state: phase, error: phase === 'uncertain' ? 'Inspect Herdr' : phase === 'failed' ? 'npm ci failed' : null });
     root.state.setWorkItemData(details);
     for (const width of [36, 50, 80, 120]) {
-      const doc = renderWorkItem(root.state, width);
+      const doc = renderPage(root.state, width);
       assert.ok(doc.lines.every(line => visibleWidth(line) <= width));
       if (phase === 'uncertain') assert.ok(doc.actions.every(action => action.kind !== 'launch-retry'));
     }
@@ -239,9 +239,9 @@ for (const phase of ['preparing', 'starting', 'failed', 'uncertain'] as const) {
 test('Home can queue independent tasks while earlier agent startup is pending', async t => {
   const { root, server } = await fixture(t);
   for (const prompt of ['First', 'Second']) {
-    root.state.navigateToDashboard();
+    root.state.navigateHome();
     root.state.setDraft({ text: prompt });
-    await hooks(root).launchFromEditor(prompt);
+    await hooks(root).launch(prompt);
     assert.equal(root.state.mutationInFlight, false);
     assert.equal(root.state.drafts.get('home')!.text, '');
   }
@@ -258,14 +258,14 @@ test('acceptance arriving after navigation does not replace the selected issue o
   const start = server.quickStart;
   server.quickStart = async input => { const response = await start(input); await gate; return response; };
   root.state.setDraft({ text: 'Home task' });
-  const pending = hooks(root).launchFromEditor('Home task');
+  const pending = hooks(root).launch('Home task');
   await settle();
   root.state.navigate({ kind: 'jira', id: '2' });
   root.state.setDraft({ text: 'Untouched second issue', repoIds: ['repo'] });
   release();
   await pending;
-  assert.equal(root.state.view, 'jira');
-  assert.equal(root.state.selectedJira!.id, '2');
+  assert.equal(root.state.route.kind, 'jira');
+  assert.equal((root.state.route.kind === 'jira' && root.state.route.issue.id), '2');
   assert.equal(root.state.draft.text, 'Untouched second issue');
   assert.deepEqual(root.state.draft.repoIds, ['repo']);
   assert.equal(root.state.drafts.get('home')!.requestId, undefined);
@@ -281,12 +281,12 @@ test('a reopened TUI restores accepted progress and failed-prompt retry from ser
   t.after(async () => { reopened.quit(); await done; });
   await settle();
   reopened.state.navigateToWorkItem('work-1');
-  await hooks(reopened).fetchDetails(new AbortController().signal);
+  await hooks(reopened).refresh.fetchDetails(new AbortController().signal);
   assert.equal(reopened.state.draft.requestId, undefined, 'no client launch tracker is needed');
-  assert.match(stripTerminalSequences(renderWorkItem(reopened.state, 80).lines.join('\n')), /Preparing repositories/);
+  assert.match(stripTerminalSequences(renderPage(reopened.state, 80).lines.join('\n')), /Preparing repositories/);
   server.finish('work-1', true);
-  await hooks(reopened).fetchDetails(new AbortController().signal);
-  const retry = renderWorkItem(reopened.state, 80).actions.find(action => action.kind === 'launch-retry')!;
+  await hooks(reopened).refresh.fetchDetails(new AbortController().signal);
+  const retry = renderPage(reopened.state, 80).actions.find(action => action.kind === 'launch-retry')!;
   await handleAction(reopened.state, retry, hooks(reopened).makeDeps());
   assert.deepEqual(server.retries, [server.calls[0]!.requestId]);
   assert.equal(server.calls.length, 1);

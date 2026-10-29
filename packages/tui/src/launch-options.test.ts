@@ -107,7 +107,7 @@ test('launches send the chosen harness and overrides, and the choice outlives th
     },
   });
   await submitLaunch(state, { client, refreshDashboard() {}, newRequestId: () => 'id-1' }, 'Do it');
-  state.navigateToDashboard();
+  state.navigateHome();
   await submitLaunch(state, { client, refreshDashboard() {}, newRequestId: () => 'id-2' }, 'Again');
   assert.deepEqual(calls, [
     { agentId: 'claude', overrides: { claude: { thinkingLevel: 'high' } } },

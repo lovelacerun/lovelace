@@ -1,17 +1,13 @@
-import type { AppState } from '../state.js';
+import type { AppState, Route } from '../state.js';
 import { accent, bold, faint, heading, icons, keyColor, muted, reset } from '../theme.js';
 import { browserUrl } from '../browser.js';
 import { hyperlink } from '@earendil-works/pi-tui';
 import { safeText, wrap } from '@lovelace/tui-components';
 import { DocumentBuilder, meta, type Document } from './common.js';
 
-export function renderJira(state: AppState, width: number): Document {
+export function renderJira(state: AppState, route: Extract<Route, { kind: 'jira' }>, width: number): Document {
   const b = new DocumentBuilder(state, width);
-  const issue = state.jiraDetails ?? state.selectedJira;
-  if (!issue) {
-    b.line('Issue unavailable. Refresh the dashboard.');
-    return b.build();
-  }
+  const issue = route.details ?? route.issue;
   const gap = () => { if (!state.layout.compact) b.line(); };
   b.line(keyColor + bold + safeText(issue.key) + reset);
   for (const line of wrap(issue.title, width)) b.line(bold + line + reset);
@@ -33,7 +29,7 @@ export function renderJira(state: AppState, width: number): Document {
   gap();
   b.line(heading('Description', '', icons.description));
   gap();
-  const description = state.jiraDetails?.description;
+  const description = route.details?.description;
   for (const line of wrap(description ?? 'No cached description. Press r to refresh.', width)) {
     b.line(description ? line : muted + line + reset);
   }

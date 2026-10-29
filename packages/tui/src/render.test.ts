@@ -2,10 +2,9 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { visibleWidth } from '@earendil-works/pi-tui';
 import type { AgentSession, DashboardResponse, TrackerIssue, TrackedChangeRequest, WorkItemDetails } from '@lovelace/core';
+import { renderPage } from './views/page.js';
 import { AppState } from './state.js';
 import { renderDashboard } from './views/dashboard.js';
-import { renderWorkItem } from './views/work-item.js';
-import { renderJira } from './views/jira.js';
 
 function makeDashboard(overrides: Partial<DashboardResponse> = {}): DashboardResponse {
   return {
@@ -112,7 +111,7 @@ describe('renderWorkItem', () => {
     state.navigateToWorkItem('wi-1');
     state.setWorkItemData(details);
     for (const w of [50, 80, 120]) {
-      const doc = renderWorkItem(state, w);
+      const doc = renderPage(state, w);
       assert.ok(doc.lines.length > 0);
       for (const line of doc.lines) {
         assert.ok(visibleWidth(line) <= w, `line width ${visibleWidth(line)} > ${w}`);
@@ -126,10 +125,10 @@ describe('renderJira', () => {
     const state = new AppState({ onInvalidate() {} });
     state.applyDashboardResponse(makeDashboard());
     state.navigate({ kind: 'jira', id: 'J-1' });
-    const doc = renderJira(state, 80);
+    const doc = renderPage(state, 80);
     assert.deepEqual(doc.actions, [{ kind: 'jira-setup' }, { kind: 'open-url', url: 'https://x/' }]);
     state.setDraft({ text: 'saved prompt', requestId: 'retry-id' });
-    assert.deepEqual(renderJira(state, 80).actions, [{ kind: 'launch-retry' }, { kind: 'open-url', url: 'https://x/' }]);
+    assert.deepEqual(renderPage(state, 80).actions, [{ kind: 'launch-retry' }, { kind: 'open-url', url: 'https://x/' }]);
     checkWidth(doc.lines, 80);
   });
 });

@@ -5,7 +5,7 @@ import type { LovelaceClient } from '@lovelace/client';
 import { fakeClient, type FakeHandlers } from '@lovelace/client/testing';
 import { CODING_HARNESSES, type AvailableHarness, type DashboardIssue, type PromptTemplate, type Repository } from '@lovelace/core';
 import { AppState } from './state.js';
-import { JiraStartModal } from './jira-start-modal.js';
+import { LaunchDialog } from './launch-dialog.js';
 import { parseClickTarget } from './clickable.js';
 import { visibleWidth } from '@earendil-works/pi-tui';
 import { safeText } from '@lovelace/tui-components';
@@ -40,15 +40,15 @@ function fixture(client = api(), text = '', repositoryTopics = ['infra', 'exampl
     settings: { defaultAgent: 'pi', repositoryTopics },
     freshness: { trackerFetchedAt: null, codeHostFetchedAt: null, trackerStale: false, codeHostStale: false },
   });
-  state.view = 'jira'; state.selectedJira = issue;
+  state.navigate({ kind: 'jira', id: issue.id });
   state.setDraft({ text });
   const terminal = { columns: 120, rows: 36 };
   const tui = { terminal, requestRender() {} } as unknown as TuiAltScreen;
   const lifetime = new AbortController();
   const starts: string[] = [];
   let closes = 0;
-  const modal = new JiraStartModal({
-    tui, state, client, signal: lifetime.signal, onClose: () => { closes++; },
+  const modal = new LaunchDialog({
+    tui, state, client, signal: lifetime.signal, subject: { kind: 'issue', issue }, onClose: () => { closes++; },
     onStart: async prompt => { starts.push(prompt); },
   });
   return { modal, state, terminal, lifetime, starts, closes: () => closes };
@@ -61,7 +61,7 @@ test('loads full Jira context and a default template in the same dialog; selecti
     return { promptId: input.promptId, content: '  Editable preview\n' };
   } }));
   await f.modal.load();
-  assert.equal(f.state.view, 'jira');
+  assert.equal(f.state.route.kind, 'jira');
   assert.equal(f.state.draft.promptId, 'implement');
   assert.equal(f.state.draft.text, '  Editable preview\n');
   assert.equal(f.modal.focus, 'repositories');
@@ -169,7 +169,7 @@ test('Enter edits a multiline prompt; launch requires Start work or an explicit 
   f.modal.handleInput('\x1b');
   assert.equal(f.closes(), 1);
   assert.equal(f.state.draft.text, exact);
-  assert.equal(f.state.view, 'jira');
+  assert.equal(f.state.route.kind, 'jira');
 });
 
 test('template changes cannot overwrite newer choices or subsequent manual editing', async () => {
@@ -199,7 +199,7 @@ test('close and abort ignore late catalog/template replies and never clobber ano
   let resolve!: (value: Repository[]) => void;
   const f = fixture(api({ 'repositories.list': () => new Promise(finish => { resolve = finish; }) }));
   const loading = f.modal.load();
-  f.modal.close(); f.state.navigateToDashboard(); f.state.setDraft({ text: 'Home draft' });
+  f.modal.close(); f.state.navigateHome(); f.state.setDraft({ text: 'Home draft' });
   resolve(repositories); await loading;
   assert.equal(f.state.repositories, null);
   assert.equal(f.state.draft.text, 'Home draft');

@@ -57,7 +57,7 @@ describe('AppState drafts', () => {
     state.navigateToWorkItem('wi-1');
     assert.equal(state.draft.text, '');
     state.setDraft({ text: 'wi draft' });
-    state.navigateToDashboard();
+    state.navigateHome();
     assert.equal(state.draft.text, 'home draft');
   });
 

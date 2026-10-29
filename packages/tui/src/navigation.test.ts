@@ -23,7 +23,7 @@ it('tabs through detail actions before sidebar, and reverses with Shift+Tab', ()
 
 it('Jira details tab through actions and sidebar without a hidden editor', () => {
   const state = new AppState({ onInvalidate() {} });
-  state.view = 'jira';
+  state.route = { kind: 'jira', issue: { id: '1', key: 'PROJ-1', title: 'Issue', url: '', status: null, issueType: null, updatedAt: '' }, details: null };
   state.toggleFocus(2);
   assert.equal(state.contentSelectedIndex, 1);
   state.toggleFocus(2);

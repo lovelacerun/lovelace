@@ -6,6 +6,7 @@ import type { DashboardIssue, TrackerIssue, Launch, LaunchResponse, Repository, 
 import { AppState } from './state.js';
 import { filterRepositories } from './jira-start.js';
 import { submitLaunch } from './controller.js';
+import { openWork } from './test-support.js';
 
 const issue: DashboardIssue = { id: '42', key: 'PROJ-42', title: 'Fix sync', url: 'https://jira.invalid/42', status: 'To Do', issueType: 'Task', updatedAt: '' };
 const repositories: Repository[] = [
@@ -16,8 +17,7 @@ const repositories: Repository[] = [
 const templates = [{ id: 'refine', title: 'Refine', content: 'Refine {{title}}', builtIn: true, overridden: true }];
 function stateForIssue() {
   const state = new AppState({ onInvalidate() {} });
-  state.view = 'jira';
-  state.selectedJira = issue;
+  state.route = { kind: 'jira', issue, details: null };
   return state;
 }
 function client(overrides: FakeHandlers = {}): LovelaceClient {
@@ -46,7 +46,7 @@ test('repository name/topic filters combine and never exclude topic-free or arch
 test('a lost reply resends the Jira request with its repositories and template; any answer hands it to the server', async () => {
   const state = stateForIssue();
   const key = state.draftKey;
-  const trackerIssueId = state.selectedJira!.id;
+  const trackerIssueId = issue.id;
   state.setDraft({ text: '  Edited\n', repoIds: ['1', '2'], promptId: 'refine' });
   const calls: unknown[] = [];
   let attempt = 0;
@@ -65,7 +65,7 @@ test('a lost reply resends the Jira request with its repositories and template; 
   await submitLaunch(state, deps, state.draft.text);
   assert.deepEqual(calls[1], calls[0]);
   assert.deepEqual(calls[0], { prompt: '  Edited\n', trackerIssueId, requestId: '0', repoIds: ['1', '2'], promptId: 'refine' });
-  assert.equal(state.view, 'work-item');
-  assert.equal(state.selectedWorkItemId, 'work');
+  assert.equal(state.route.kind, 'work');
+  assert.equal(openWork(state).id, 'work');
   assert.deepEqual(state.drafts.get(key), { text: '', repoIds: undefined, promptId: undefined, requestId: undefined });
 });

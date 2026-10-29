@@ -5,6 +5,7 @@ import type { TuiAltScreen } from '@earendil-works/pi-tui';
 import { fakeClient } from '@lovelace/client/testing';
 import type { DashboardResponse, WorkItemAttachment, WorkItemDetails } from '@lovelace/core';
 import { AppRoot } from './app.js';
+import { openWork } from './test-support.js';
 
 const dashboard: DashboardResponse = {
   activeWorkItems: [], pendingIssues: [], pendingReviews: [],
@@ -45,7 +46,7 @@ for (const columns of [50, 80, 120]) {
     t.after(async () => { root.quit(); await done; });
     // Pollers use the fixture client only, never providers or live sessions.
     await new Promise(resolve => setImmediate(resolve));
-    assert.equal(root.state.selectedWorkItemData?.workItem.id, 'work');
+    assert.equal(openWork(root.state).details?.workItem.id, 'work');
     // The first action is the New session row above the attachments.
     for (const [index, label] of ['PROJ-1', 'PROJ-2', '#12', '#13'].entries()) {
       input('\t');

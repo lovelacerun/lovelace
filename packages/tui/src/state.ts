@@ -4,7 +4,6 @@ import type {
   SidebarSide, WorkItemDetails, WorkItemState, WorkItemSummary,
 } from '@lovelace/core';
 
-type AppView = 'dashboard' | 'work-item' | 'jira' | 'review';
 /** Home's agent, thinking and model fields below the quick-start editor, in Tab order. */
 export const LAUNCH_FOCUS = ['launch-agent', 'launch-thinking', 'launch-model'] as const;
 export type LaunchFocus = (typeof LAUNCH_FOCUS)[number];
@@ -14,8 +13,15 @@ export function isLaunchFocus(focus: FocusTarget): focus is LaunchFocus {
   return (LAUNCH_FOCUS as readonly string[]).includes(focus);
 }
 
-export interface NavigationEntry { kind: 'home' | 'work' | 'jira' | 'review'; id: string }
+export interface NavigationEntry { kind: Route['kind']; id: string }
 type SidebarEntry = NavigationEntry & { label: string };
+
+/** The page being shown, with the data loaded for it. Navigation replaces it whole. */
+export type Route =
+  | { kind: 'home' }
+  | { kind: 'work'; id: string; details: WorkItemDetails | null }
+  | { kind: 'jira'; issue: DashboardIssue; details: TrackerIssue | null }
+  | { kind: 'review'; review: DashboardReview };
 
 interface Draft extends LaunchSelection {
   text: string;
@@ -47,15 +53,10 @@ function clampSelection(index: number, count: number): number {
  * controllers mutate it through narrow methods. No I/O, no timers.
  */
 export class AppState {
-  view: AppView = 'dashboard';
+  route: Route = { kind: 'home' };
   focus: FocusTarget = 'content';
 
   dashboardData: DashboardResponse | null = null;
-  selectedWorkItemId: string | null = null;
-  selectedWorkItemData: WorkItemDetails | null = null;
-  selectedJira: DashboardIssue | null = null;
-  jiraDetails: TrackerIssue | null = null;
-  selectedReview: DashboardReview | null = null;
 
   repositories: Repository[] | null = null;
   promptTemplates: PromptTemplate[] | null = null;
@@ -76,6 +77,8 @@ export class AppState {
   pendingConfirm: PendingConfirm | null = null;
 
   mutationInFlight = false;
+  /** A session is being focused or continued in Herdr. */
+  openingSession = false;
   isLoading = true;
   offline = false;
 
@@ -123,9 +126,10 @@ export class AppState {
   }
 
   get draftKey(): string {
-    if (this.view === 'work-item') return `work:${this.selectedWorkItemId ?? ''}`;
-    if (this.view === 'jira') return `jira:${this.selectedJira?.id ?? ''}`;
-    if (this.view === 'review') return `review:${this.selectedReview?.id ?? ''}`;
+    const route = this.route;
+    if (route.kind === 'work') return `work:${route.id}`;
+    if (route.kind === 'jira') return `jira:${route.issue.id}`;
+    if (route.kind === 'review') return `review:${route.review.id}`;
     return 'home';
   }
 
@@ -209,7 +213,7 @@ export class AppState {
 
   setFocus(target: FocusTarget): void {
     const homeOnly = target === 'editor' || isLaunchFocus(target);
-    this.focus = homeOnly && this.view !== 'dashboard' ? 'content' : target;
+    this.focus = homeOnly && this.route.kind !== 'home' ? 'content' : target;
     this.changed();
   }
 
@@ -237,48 +241,27 @@ export class AppState {
     this.changed();
   }
 
+  /** Applies only while that work item is still open. */
   setWorkItemData(details: WorkItemDetails): void {
-    this.selectedWorkItemData = details;
+    if (this.route.kind !== 'work' || this.route.id !== details.workItem.id) return;
+    this.route = { ...this.route, details };
     this.changed();
   }
 
-  setJiraDetails(details: TrackerIssue | null): void {
-    this.jiraDetails = details;
+  /** Applies only while that issue is still open. */
+  setJiraDetails(details: TrackerIssue): void {
+    if (this.route.kind !== 'jira' || this.route.issue.id !== details.id) return;
+    this.route = { ...this.route, details };
     this.changed();
   }
 
   // Navigation ---------------------------------------------------------------
 
+  /** Jira issues and reviews no longer on the dashboard fall back to Home. */
   navigate(entry: NavigationEntry): void {
-    this.selectedReview = null;
-    if (entry.kind === 'home') {
-      this.view = 'dashboard';
-      this.selectedWorkItemId = null;
-      this.selectedWorkItemData = null;
-      this.selectedJira = null;
-      this.jiraDetails = null;
-    } else if (entry.kind === 'work') {
-      this.view = 'work-item';
-      this.selectedWorkItemId = entry.id;
-      this.selectedWorkItemData = null;
-      this.selectedJira = null;
-      this.jiraDetails = null;
-    } else if (entry.kind === 'review') {
-      this.view = 'review';
-      this.selectedReview = this.pendingReviews.find((review) => review.id === entry.id) ?? null;
-      this.selectedJira = null;
-      this.jiraDetails = null;
-      this.selectedWorkItemId = null;
-      this.selectedWorkItemData = null;
-    } else {
-      this.view = 'jira';
-      this.selectedJira = this.pendingIssues.find((issue) => issue.id === entry.id) ?? null;
-      this.jiraDetails = null;
-      this.selectedWorkItemId = null;
-      this.selectedWorkItemData = null;
-    }
+    this.route = this.routeFor(entry);
     // The sidebar marks where the operator is, however they got there.
-    const index = this.sidebarEntries.findIndex(item => item.kind === entry.kind && item.id === entry.id);
+    const index = this.route.kind === 'home' ? 0 : this.sidebarEntries.findIndex(item => item.kind === entry.kind && item.id === entry.id);
     if (index >= 0) this.sidebarSelectedIndex = index;
     this.contentSelectedIndex = 0;
     this.focus = 'content';
@@ -288,12 +271,25 @@ export class AppState {
     this.changed();
   }
 
-  navigateToDashboard(): void {
+  navigateHome(): void {
     this.navigate({ kind: 'home', id: 'home' });
   }
 
   navigateToWorkItem(id: string): void {
     this.navigate({ kind: 'work', id });
+  }
+
+  private routeFor(entry: NavigationEntry): Route {
+    if (entry.kind === 'work') return { kind: 'work', id: entry.id, details: null };
+    if (entry.kind === 'jira') {
+      const issue = this.pendingIssues.find(issue => issue.id === entry.id);
+      if (issue) return { kind: 'jira', issue, details: null };
+    }
+    if (entry.kind === 'review') {
+      const review = this.pendingReviews.find(review => review.id === entry.id);
+      if (review) return { kind: 'review', review };
+    }
+    return { kind: 'home' };
   }
 
   // Movement -----------------------------------------------------------------
@@ -317,7 +313,7 @@ export class AppState {
 
   toggleFocus(contentCount = 0, direction: 1 | -1 = 1): void {
     // Home retains group navigation; detail pages tab through every selectable item.
-    if (this.view !== 'dashboard' && this.focus === 'content' && contentCount > 0) {
+    if (this.route.kind !== 'home' && this.focus === 'content' && contentCount > 0) {
       const current = clampSelection(this.contentSelectedIndex, contentCount);
       const next = current + direction;
       if (next >= 0 && next < contentCount) {
@@ -326,10 +322,10 @@ export class AppState {
         return;
       }
     }
-    const order: FocusTarget[] = this.view === 'dashboard' ? ['content', 'sidebar', 'editor', ...LAUNCH_FOCUS] : ['content', 'sidebar'];
+    const order: FocusTarget[] = this.route.kind === 'home' ? ['content', 'sidebar', 'editor', ...LAUNCH_FOCUS] : ['content', 'sidebar'];
     if (!this.layout.sidebar) order.splice(1, 1);
     this.focus = order[(order.indexOf(this.focus) + direction + order.length) % order.length]!;
-    if (this.view !== 'dashboard' && this.focus === 'content') {
+    if (this.route.kind !== 'home' && this.focus === 'content') {
       this.contentSelectedIndex = direction === 1 ? 0 : Math.max(0, contentCount - 1);
     }
     this.move(0, contentCount);

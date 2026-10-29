@@ -24,7 +24,7 @@ export function renderSidebar(state: AppState, width: number): { lines: string[]
     lines.push(clickable(selectableRow(label, Math.max(1, width - 1), selected, state.focus === 'sidebar'), { kind: 'nav', index }));
   };
   const unavailable = state.offline || state.error ? 'Unavailable' : 'Loading…';
-  row(0, (state.view === 'dashboard' ? accent : muted) + icons.home + reset + '  Home');
+  row(0, (state.route.kind === 'home' ? accent : muted) + icons.home + reset + '  Home');
   for (const { kind, title, empty } of SECTIONS) {
     const indexes = [...entries.keys()].filter(index => entries[index]!.kind === kind);
     lines.push('', inset + groupLabel(title, state.dashboardData ? indexes.length : ''), '');

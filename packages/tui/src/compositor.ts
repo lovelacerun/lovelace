@@ -65,10 +65,10 @@ export function helpChips(state: AppState, launchMenuOpen = false): { status: st
     chips.push(keyChip('Enter', 'launch'), keyChip('Esc', 'leave editor'), keyChip('Shift+Enter', 'newline'));
   } else {
     chips.push(keyChip('Enter', 'open'));
-    if (state.view !== 'dashboard') chips.push(keyChip('Esc', 'back'));
-    if (state.view === 'work-item') chips.push(keyChip('d/a/c', 'state'));
-    chips.push(keyChip('n', state.view === 'work-item' ? 'new session' : 'new'));
-    chips.push(keyChip('↑/↓', 'move'), keyChip('Tab/⇧Tab', state.view === 'dashboard' ? 'focus' : 'next/prev'),
+    if (state.route.kind !== 'home') chips.push(keyChip('Esc', 'back'));
+    if (state.route.kind === 'work') chips.push(keyChip('d/a/c', 'state'));
+    chips.push(keyChip('n', state.route.kind === 'work' ? 'new session' : 'new'));
+    chips.push(keyChip('↑/↓', 'move'), keyChip('Tab/⇧Tab', state.route.kind === 'home' ? 'focus' : 'next/prev'),
       keyChip('r', 'refresh'), keyChip('q', 'quit'));
   }
   return { status, chips };

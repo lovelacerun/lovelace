@@ -65,11 +65,12 @@ keeps the harness's own setting. Narrow docks drop the labels and show a
 field's name in place of `default`. The choice, kept per harness, is shared
 with the Jira overlay and remembered until the TUI exits; `Enter` in the
 editor launches with it.
-Work-item details have no inline prompt input. Jira prompt editing is
-exclusively in its overlay; another session on an active work item starts from
-the **New session** overlay (`n` or the row under Agent sessions), which takes a
-prompt and the shared agent/thinking/model choice and runs in the item's ready
-worktrees. `Ctrl+S` starts; failures stay in the dialog.
+Work-item details have no inline prompt input. Jira work and further sessions
+start from one launch dialog. On a Jira issue it adds repositories and
+templates (see below); on an active work item (`n` or the row under Agent
+sessions) it is **New session**: a prompt and the shared agent/thinking/model
+choice, run in the item's ready worktrees. `Ctrl+S` starts; failures stay in
+the dialog.
 
 ## Keyboard
 

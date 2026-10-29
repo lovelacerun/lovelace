@@ -1,16 +1,12 @@
 import type { Component, OverlayHandle, TuiAltScreen, TuiMouseEvent, TuiMouseEventResult } from '@earendil-works/pi-tui';
-import { compositeTuiLine, Editor, getKeybindings, isKeyRelease, matchesKey } from '@earendil-works/pi-tui';
+import { compositeTuiLine, Editor, isKeyRelease, matchesKey, visibleWidth } from '@earendil-works/pi-tui';
 import type { LovelaceClient } from '@lovelace/client';
-import { isLaunchInProgress, type SidebarSide } from '@lovelace/core';
+import type { SidebarSide } from '@lovelace/core';
 
 import { AppState } from './state.js';
 import { openBrowser } from './browser.js';
-import { RefreshPoller } from './poller.js';
-import { band, barBg, canvas, bold, accent, muted, editorTheme, faint, heading, icons, panelBg, danger, reset, splitPaneTheme } from './theme.js';
-import { visibleWidth } from '@earendil-works/pi-tui';
-import {
-  fitEditorLines, LINK_END, padRight, PasteTracker, replaceEditorText, safeText, SplitPane, truncate,
-} from '@lovelace/tui-components';
+import { band, barBg, canvas, bold, accent, muted, editorTheme, faint, icons, panelBg, danger, reset, splitPaneTheme } from './theme.js';
+import { LINK_END, padRight, PasteTracker, replaceEditorText, safeText, SplitPane, truncate } from '@lovelace/tui-components';
 import {
   COMPACT_ROWS, CONTENT_MIN_WIDTH, contentGutter, DOCK_MIN_ROWS, MIN_HEIGHT, MIN_WIDTH, responsiveSidebarWidth,
   SIDEBAR_MIN_WIDTH,
@@ -20,17 +16,15 @@ import { connectionStatus, fitChips, helpChips, renderConfirmDialog } from './co
 import { keyChip } from './key-hints.js';
 import { splitIssueKey } from './views/common.js';
 import { decode } from './keymap.js';
-import { handleKey, handleAction, submitLaunch, type ControllerDeps } from './controller.js';
-import { errorMessage, isOffline } from './errors.js';
-import { renderDashboard } from './views/dashboard.js';
+import { handleKey, handleAction, startReview, submitLaunch, type ControllerDeps } from './controller.js';
+import { errorMessage } from './errors.js';
+import { renderPage } from './views/page.js';
 import { renderSidebar } from './views/sidebar.js';
-import { renderWorkItem } from './views/work-item.js';
-import { renderJira } from './views/jira.js';
-import { renderReview } from './views/review.js';
 import type { Document } from './views/common.js';
-import { JiraStartModal } from './jira-start-modal.js';
-import { NewSessionModal } from './new-session-modal.js';
-import { launchField, launchFocus, LaunchOptionsRow } from './launch-options.js';
+import { LaunchDialog, type LaunchSubject } from './launch-dialog.js';
+import { launchField, launchFocus } from './launch-options.js';
+import { QuickStartDock } from './quick-start-dock.js';
+import { AppRefresh } from './refresh.js';
 
 interface AppRootOptions {
   tui: TuiAltScreen;
@@ -43,8 +37,8 @@ interface AppRootOptions {
 }
 
 /**
- * Root component. Composes sidebar, main view, and the pi-tui Editor instance
- * into the terminal viewport. Owns input routing and the two refresh pollers.
+ * Root component. Composes sidebar, the current route's page and the Home
+ * dock into the terminal viewport, and owns input routing and the launch dialog.
  */
 export class AppRoot implements Component {
   readonly state: AppState;
@@ -52,25 +46,18 @@ export class AppRoot implements Component {
   readonly client: LovelaceClient;
   private readonly serverUrl: string;
   readonly editor: Editor;
-  /** The one open dialog: Jira start-work or a work item's new session. */
-  private overlay?: { modal: JiraStartModal | NewSessionModal; handle: OverlayHandle };
-  private readonly dashboardPoller: RefreshPoller;
-  private readonly detailsPoller: RefreshPoller;
-  private detailLoadToken = 0;
+  /** The open launch dialog, if any. */
+  private overlay?: { dialog: LaunchDialog; handle: OverlayHandle };
+  private readonly refresh: AppRefresh;
+  private readonly dock: QuickStartDock;
   private removeInputListener?: () => void;
   private quitResolver?: () => void;
   private stopped = false;
   private readonly lifetime = new AbortController();
   private readonly paste = new PasteTracker();
-  private opening = false;
   private readonly openUrl: (url: string) => Promise<void>;
   /** Size of the last frame's sidebar/content body; 0 while the terminal is too small. */
   private body = { cols: 0, height: 0 };
-  /** First content row of the quick-start dock, and of its launch fields below the editor. */
-  private editorTop = Infinity;
-  private optionsTop = Infinity;
-  private optionsHeight = 0;
-  private readonly launchOptions: LaunchOptionsRow;
   /** Content beside the global sidebar, whose divider can be dragged for the session. */
   private readonly split: SplitPane;
 
@@ -85,16 +72,8 @@ export class AppRoot implements Component {
     });
 
     this.editor = new Editor(this.tui, editorTheme);
-    // Built-in submit trims and clears before onSubmit. Own submission instead.
-    this.editor.disableSubmit = true;
-    // Only ever update the text field, never the pending launch, from a keystroke.
-    this.editor.onChange = () => this.state.setDraft({ text: this.editor.getExpandedText() });
-    this.launchOptions = new LaunchOptionsRow(this.state);
-
-    this.dashboardPoller = new RefreshPoller((signal) => this.fetchDashboard(signal),
-      () => this.state.activeWorkItems.some(item => item.launchState && isLaunchInProgress(item.launchState)) ? 2000 : 7000);
-    this.detailsPoller = new RefreshPoller((signal) => this.fetchDetails(signal),
-      () => this.state.selectedWorkItemData?.launches.some(launch => isLaunchInProgress(launch.state)) ? 1000 : 7000);
+    this.dock = new QuickStartDock(this.state, this.editor, prompt => void this.launch(prompt));
+    this.refresh = new AppRefresh(this.state, this.client, this.lifetime.signal);
     this.split = new SplitPane(
       {
         render: width => this.renderContent(width),
@@ -116,9 +95,7 @@ export class AppRoot implements Component {
   start(): Promise<void> {
     this.removeInputListener = this.tui.addInputListener((data) => this.handleRawInput(data));
     this.tui.start();
-    this.dashboardPoller.start();
-    this.detailsPoller.start();
-    void this.loadTools();
+    this.refresh.start();
     return new Promise<void>((resolve) => {
       this.quitResolver = resolve;
     });
@@ -128,8 +105,7 @@ export class AppRoot implements Component {
     if (this.stopped) return;
     this.stopped = true;
     this.lifetime.abort();
-    this.dashboardPoller.stop();
-    this.detailsPoller.stop();
+    this.refresh.stop();
     this.removeInputListener?.();
     this.removeInputListener = undefined;
     this.editor.focused = false;
@@ -199,12 +175,11 @@ export class AppRoot implements Component {
 
   /** App mark and location on the left, connection state on the right. */
   private renderHeader(cols: number): string {
-    const view = this.state.view;
-    const title = view === 'work-item' ? this.state.selectedWorkItemData?.workItem.title
-      : view === 'jira' ? this.state.selectedJira?.key
-      : view === 'review' && this.state.selectedReview ? `${this.state.selectedReview.repository}#${this.state.selectedReview.number}` : undefined;
-    const place = view === 'dashboard' ? 'Home' : safeText(title ? splitIssueKey(safeText(title)).key ?? title
-      : view === 'jira' ? 'Jira' : view === 'review' ? 'Review' : 'Work');
+    const route = this.state.route;
+    const place = route.kind === 'home' ? 'Home'
+      : route.kind === 'jira' ? safeText(route.issue.key)
+      : route.kind === 'review' ? safeText(`${route.review.repository}#${route.review.number}`)
+      : route.details ? splitIssueKey(safeText(route.details.workItem.title)).key ?? safeText(route.details.workItem.title) : 'Work';
     const mark = ' ' + accent + icons.app + reset + '  ' + (cols >= 50 ? bold + 'lovelace' + reset + faint + '  /  ' + reset : '');
     let right = connectionStatus(this.state);
     // The actual client address, so a stale port override is visible.
@@ -222,35 +197,11 @@ export class AppRoot implements Component {
     const gutter = contentGutter(width);
     const top = height >= DOCK_MIN_ROWS ? [''] : [];
     const panelWidth = Math.max(1, width - gutter * 2);
-    const document = this.renderCurrentView(panelWidth);
-    const editorLines = this.renderDock(panelWidth, roomy, height);
+    const document = renderPage(this.state, panelWidth);
+    const editorLines = this.dock.render(panelWidth, roomy, height);
     const viewportHeight = Math.max(0, height - editorLines.length - top.length);
     const contentLines = padColumn(this.applyScroll(document, viewportHeight), viewportHeight);
-    this.editorTop = editorLines.length ? height - editorLines.length : Infinity;
-    this.optionsTop = editorLines.length ? height - this.optionsHeight : Infinity;
     return padColumn([...top, ...contentLines, ...editorLines].map(line => ' '.repeat(gutter) + line), height);
-  }
-
-  /**
-   * The Home-only Quick start dock: three input lines above the agent,
-   * thinking and model fields (whose lists expand below them), or a single
-   * row on short terminals until it is focused. Jira's prompt lives in its overlay.
-   */
-  private renderDock(width: number, roomy: boolean, height: number): string[] {
-    this.optionsHeight = 0;
-    if (this.state.view !== 'dashboard') return [];
-    const focused = this.state.focus === 'editor';
-    const field = launchField(this.state.focus);
-    const title = heading('Quick start', '', icons.quickStart);
-    if (height < DOCK_MIN_ROWS && !focused && !field) {
-      this.launchOptions.render(width);
-      const draft = safeText(this.state.draft.text).trim();
-      return [title + '  ' + (draft ? muted + truncate(draft, Math.max(1, width - visibleWidth(title) - 2)) : faint + 'n to write') + reset];
-    }
-    this.editor.borderColor = text => (focused ? accent : faint) + text + reset;
-    const options = this.launchOptions.render(width, field);
-    this.optionsHeight = options.length;
-    return [...(roomy ? [''] : []), title, ...fitEditorLines(this.editor.render(width), 5), ...options];
   }
 
   /** Navigation remains a stable landmark during first load and disconnection. */
@@ -261,15 +212,6 @@ export class AppRoot implements Component {
       .map(line => band(line, width, panelBg));
   }
 
-  private renderCurrentView(width: number): Document {
-    // Even when offline, keep rendering the last-known view; the offline/stale
-    // state is surfaced in the help bar.
-    if (this.state.view === 'work-item') return renderWorkItem(this.state, width);
-    if (this.state.view === 'jira') return renderJira(this.state, width);
-    if (this.state.view === 'review') return renderReview(this.state, width);
-    return renderDashboard(this.state, width);
-  }
-
   /** Inset by one cell on each side of the footer bar. */
   private renderBottomBar(width: number): string {
     if (this.state.pendingConfirm) return ' ' + fitChips({ status: '', chips: [keyChip('y', 'confirm'), keyChip('Esc', 'cancel')] }, width);
@@ -277,7 +219,7 @@ export class AppRoot implements Component {
       const status = `${danger}Offline (${this.state.dashboardData ? 'last-known' : 'no'} data)${reset}`;
       return ' ' + fitChips({ status, chips: [keyChip('r', 'retry'), keyChip('q', 'quit')] }, width);
     }
-    return ' ' + fitChips(helpChips(this.state, this.launchOptions.openField !== undefined), width);
+    return ' ' + fitChips(helpChips(this.state, this.dock.launchOptions.openField !== undefined), width);
   }
 
   private applyScroll(document: Document, viewportHeight: number): string[] {
@@ -312,8 +254,9 @@ export class AppRoot implements Component {
 
   private handleContentMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
     if (event.type !== 'click' || event.button !== 'left') return this.handleWheel(event, 'content');
-    if (event.y >= this.optionsTop) this.state.setFocus(launchField(this.state.focus) ? this.state.focus : launchFocus('agent'));
-    else if (event.y >= this.editorTop) this.focusEditor();
+    const hit = this.dock.hit(event.y);
+    if (hit === 'options') this.state.setFocus(launchField(this.state.focus) ? this.state.focus : launchFocus('agent'));
+    else if (hit === 'editor') this.startNew();
     else if (this.state.focus === 'editor' || launchField(this.state.focus)) this.state.setFocus('content');
     this.applyFocusToTui();
     return { handled: true };
@@ -340,10 +283,10 @@ export class AppRoot implements Component {
       return;
     }
     if (this.overlay) {
-      this.overlay.modal.openLink(link);
+      this.overlay.dialog.openLink(link);
       return;
     }
-    const field = link.kind === 'modal' && !this.state.pendingConfirm ? this.launchOptions.openLink(link.data) : undefined;
+    const field = link.kind === 'modal' && !this.state.pendingConfirm ? this.dock.launchOptions.openLink(link.data) : undefined;
     if (field) {
       this.state.setFocus(launchFocus(field));
       this.applyFocusToTui();
@@ -372,7 +315,7 @@ export class AppRoot implements Component {
   private handleRawInput(data: string): { consume?: boolean } | undefined {
     if (this.stopped) return { consume: true };
     if (this.overlay && !matchesKey(data, 'ctrl+c')) {
-      this.overlay.modal.handleInput(data);
+      this.overlay.dialog.handleInput(data);
       return { consume: true };
     }
     // Paste chunks containing Enter/Esc/Tab are data, not application commands.
@@ -385,7 +328,7 @@ export class AppRoot implements Component {
     if (isKeyRelease(data)) return { consume: true };
     // A launch field takes its keys first; Tab, Esc and keys of a closed field fall through.
     const field = launchField(this.state.focus);
-    if (field && !this.state.pendingConfirm && this.launchOptions.handleInput(field, data)) {
+    if (field && !this.state.pendingConfirm && this.dock.launchOptions.handleInput(field, data)) {
       this.tui.requestRender();
       return { consume: true };
     }
@@ -396,12 +339,12 @@ export class AppRoot implements Component {
 
     if (intent.kind === 'ignored') return undefined;
     if (intent.kind === 'editor-input') {
-      this.handleEditorInput(intent.data);
+      this.dock.handleInput(intent.data);
       this.tui.requestRender();
       return { consume: true };
     }
     if (intent.kind === 'focus-editor') {
-      this.focusEditor();
+      this.startNew();
       return { consume: true };
     }
     // The editor owns its Enter; elsewhere Enter opens the selection.
@@ -412,7 +355,7 @@ export class AppRoot implements Component {
     if (intent.kind === 'enter') {
       const entry = this.state.sidebarEntries[this.state.sidebarSelectedIndex];
       if (entry) this.state.navigate(entry);
-      this.triggerDetailsRefresh();
+      this.refresh.refreshDetails();
     } else {
       handleKey(this.state, intent, this.makeDeps(), this.contentActionCount());
       if (this.stopped) return { consume: true };
@@ -423,23 +366,8 @@ export class AppRoot implements Component {
     return { consume: true };
   }
 
-  private handleEditorInput(data: string): void {
-    if (getKeybindings().matches(data, 'tui.input.submit') && data !== '\n') {
-      // Legacy terminals use backslash+Enter for a newline.
-      const cursor = this.editor.getCursor();
-      if (matchesKey(data, 'enter') && this.editor.getLines()[cursor.line]?.[cursor.col - 1] === '\\') {
-        this.editor.handleInput('\x7f');
-        this.editor.insertTextAtCursor('\n');
-      } else {
-        void this.launchFromEditor(this.editor.getExpandedText());
-      }
-      return;
-    }
-    this.editor.handleInput(data);
-  }
-
   private async dispatchContentEnter(): Promise<void> {
-    const doc = this.renderCurrentView(80); // width doesn't affect the actions
+    const doc = renderPage(this.state, 80); // width doesn't affect the actions
     const action = doc.actions[this.state.contentSelectedIndex];
     if (!action) return;
     await handleAction(this.state, action, this.makeDeps());
@@ -449,7 +377,7 @@ export class AppRoot implements Component {
   }
 
   private contentActionCount(): number {
-    return this.renderCurrentView(80).actions.length;
+    return renderPage(this.state, 80).actions.length;
   }
 
   // Dependencies / helpers --------------------------------------------------
@@ -458,39 +386,34 @@ export class AppRoot implements Component {
     return {
       client: this.client,
       signal: this.lifetime.signal,
-      refreshDashboard: () => this.dashboardPoller.refresh(),
-      startJiraWork: () => this.openJiraStart(),
-      startReview: () => this.startReview(),
-      refreshDetails: () => this.triggerDetailsRefresh(),
-      submitLaunch: (prompt) => this.launchFromEditor(prompt),
-      openSession: (sessionId) => this.openSession(sessionId),
+      refreshDashboard: () => this.refresh.refreshDashboard(),
+      refreshDetails: () => this.refresh.refreshDetails(),
+      openLaunchDialog: () => this.openLaunchDialog(),
+      submitLaunch: prompt => this.launch(prompt),
       openUrl: this.openUrl,
       resetEditor: () => {
         replaceEditorText(this.editor, '');
         this.state.setDraft({ text: '' });
       },
-      focusEditor: () => this.focusEditor(),
+      focusEditor: () => this.startNew(),
       invalidate: () => { if (!this.stopped) this.tui.requestRender(); },
       quit: () => this.quit(),
     };
   }
 
-  private focusEditor(): void {
-    if (this.state.view === 'jira') {
-      if (!this.state.draft.requestId) this.openJiraStart();
+  /** `n`: Home focuses the dock, Jira and work items open the launch dialog, reviews start. */
+  private startNew(): void {
+    const route = this.state.route;
+    if (route.kind === 'review') {
+      if (!this.state.draft.requestId) void startReview(this.state, this.makeDeps());
+    } else if (route.kind === 'home') {
+      this.state.setFocus('editor');
+      this.applyFocusToTui();
+    } else if (route.kind === 'jira' && this.state.draft.requestId) {
       return;
+    } else {
+      this.openLaunchDialog();
     }
-    if (this.state.view === 'work-item') {
-      this.openNewSession();
-      return;
-    }
-    if (this.state.view === 'review') {
-      if (!this.state.draft.requestId) void this.startReview();
-      return;
-    }
-    if (this.state.view !== 'dashboard') return;
-    this.state.setFocus('editor');
-    this.applyFocusToTui();
   }
 
   /** Keep pi-tui focus + the editor's `focused` flag in sync with AppState. */
@@ -499,7 +422,7 @@ export class AppRoot implements Component {
       this.editor.focused = false;
       return; // The native overlay remains the keyboard focus owner.
     }
-    if (this.state.focus === 'editor' && this.state.view === 'dashboard') {
+    if (this.state.focus === 'editor' && this.state.route.kind === 'home') {
       this.tui.setFocus(this.editor);
       this.editor.focused = true;
     } else {
@@ -508,99 +431,51 @@ export class AppRoot implements Component {
     }
   }
 
-  /** Reconcile the Editor buffer with the active draft without re-entering onChange. */
   private syncEditor(): void {
-    if (this.overlay) return;
-    const text = this.state.draft.text;
-    // Restored large drafts retain native paste-marker performance.
-    if (this.editor.getExpandedText() !== text) replaceEditorText(this.editor, text, true);
+    if (!this.overlay) this.dock.sync();
   }
 
-  private openJiraStart(): void {
-    if (this.overlay || this.state.view !== 'jira' || !this.state.selectedJira || this.state.mutationInFlight) return;
-    if (this.state.draft.requestId) {
-      this.state.setError('Resend or discard (x) the unanswered launch before changing its template or repositories.');
+  /** Starting work on the open Jira issue, or another session on the open work item. */
+  private openLaunchDialog(): void {
+    if (this.overlay || this.state.mutationInFlight) return;
+    const route = this.state.route;
+    let subject: LaunchSubject;
+    if (route.kind === 'jira') {
+      if (this.state.draft.requestId) {
+        this.state.setError('Resend or discard (x) the unanswered launch before changing its template or repositories.');
+        return;
+      }
+      subject = { kind: 'issue', issue: route.details ?? route.issue };
+    } else if (route.kind === 'work' && route.details) {
+      if (route.details.workItem.state !== 'active') {
+        this.state.setError('Reactivate local work explicitly (press a, then y) before starting a session.');
+        return;
+      }
+      if (this.state.draft.requestId) {
+        this.state.setError('Resend or discard (x) the unanswered launch before starting another session.');
+        return;
+      }
+      subject = { kind: 'session', title: route.details.workItem.title };
+    } else {
       return;
     }
-    const draftKey = this.state.draftKey;
-    const modal = new JiraStartModal({
-      tui: this.tui, state: this.state, client: this.client, signal: this.lifetime.signal,
+    const dialog = new LaunchDialog({
+      tui: this.tui, state: this.state, client: this.client, signal: this.lifetime.signal, subject,
       onClose: () => this.closeOverlay(),
-      onStart: async prompt => {
-        await this.launchFromEditor(prompt);
-        if (this.state.draftKey !== draftKey) this.closeOverlay();
-      },
+      // Failures stay in the dialog to edit or resend.
+      onStart: async prompt => { if (await this.launch(prompt)) this.closeOverlay(); },
     });
-    const handle = this.tui.showOverlay(modal, { width: '96%', maxHeight: '96%', margin: 1, anchor: 'center' });
-    this.overlay = { modal, handle };
+    const handle = this.tui.showOverlay(dialog, { width: '96%', maxHeight: '96%', margin: 1, anchor: 'center' });
+    this.overlay = { dialog, handle };
     this.editor.focused = false;
-    void modal.load();
-  }
-
-  /**
-   * Reviews start without a dialog: the review template, the pull request's
-   * repository at its branch, and the agent chosen on Home.
-   */
-  private async startReview(): Promise<void> {
-    const review = this.state.selectedReview;
-    if (this.overlay || this.state.view !== 'review' || !review?.repoId || this.state.mutationInFlight) return;
-    if (this.state.draft.requestId) {
-      this.state.setError('Resend or discard (x) the unanswered launch before starting the review again.');
-      return;
-    }
-    const draftKey = this.state.draftKey;
-    this.state.setError(null);
-    this.state.setNotice('Rendering review prompt…');
-    try {
-      const rendered = await this.client.prompts.render.mutate({
-        promptId: 'review', title: `${review.repository}#${review.number}: ${review.title}`,
-        sources: [{ sourceType: 'change-request', provider: 'github', externalId: review.id, payload: review }],
-      }, { signal: this.lifetime.signal });
-      if (this.stopped || this.state.draftKey !== draftKey) return;
-      this.state.setDraft({ text: rendered.content, promptId: rendered.promptId, repoIds: [review.repoId] });
-      await this.launchFromEditor(rendered.content);
-    } catch (error) {
-      if (this.stopped || this.state.draftKey !== draftKey) return;
-      this.state.setNotice(null);
-      if (isOffline(error)) this.state.setOffline();
-      else this.state.setError(errorMessage(error, 'Rendering the review prompt failed'));
-    }
-  }
-
-  /** Another agent session on the selected work item, in its ready worktrees. */
-  private openNewSession(): void {
-    if (this.overlay || this.state.view !== 'work-item' || this.state.mutationInFlight) return;
-    const details = this.state.selectedWorkItemData;
-    if (!details) return;
-    if (details.workItem.state !== 'active') {
-      this.state.setError('Reactivate local work explicitly (press a, then y) before starting a session.');
-      return;
-    }
-    if (this.state.draft.requestId) {
-      this.state.setError('Resend or discard (x) the unanswered launch before starting another session.');
-      return;
-    }
-    const draftKey = this.state.draftKey;
-    const modal = new NewSessionModal({
-      tui: this.tui, state: this.state,
-      onClose: () => this.closeOverlay(),
-      onStart: async prompt => {
-        await this.launchFromEditor(prompt);
-        // Acceptance clears the draft; failures stay in the dialog to edit or resend.
-        const draft = this.state.drafts.get(draftKey);
-        if (!draft?.requestId && !this.state.error) this.closeOverlay();
-      },
-    });
-    const handle = this.tui.showOverlay(modal, { width: '96%', maxHeight: '96%', margin: 1, anchor: 'center' });
-    this.overlay = { modal, handle };
-    this.editor.focused = false;
+    void dialog.load();
   }
 
   private closeOverlay(): void {
     const overlay = this.overlay;
     if (!overlay) return;
     this.overlay = undefined;
-    overlay.modal.dispose();
+    overlay.dialog.dispose();
     overlay.handle.hide();
     if (!this.stopped) {
       this.syncEditor();
@@ -609,100 +484,21 @@ export class AppRoot implements Component {
     }
   }
 
-  /** Harness detection is cheap and rarely changes: once per TUI, and again with each Jira setup. */
-  private async loadTools(): Promise<void> {
-    try {
-      const tools = await this.client.tools.list.query(undefined, { signal: this.lifetime.signal });
-      if (!this.stopped) this.state.setTools(tools);
-    } catch (error) {
-      // Launches still fall back to the server's default agent.
-      if (!this.stopped && !isOffline(error) && !this.lifetime.signal.aborted) this.state.setError(errorMessage(error, 'Loading coding harnesses failed'));
-    }
-  }
-
-  // Pollers ------------------------------------------------------------------
-
-  private async fetchDashboard(signal: AbortSignal): Promise<void> {
-    try {
-      const data = await this.client.dashboard.get.query(undefined, { signal });
-      if (signal.aborted || this.stopped) return;
-      this.state.applyDashboardResponse(data);
-    } catch (error) {
-      if (signal.aborted) return;
-      // Keep sidebar/last known view; surface the message in the help bar.
-      if (isOffline(error)) this.state.setOffline();
-      else this.state.setError(errorMessage(error, 'Dashboard refresh failed'));
-    }
-  }
-
-  private triggerDetailsRefresh(): void {
-    this.detailLoadToken++;
-    this.detailsPoller.refresh();
-  }
-
-  private async fetchDetails(signal: AbortSignal): Promise<void> {
-    const token = this.detailLoadToken;
-    const { view, selectedWorkItemId, selectedJira } = this.state;
-    const current = () => !signal.aborted && token === this.detailLoadToken;
-    try {
-      if (view === 'work-item' && selectedWorkItemId) {
-        const details = await this.client.workItems.get.query({ id: selectedWorkItemId }, { signal });
-        if (current() && this.state.selectedWorkItemId === details.workItem.id) this.state.setWorkItemData(details);
-      } else if (view === 'jira' && selectedJira) {
-        const issues = await this.client.tracker.issues.query(undefined, { signal });
-        if (current()) this.state.setJiraDetails(issues.find(issue => issue.id === this.state.selectedJira?.id) ?? null);
-      }
-    } catch (error) {
-      if (!current()) return;
-      if (isOffline(error)) this.state.setOffline();
-      else this.state.setError(errorMessage(error, view === 'jira' ? 'Jira fetch failed' : 'Work item fetch failed'));
-    }
-  }
-
   // Mutations ---------------------------------------------------------------
 
-  private async launchFromEditor(prompt: string): Promise<void> {
-    if (this.stopped) return;
-    await submitLaunch(this.state, this.makeDeps(), prompt);
-    if (this.stopped) return;
+  private async launch(prompt: string): Promise<boolean> {
+    if (this.stopped) return false;
+    const accepted = await submitLaunch(this.state, this.makeDeps(), prompt);
+    if (this.stopped) return accepted;
     // Accepted launches poll on their work item; no completion callback can
     // navigate away from another draft or task the operator opens meanwhile.
-    this.triggerDetailsRefresh();
+    this.refresh.refreshDetails();
     // Reflect state back onto the editor contents.
     this.syncEditor();
     this.applyFocusToTui();
+    return accepted;
   }
 
-  /**
-   * Herdr focuses the session's live pane, or continues its exact native
-   * conversation when the agent ended. Selecting the session is the request.
-   */
-  private async openSession(sessionId: string): Promise<void> {
-    const workItemId = this.state.selectedWorkItemId;
-    if (!workItemId || this.stopped || this.opening) return;
-    const details = this.state.selectedWorkItemData;
-    if (details && details.workItem.state !== 'active') {
-      this.state.setError('Reactivate local work explicitly (press a, then y) before opening or continuing this session.');
-      return;
-    }
-    this.opening = true;
-    this.state.setError(null);
-    this.state.setNotice('Opening session in Herdr…');
-    try {
-      const response = await this.client.sessions.open.mutate({ workItemId, sessionId }, { signal: this.lifetime.signal });
-      if (this.stopped || this.state.selectedWorkItemId !== workItemId) return;
-      this.state.setWorkItemData(response.details);
-      this.state.setNotice(response.action === 'continued' ? 'Continued the conversation in Herdr.' : null);
-      this.dashboardPoller.refresh();
-    } catch (error) {
-      if (this.stopped || this.state.selectedWorkItemId !== workItemId) return;
-      this.state.setNotice(null);
-      if (isOffline(error)) this.state.setOffline();
-      else this.state.setError(errorMessage(error, 'Opening the session failed'));
-    } finally {
-      this.opening = false;
-    }
-  }
 }
 
 function padColumn(lines: string[], height: number): string[] {

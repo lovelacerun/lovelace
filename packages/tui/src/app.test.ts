@@ -11,8 +11,9 @@ import {
   type LaunchState, type WorkItemDetails, type WorkItemState,
 } from '@lovelace/core';
 import { AppRoot } from './app.js';
-import { JiraStartModal } from './jira-start-modal.js';
-import { NewSessionModal } from './new-session-modal.js';
+import { LaunchDialog } from './launch-dialog.js';
+import { handleAction, type ControllerDeps } from './controller.js';
+import { openWork } from './test-support.js';
 
 // -- FakeTui --------------------------------------------------------------
 
@@ -164,7 +165,8 @@ function withSession(id: string, state: WorkItemState = 'active'): WorkItemDetai
   return details;
 }
 
-const openSession = (root: AppRoot, sessionId = 'm') => (root as unknown as { openSession: (id: string) => Promise<void> }).openSession(sessionId);
+const openSession = (root: AppRoot, sessionId = 'm') =>
+  handleAction(root.state, { kind: 'session', sessionId }, (root as unknown as { makeDeps: () => ControllerDeps }).makeDeps());
 
 // -- Tests ----------------------------------------------------------------
 
@@ -195,7 +197,7 @@ describe('AppRoot review list', () => {
     assert.deepEqual(launch.repoIds, ['github:a']);
     assert.equal(launch.promptId, 'review');
     assert.equal(launch.prompt, 'Review org/a#7\n');
-    assert.equal(root.state.view, 'work-item');
+    assert.equal(root.state.route.kind, 'work');
   });
 });
 
@@ -217,9 +219,9 @@ describe('AppRoot Jira start-work overlay', () => {
     root.state.navigate({ kind: 'jira', id: issue.id });
     tui.feedInput('\r');
     const overlay = tui.overlays[0]!;
-    const modal = overlay.component as JiraStartModal;
+    const modal = overlay.component as LaunchDialog;
     await waitFor(() => !modal.loading);
-    assert.equal(root.state.view, 'jira');
+    assert.equal(root.state.route.kind, 'jira');
     assert.equal(modal.topicFilter.getValue(), 'infra, examplecom');
     assert.match(root.render(80).join('\n'), /Description/);
     assert.equal(tui.overlays.length, 1);
@@ -266,7 +268,7 @@ describe('AppRoot Jira start-work overlay', () => {
     assert.match(modal.render(100).join('\n'), /fixture preparation failure/);
     tui.feedInput('\x1b');
     assert.equal(overlay.visible, false);
-    assert.equal(root.state.view, 'jira', 'Escape closes the overlay, not the underlying page');
+    assert.equal(root.state.route.kind, 'jira', 'Escape closes the overlay, not the underlying page');
     assert.equal(root.editor.getExpandedText(), prompt);
   });
 
@@ -282,7 +284,7 @@ describe('AppRoot Jira start-work overlay', () => {
     root.state.navigate({ kind: 'jira', id: issue.id });
     root.state.setDraft({ text: 'Keep prompt', repoIds: ['1'] });
     tui.feedInput('n'); // Jira opens the modal, never a hidden quick-start editor.
-    const modal = tui.overlays[0]!.component as JiraStartModal;
+    const modal = tui.overlays[0]!.component as LaunchDialog;
     await waitFor(() => !modal.loading);
     tui.feedInput('/');
     tui.feedInput('qrnd');
@@ -290,7 +292,7 @@ describe('AppRoot Jira start-work overlay', () => {
     assert.equal(tui.state.stopped, 0);
     tui.feedInput('\x1b');
     assert.equal(tui.overlays[0]!.visible, false);
-    assert.equal(root.state.view, 'jira');
+    assert.equal(root.state.route.kind, 'jira');
     assert.equal(root.state.draft.text, 'Keep prompt');
     assert.deepEqual(root.state.draft.repoIds, ['1']);
     root.state.setDraft({ requestId: 'id' });
@@ -317,13 +319,13 @@ describe('AppRoot Jira start-work overlay', () => {
     root.state.navigate({ kind: 'jira', id: issue.id });
     root.state.setDraft({ text: 'Start this task' });
     tui.feedInput('\r');
-    const modal = tui.overlays[0]!.component as JiraStartModal;
+    const modal = tui.overlays[0]!.component as LaunchDialog;
     await waitFor(() => !modal.loading);
     server.launchQueue.push(launched('created'));
     tui.feedInput('\x13');
     await waitFor(() => !tui.overlays[0]!.visible);
-    assert.equal(root.state.view, 'work-item');
-    assert.equal(root.state.selectedWorkItemId, 'created');
+    assert.equal(root.state.route.kind, 'work');
+    assert.equal(openWork(root.state).id, 'created');
     assert.equal(server.openCalls.length, 0);
   });
 });
@@ -338,7 +340,7 @@ describe('AppRoot new-session overlay', () => {
     assert.match(stripTerminalSequences(root.render(80).join('\n')), /New session/);
     tui.feedInput('n');
     const overlay = tui.overlays[0]!;
-    const modal = overlay.component as NewSessionModal;
+    const modal = overlay.component as LaunchDialog;
     assert.equal(modal.focus, 'prompt');
     for (const [cols, rows] of [[50, 12], [80, 24], [120, 36]]) {
       tui.resize(cols!, rows!);
@@ -357,7 +359,7 @@ describe('AppRoot new-session overlay', () => {
     await waitFor(() => !overlay.visible);
     assert.deepEqual(server.launchCalls.map(call => [call.endpoint, call.workItemId, call.prompt]),
       [['newSession', 'w1', 'Second pass'], ['newSession', 'w1', 'Second pass']]);
-    assert.equal(root.state.view, 'work-item');
+    assert.equal(root.state.route.kind, 'work');
     assert.equal(root.state.draft.text, '');
     assert.equal(server.openCalls.length, 0);
   });
@@ -377,7 +379,7 @@ describe('AppRoot new-session overlay', () => {
     tui.feedInput('Draft');
     tui.feedInput('\x1b');
     assert.equal(tui.overlays[0]!.visible, false);
-    assert.equal(root.state.view, 'work-item', 'Escape closes the overlay, not the page');
+    assert.equal(root.state.route.kind, 'work', 'Escape closes the overlay, not the page');
     assert.equal(root.state.draft.text, 'Draft');
   });
 });
@@ -474,10 +476,10 @@ describe('AppRoot editor sync across drafts', () => {
     assert.equal(root.editor.getText(), 'hello A');
 
     // Only Home can focus the dock editor.
-    (root as unknown as { focusEditor: () => void }).focusEditor();
+    (root as unknown as { startNew: () => void }).startNew();
     assert.equal(root.editor.focused, false);
-    root.state.navigateToDashboard();
-    (root as unknown as { focusEditor: () => void }).focusEditor();
+    root.state.navigateHome();
+    (root as unknown as { startNew: () => void }).startNew();
     const lastFocus = tui.focusCalls[tui.focusCalls.length - 1];
     assert.ok(lastFocus === root.editor, 'tui.setFocus called with editor');
     assert.equal(root.editor.focused, true);
@@ -523,12 +525,12 @@ describe('AppRoot requestId lifecycle integration', () => {
     const fake = server;
     fake.launchQueue.push(launched('wi-new', 'failed', 'tool missing'));
     root.state.setDraft({ text: 'go' });
-    await (root as unknown as { launchFromEditor: (p: string) => Promise<void> }).launchFromEditor('go');
+    await (root as unknown as { launch: (p: string) => Promise<boolean> }).launch('go');
     assert.equal(fake.launchCalls.length, 1);
-    assert.equal(root.state.view, 'work-item');
-    assert.equal(root.state.selectedWorkItemId, 'wi-new');
+    assert.equal(root.state.route.kind, 'work');
+    assert.equal(openWork(root.state).id, 'wi-new');
     assert.match(stripTerminalSequences(root.render(80).join('\n')), /tool missing/);
-    root.state.navigateToDashboard();
+    root.state.navigateHome();
     assert.equal(root.state.draft.text, '');
     assert.equal(root.state.draft.requestId, undefined);
     root.stop();
@@ -540,7 +542,7 @@ describe('AppRoot requestId lifecycle integration', () => {
     fake.launchQueue.push(new Error('network'));
     fake.launchQueue.push(launched('wi-ok'));
     root.state.setDraft({ text: 'risky' });
-    await (root as unknown as { launchFromEditor: (p: string) => Promise<void> }).launchFromEditor('risky');
+    await (root as unknown as { launch: (p: string) => Promise<boolean> }).launch('risky');
     const firstId = fake.launchCalls[0]?.requestId;
     assert.ok(firstId, 'requestId sent on first attempt');
     assert.equal(root.state.draft.requestId, firstId);
@@ -548,9 +550,9 @@ describe('AppRoot requestId lifecycle integration', () => {
     // Navigate away: the request ID stays with its draft (home).
     root.state.navigateToWorkItem('wi-other');
     assert.equal(root.state.draft.text, '', 'different draft key');
-    root.state.navigateToDashboard();
+    root.state.navigateHome();
 
-    await (root as unknown as { launchFromEditor: (p: string) => Promise<void> }).launchFromEditor('risky');
+    await (root as unknown as { launch: (p: string) => Promise<boolean> }).launch('risky');
     assert.equal(fake.launchCalls.length, 2);
     assert.equal(fake.launchCalls[1]?.endpoint, 'quickStart');
     assert.equal(fake.launchCalls[1]?.requestId, firstId, 'resends the original request ID');
@@ -728,7 +730,7 @@ describe('AppRoot real Editor submission over fixture HTTP', () => {
         root.state.navigateToWorkItem('other');
         root.render(80);
         assert.equal(root.editor.getExpandedText(), '');
-        root.state.navigateToDashboard();
+        root.state.navigateHome();
         root.state.setFocus('editor');
         root.render(80);
       }
@@ -738,9 +740,9 @@ describe('AppRoot real Editor submission over fixture HTTP', () => {
       assert.equal(requests[1]!.path, '/trpc/launches.quickStart');
       if (failure === 'timeout') assert.equal(requests[1]!.body.requestId, requests[0]!.body.requestId);
       else assert.notEqual(requests[1]!.body.requestId, requests[0]!.body.requestId);
-      assert.equal(root.state.view, 'work-item');
+      assert.equal(root.state.route.kind, 'work');
       assert.equal(root.editor.getExpandedText(), '');
-      root.state.navigateToDashboard();
+      root.state.navigateHome();
       assert.equal(root.state.draft.text, '', 'successful source draft is cleared too');
     });
   }
@@ -767,7 +769,7 @@ describe('AppRoot real Editor submission over fixture HTTP', () => {
     }
     root.state.navigateToWorkItem('other');
     root.render(80);
-    root.state.navigateToDashboard();
+    root.state.navigateHome();
     root.state.setFocus('editor');
     root.render(80);
     assert.equal(root.editor.getExpandedText(), prompt);
@@ -806,9 +808,9 @@ describe('AppRoot real Editor submission over fixture HTTP', () => {
     root.render(80);
     finish(launched('created', 'failed', 'failed'));
     await waitFor(() => !root.state.mutationInFlight);
-    assert.equal(root.state.selectedWorkItemId, 'different');
+    assert.equal(openWork(root.state).id, 'different');
     assert.equal(root.state.draft.text, 'different draft');
-    root.state.navigateToDashboard();
+    root.state.navigateHome();
     assert.equal(root.state.draft.text, '', 'the answered launch belongs to the server');
     assert.equal(root.state.draft.requestId, undefined);
   });
@@ -829,12 +831,12 @@ describe('AppRoot input/lifecycle integration', () => {
     tui.feedInput('\t');
     tui.feedInput('\x1b[B');
     tui.feedInput('\r');
-    await waitFor(() => root.state.selectedWorkItemData?.workItem.id === 'wi');
+    await waitFor(() => openWork(root.state).details?.workItem.id === 'wi');
     assert.equal(root.state.focus, 'content');
     assert.equal(root.editor.focused, false);
     assert.equal(tui.focusCalls.at(-1), null);
     root.state.setOffline();
-    assert.equal(root.state.view, 'work-item');
+    assert.equal(root.state.route.kind, 'work');
     assert.match(root.render(80).join('\n'), /Item wi/);
   });
 
@@ -880,7 +882,7 @@ describe('AppRoot input/lifecycle integration', () => {
     root.state.navigateToWorkItem('wi');
     root.state.pendingConfirm = { kind: 'state', state: 'done' };
     tui.feedInput('\x1b');
-    assert.equal(root.state.view, 'work-item');
+    assert.equal(root.state.route.kind, 'work');
     assert.equal(root.state.pendingConfirm, null);
     root.state.pendingConfirm = { kind: 'state', state: 'done' };
     tui.feedInput('\x1b[B');
@@ -935,19 +937,15 @@ describe('AppRoot input/lifecycle integration', () => {
   });
 });
 
-describe('AppRoot detailsPoller runs from start', () => {
+describe('AppRoot details refresh', () => {
   it('fetches work item details when selected and refresh is triggered', async () => {
     const { root, server } = makeRoot();
     const fake = server;
     fake.workItemByIdResponse['wi-7'] = detailsOf('wi-7', 'active');
-    root.state.selectedWorkItemId = 'wi-7';
-    root.state.view = 'work-item';
-    // Simulate a fresh poller start without the full start() (no need for input listeners).
-    (root as unknown as { detailsPoller: { start: () => void; refresh: () => void } }).detailsPoller.start();
-    // Drive refresh directly.
-    (root as unknown as { triggerDetailsRefresh: () => void }).triggerDetailsRefresh();
-    await new Promise((r) => setTimeout(r, 20));
-    assert.equal(root.state.selectedWorkItemData?.workItem.id, 'wi-7');
+    root.state.route = { kind: 'work', id: 'wi-7', details: null };
+    // Fetch directly, without the full start() (no need for input listeners).
+    await (root as unknown as { refresh: { fetchDetails: (signal: AbortSignal) => Promise<void> } }).refresh.fetchDetails(new AbortController().signal);
+    assert.equal(openWork(root.state).details?.workItem.id, 'wi-7');
     root.stop();
   });
 });
@@ -976,7 +974,7 @@ describe('Home-only quick-start dock', () => {
     }
     root.state.setFocus('editor');
     assert.equal(root.state.focus, 'content');
-    root.state.navigateToDashboard();
+    root.state.navigateHome();
     tui.feedInput('n');
     assert.equal(root.state.focus, 'editor');
     assert.match(root.render(120).join('\n'), /Quick start/);
@@ -1057,7 +1055,7 @@ describe('Cold rendering and drafts', () => {
     tui.feedInput('\x1b[200~' + prompt + '\x1b[201~');
     assert.equal(root.editor.getExpandedText(), prompt);
     root.state.navigateToWorkItem('other'); root.render(50);
-    root.state.navigateToDashboard(); root.state.setFocus('editor');
+    root.state.navigateHome(); root.state.setFocus('editor');
     const lines = root.render(50);
     assert.equal(root.editor.getExpandedText(), prompt);
     assert.ok(lines.every(line => visibleWidth(line) <= 50));
@@ -1134,12 +1132,12 @@ describe('AppRoot mouse', () => {
     const { root, server } = mouseRoot();
     server.workItemByIdResponse.b = detailsOf('b');
     clickText(root, 'Item b');
-    assert.equal(root.state.view, 'work-item');
-    assert.equal(root.state.selectedWorkItemId, 'b');
+    assert.equal(root.state.route.kind, 'work');
+    assert.equal(openWork(root.state).id, 'b');
     clickText(root, 'Home');
-    assert.equal(root.state.view, 'dashboard');
+    assert.equal(root.state.route.kind, 'home');
     clickText(root, 'Recent item');
-    await waitFor(() => root.state.selectedWorkItemId === 'y');
+    await waitFor(() => openWork(root.state).id === 'y');
     root.stop();
   });
 
@@ -1155,7 +1153,7 @@ describe('AppRoot mouse', () => {
     clickText(root, '#7');
     assert.deepEqual(opened, ['https://github.invalid/org/repo/pull/7']);
     clickText(root, 'Esc back');
-    assert.equal(root.state.view, 'dashboard');
+    assert.equal(root.state.route.kind, 'home');
     clickText(root, 'n new');
     assert.equal(root.state.focus, 'editor');
     root.stop();

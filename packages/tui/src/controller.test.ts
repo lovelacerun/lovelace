@@ -4,6 +4,7 @@ import type { DashboardResponse, Launch, LaunchResponse, WorkItemDetails } from 
 import { fakeClient, serverError, type FakeHandlers } from '@lovelace/client/testing';
 import { AppState } from './state.js';
 import { handleKey, handleAction, submitLaunch, abandonLaunchIntent, type ControllerDeps } from './controller.js';
+import { openWork } from './test-support.js';
 
 function dash(overrides: Partial<DashboardResponse> = {}): DashboardResponse {
   return {
@@ -52,11 +53,9 @@ function makeDeps(overrides: Partial<Omit<ControllerDeps, 'client'>> & { handler
   return {
     client,
     refreshDashboard: () => {},
-    startJiraWork: () => {},
-    startReview: async () => {},
+    openLaunchDialog: () => {},
     refreshDetails: () => {},
-    submitLaunch: async () => {},
-    openSession: async () => {},
+    submitLaunch: async () => true,
     openUrl: async () => {},
     resetEditor: () => {},
     focusEditor: () => {},
@@ -99,8 +98,8 @@ describe('handleAction navigation', () => {
     let refreshed = 0;
     await handleAction(state, { kind: 'navigate', entry: { kind: 'work', id: 'wi-1' } },
       makeDeps({ refreshDetails: () => { refreshed++; } }));
-    assert.equal(state.view, 'work-item');
-    assert.equal(state.selectedWorkItemId, 'wi-1');
+    assert.equal(state.route.kind, 'work');
+    assert.equal(openWork(state).id, 'wi-1');
     assert.equal(refreshed, 1);
   });
 });
@@ -130,8 +129,8 @@ describe('submitLaunch flows', () => {
     assert.equal(state.drafts.get('home')!.text, '');
     assert.equal(state.drafts.get('home')!.repoIds, undefined);
     assert.equal(state.drafts.get('home')!.requestId, undefined);
-    assert.equal(state.view, 'work-item');
-    assert.equal(state.selectedWorkItemId, 'wi-new');
+    assert.equal(state.route.kind, 'work');
+    assert.equal(openWork(state).id, 'wi-new');
     assert.equal(state.error, null);
   });
 });
@@ -211,7 +210,7 @@ describe('submitLaunch requestId lifecycle', () => {
     assert.equal(sends, 1, 'the recorded launch answers the resend');
     assert.equal(state.error, null);
     assert.equal(state.drafts.get('home')!.requestId, undefined);
-    assert.equal(state.selectedWorkItemId, 'wi-new');
+    assert.equal(openWork(state).id, 'wi-new');
   });
 
   it('passes the exact prompt (including trailing whitespace) through to the server', async () => {
@@ -237,6 +236,6 @@ describe('launch retry', () => {
     const deps = makeDeps({ handlers: { 'launches.retry': async ({ id }) => { retried.push(id); return accepted('wi-1', id); } } });
     await handleAction(state, { kind: 'launch-retry', launchId: 'launch-1' }, deps);
     assert.deepEqual(retried, ['launch-1']);
-    assert.equal(state.selectedWorkItemData!.launches[0]!.state, 'accepted');
+    assert.equal(openWork(state).details!.launches[0]!.state, 'accepted');
   });
 });
