@@ -1,8 +1,11 @@
 # @lovelace/server
 
 Local HTTP server: SQLite state, provider sync, prompts, Coriol workspaces and
-agent sessions in Herdr. The SQLite schema lives in the create statements; there
-are no migrations. Harnesses are detected by executable only; Lovelace does not
+agent sessions in Herdr. The SQLite schema lives in the versioned migrations in
+`src/migrations.ts`, tracked by `user_version`. On startup the server backs up an
+outdated `state.db` to `backups/state-v<from>-<timestamp>.db` in the Lovelace
+directory, applies each pending migration in its own transaction, and refuses a
+database from a newer Lovelace. Migrations are append-only. Harnesses are detected by executable only; Lovelace does not
 probe their model catalogs.
 
 ## Herdr

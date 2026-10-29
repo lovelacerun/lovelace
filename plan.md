@@ -4,8 +4,8 @@
 
 In order:
 
-1. Versioned schema migrations that upgrade existing databases on startup
-   (`user_version`, backup before migrating, refuse newer databases).
+1. ~~Versioned schema migrations that upgrade existing databases on startup
+   (`user_version`, backup before migrating, refuse newer databases).~~ Done.
 2. Removals:
    - Pull request release checks. Revisit as a plugin.
    - `jira-software-client` (unused).

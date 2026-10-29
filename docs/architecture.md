@@ -29,7 +29,8 @@ boundary.
 
 ## Data model
 
-`state.db` (`packages/server/src/database.ts`):
+`state.db` (`packages/server/src/database.ts`, schema in the versioned
+`packages/server/src/migrations.ts`):
 
 | Table | Holds |
 | --- | --- |

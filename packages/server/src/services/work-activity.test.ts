@@ -50,8 +50,9 @@ test('additive activity schema preserves legacy work/metas and invents no v3 his
   const { database, config } = await fixture(t);
   const work = createManualWorkItem(database, { title: 'Legacy' });
   addWorkItemMetas(database, work.id, [{ metaType: 'tracker-item', provider: 'jira', externalId: '1', payload: { key: 'PROJ-1' } }]);
-  // Simulate a v3 database that had no activity table. This is temporary fixture state only.
+  // Simulate an unversioned v3 database that had no activity table. This is temporary fixture state only.
   database.db.exec('drop table work_activity');
+  database.db.exec('pragma user_version = 0');
   database.db.close();
   const reopened = openDatabase(config);
   try {
