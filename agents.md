@@ -16,7 +16,11 @@ pnpm restart:server          # pick up a new build in the background server
 ```
 
 Builds never install or restart anything; restart the server explicitly
-instead of starting a second one. For manual Herdr checks use a separate named
+instead of starting a second one.
+
+A change is done only after `pnpm build && pnpm restart:server` has run and
+the behaviour has been checked in the running server, TUI or CLI. Stop any dev
+servers you started. For manual Herdr checks use a separate named
 session (`herdr --session <name> server`), never the user's own.
 
 Releases: push a `v<version>` tag matching `packages/cli/package.json`; CI
@@ -81,6 +85,11 @@ user's Herdr panes. Use temporary SQLite, the fake Herdr in
 
 - TypeScript, ESM, Node 24. Pin exact dependency versions.
 - Small focused modules. Extract repetition, not speculative frameworks.
+- Replacing something means deleting the old version in the same change: no
+  compatibility shims, adapters or fallbacks unless asked.
+- Company- or team-specific behaviour (release tags, topics, hosts) lives in
+  config or `examples/`, never in core code or defaults. Only the server
+  caches; clients never keep their own cache.
 - Prefer `@nkzw/core` helpers and generated provider clients over hand-written
   ones; import types instead of copying them.
 - Conventional Commits in English.
