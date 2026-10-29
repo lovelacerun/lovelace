@@ -11,8 +11,8 @@ import { notFound, procedure, requestError, router, type Context } from '../trpc
 import { newSessionInput, quickStartInput, uuid } from './schemas.js';
 
 export const dashboardRouter = router({
-  get: procedure.query(({ ctx: { database, github, jira, config } }) => buildDashboard({
-    database, github, jira, settings: {
+  get: procedure.query(({ ctx: { database, codeHost, tracker, config } }) => buildDashboard({
+    database, codeHost, tracker, settings: {
       defaultAgent: config.defaultAgent, sidebarSide: config.tui.sidebarSide,
       repositoryTopics: config.github?.repositoryTopics ?? [],
     }, syncIntervalMs: config.syncIntervalMs,
@@ -27,7 +27,7 @@ function launchRunner(ctx: Context) {
   function reviewSourceFor(workItemId: string, repoId: string) {
     const fullName = database.listRepos().find(repo => repo.id === repoId)?.fullName.toLowerCase();
     return database.listAttachmentsOfType('change-request', workItemId)
-      .find(attachment => attachment.payload.repoFullName.toLowerCase() === fullName);
+      .find(attachment => attachment.payload.repository.toLowerCase() === fullName);
   }
 
   return async (launch: Launch): Promise<void> => {
@@ -35,7 +35,7 @@ function launchRunner(ctx: Context) {
       database.setLaunchState(launch.id, 'preparing');
       const details = await attachRepositoriesToExistingWorkItem(ctx, launch.workItemId,
         launch.repoIds.map((repoId, index) => {
-          // A repository with an attached pull request is checked out at its branch.
+          // A repository with an attached review request is checked out at its branch.
           const review = reviewSourceFor(launch.workItemId, repoId);
           return { repoId, role: index === 0 ? 'primary' : 'secondary', workspaceMode: review ? 'change-request' : 'fresh', sourceExternalId: review?.externalId ?? null };
         }));
@@ -82,27 +82,27 @@ async function sendLaunch(launch: () => Promise<LaunchResponse> | LaunchResponse
 const onError = (ctx: Context) => (error: unknown) => ctx.logger.error({ err: error }, 'Background launch failed');
 
 export const launchesRouter = router({
-  /** Creates a work item from the prompt (and optional Jira issue or review request) and launches an agent in it. */
+  /** Creates a work item from the prompt (and optional tracker issue or review request) and launches an agent in it. */
   quickStart: procedure.input(quickStartInput).mutation(({ ctx, input }) => {
     const { requestId, wait, ...rest } = input;
-    const intent: QuickStartRequest = { ...rest, jiraIssueId: rest.jiraIssueId ?? null, reviewRequestId: rest.reviewRequestId ?? null };
-    const { database, github, jira } = ctx;
+    const intent: QuickStartRequest = { ...rest, trackerIssueId: rest.trackerIssueId ?? null, reviewRequestId: rest.reviewRequestId ?? null };
+    const { database, codeHost, tracker } = ctx;
     return sendLaunch(() => startLaunch(database, {
       id: requestId, wait, kind: 'quick-start', request: intent, run: launchRunner(ctx), onError: onError(ctx),
       prepare() {
-        const issue = intent.jiraIssueId ? jira.peekAssignedIssues()?.value.find((entry) => entry.id === intent.jiraIssueId) : null;
-        if (intent.jiraIssueId && !issue) throw new LaunchRequestError(400, 'jiraIssueId not found in cached Jira issues');
-        const review = intent.reviewRequestId ? github.peekReviewRequests()?.value.find((entry) => entry.id === intent.reviewRequestId) : null;
+        const issue = intent.trackerIssueId ? tracker.peekAssignedIssues()?.value.find((entry) => entry.id === intent.trackerIssueId) : null;
+        if (intent.trackerIssueId && !issue) throw new LaunchRequestError(400, `trackerIssueId not found in cached ${tracker.name} issues`);
+        const review = intent.reviewRequestId ? codeHost.peekReviewRequests()?.value.find((entry) => entry.id === intent.reviewRequestId) : null;
         if (intent.reviewRequestId && !review) throw new LaunchRequestError(400, 'reviewRequestId not found in cached review requests');
         validateSelection(ctx, intent);
-        if (review && !database.listRepos().some(repo => intent.repoIds?.includes(repo.id) && repo.fullName.toLowerCase() === review.repoFullName.toLowerCase())) {
-          throw new LaunchRequestError(400, `Select ${review.repoFullName} to review its pull request`);
+        if (review && !database.listRepos().some(repo => intent.repoIds?.includes(repo.id) && repo.fullName.toLowerCase() === review.repository.toLowerCase())) {
+          throw new LaunchRequestError(400, `Select ${review.repository} to review its change request`);
         }
         const work = createActiveWorkItem(database, {
-          title: issue ? `${issue.key}: ${issue.title}` : review ? `${review.repoFullName}#${review.number}: ${review.title}` : deriveTitleFromPrompt(intent.prompt),
+          title: issue ? `${issue.key}: ${issue.title}` : review ? `${review.repository}#${review.number}: ${review.title}` : deriveTitleFromPrompt(intent.prompt),
           attachments: [
-            ...issue ? [{ type: 'tracker-item' as const, provider: 'jira', externalId: issue.id, payload: issue }] : [],
-            ...review ? [{ type: 'change-request' as const, provider: 'github', externalId: review.id, payload: review }] : [],
+            ...issue ? [{ type: 'tracker-item' as const, provider: tracker.provider, externalId: issue.id, payload: issue }] : [],
+            ...review ? [{ type: 'change-request' as const, provider: codeHost.provider, externalId: review.id, payload: review }] : [],
           ],
         });
         return { workItemId: work.id, ...launchFields(ctx, intent) };

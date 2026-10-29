@@ -12,12 +12,12 @@ test('launch wait:false submits once and returns acceptance; lookup reads and re
     requests.push({ path: url.pathname, input: JSON.parse(String(init?.body ?? url.searchParams.get('input'))) });
     return Response.json({ result: { data: accepted } });
   });
-  assert.deepEqual(await client.launches.quickStart.mutate({ prompt: '  Exact\n', jiraIssueId: '42', agentId: 'claude', requestId: 'id', repoIds: ['repo'], promptId: 'refine', wait: false }), accepted);
+  assert.deepEqual(await client.launches.quickStart.mutate({ prompt: '  Exact\n', trackerIssueId: '42', agentId: 'claude', requestId: 'id', repoIds: ['repo'], promptId: 'refine', wait: false }), accepted);
   assert.deepEqual(await client.launches.newSession.mutate({ workItemId: 'work/1', prompt: 'Retry\n', agentId: 'pi', options: { pi: { thinkingLevel: 'high' } }, requestId: 'id2', wait: false }), accepted);
   assert.deepEqual(await client.launches.get.query({ id: 'id/2' }), accepted);
   assert.deepEqual(await client.launches.retry.mutate({ id: 'id/3' }), accepted);
   assert.deepEqual(requests, [
-    { path: '/trpc/launches.quickStart', input: { prompt: '  Exact\n', jiraIssueId: '42', agentId: 'claude', requestId: 'id', repoIds: ['repo'], promptId: 'refine', wait: false } },
+    { path: '/trpc/launches.quickStart', input: { prompt: '  Exact\n', trackerIssueId: '42', agentId: 'claude', requestId: 'id', repoIds: ['repo'], promptId: 'refine', wait: false } },
     { path: '/trpc/launches.newSession', input: { workItemId: 'work/1', prompt: 'Retry\n', agentId: 'pi', options: { pi: { thinkingLevel: 'high' } }, requestId: 'id2', wait: false } },
     { path: '/trpc/launches.get', input: { id: 'id/2' } },
     { path: '/trpc/launches.retry', input: { id: 'id/3' } },

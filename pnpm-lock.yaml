@@ -85,12 +85,6 @@ importers:
 
   packages/core:
     dependencies:
-      '@lovelace/github-client':
-        specifier: workspace:*
-        version: link:../github-client
-      '@lovelace/jira-client':
-        specifier: workspace:*
-        version: link:../jira-client
       '@lovelace/model-catalog':
         specifier: workspace:*
         version: link:../model-catalog

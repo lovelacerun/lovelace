@@ -1,13 +1,12 @@
 import type { Cached, CacheStore } from '@lovelace/cache';
-import type { GitHubClient, GitHubPullRequestDetails, GitHubPullRequestStatus, GitHubReviewRequest, RepoRecord } from '@lovelace/github-client';
-import type { JiraClient, JiraIssueSummary, JiraProjectSummary } from '@lovelace/jira-client';
+import type { ChangeRequest, Repository, TrackerIssue } from '@lovelace/core';
 import { listModels, type HarnessModel } from '@lovelace/model-catalog';
 import { executableSearchPath } from './tools/executables.js';
 import type { LoadedTool } from './tools/tool-loader.js';
+import { changeRequestId, type ChangeRequestRef, type CodeHost, type Tracker } from './providers/types.js';
 
 /** Lists refreshed by the scheduled sync. */
 const LIST_TTL_MS = 5 * 60_000;
-const PROJECTS_TTL_MS = 24 * 60 * 60_000;
 /** Per-item lookups: short enough for interactive freshness, long enough to absorb bursts. */
 const DETAIL_TTL_MS = 60_000;
 /** Harness model catalogs change with harness updates, not by the minute. */
@@ -25,51 +24,52 @@ function resource<T>(cache: CacheStore, key: string, ttlMs: number, fetch: (sign
   return { read: () => cache.read(request), refresh: () => cache.refresh(request), peek: () => cache.peek(key, validate) };
 }
 
-/** Per-item lookups stay in memory: their durable copy lives in work-item metas. */
+/** Per-item lookups stay in memory: their durable copy lives in attachments. */
 function detail<T>(cache: CacheStore, key: string, fetch: (signal: AbortSignal) => Promise<T>): Resource<T> {
   return resource(cache, key, DETAIL_TTL_MS, fetch, undefined, false);
 }
 
-export type CachedGitHub = ReturnType<typeof createCachedGitHub>;
+export type CachedCodeHost = ReturnType<typeof createCachedCodeHost>;
 
-/** GitHub reads through the cache. Method shapes match `GitHubClient`, plus explicit refresh/peek. */
-export function createCachedGitHub(cache: CacheStore, github: GitHubClient) {
+/** Code host reads through the cache, plus explicit refresh/peek. */
+export function createCachedCodeHost(cache: CacheStore, codeHost: CodeHost) {
+  const prefix = `codeHost.${codeHost.provider}`;
   // The catalog's durable copy is the `repos` table; the cache only coalesces refreshes.
-  const repositories = resource(cache, 'github.repoCatalog', LIST_TTL_MS, (signal) => github.fetchRepositories({ signal }), isArray<RepoRecord>, false);
-  const reviews = resource(cache, 'github.reviewRequests', LIST_TTL_MS, (signal) => github.fetchReviewRequests({ signal }), isArray<GitHubReviewRequest>);
-  const status = (repoFullName: string, number: number) => detail<GitHubPullRequestStatus | null>(cache, `github.pullRequestStatus:${repoFullName}#${number}`,
-    (signal) => github.fetchPullRequestStatus(repoFullName, number, { signal }));
-  const details = (repoFullName: string, number: number) => detail<GitHubPullRequestDetails | null>(cache, `github.pullRequestDetails:${repoFullName}#${number}`,
-    (signal) => github.fetchPullRequestDetails(repoFullName, number, { signal }));
+  const repositories = resource(cache, `${prefix}.repositories`, LIST_TTL_MS, (signal) => codeHost.fetchRepositories({ signal }), isArray<Repository>, false);
+  const reviews = resource(cache, `${prefix}.reviewRequests`, LIST_TTL_MS, (signal) => codeHost.fetchReviewRequests({ signal }), isChangeRequests);
+  const changeRequest = (ref: ChangeRequestRef) => detail(cache, `${prefix}.changeRequest:${changeRequestId(ref)}`,
+    (signal) => codeHost.fetchChangeRequest(ref, { signal }));
   return {
-    isConfigured: () => github.isConfigured(),
+    provider: codeHost.provider,
+    name: codeHost.name,
+    isConfigured: () => codeHost.isConfigured(),
+    parseChangeRequestUrl: (url: string) => codeHost.parseChangeRequestUrl(url),
     fetchRepositories: repositories.read,
     refreshRepositories: repositories.refresh,
     peekRepositories: repositories.peek,
-    fetchReviewRequests: reviews.read,
     refreshReviewRequests: reviews.refresh,
     peekReviewRequests: reviews.peek,
-    fetchPullRequestStatus: (repoFullName: string, number: number) => status(repoFullName, number).read(),
-    refreshPullRequestStatus: (repoFullName: string, number: number) => status(repoFullName, number).refresh(),
-    fetchPullRequestDetails: (repoFullName: string, number: number) => details(repoFullName, number).read(),
+    fetchChangeRequest: (ref: ChangeRequestRef) => changeRequest(ref).read(),
+    refreshChangeRequest: (ref: ChangeRequestRef) => changeRequest(ref).refresh(),
   };
 }
 
-export type CachedJira = ReturnType<typeof createCachedJira>;
+export type CachedTracker = ReturnType<typeof createCachedTracker>;
 
-/** Jira reads through the cache. Method shapes match `JiraClient`, plus explicit refresh/peek. */
-export function createCachedJira(cache: CacheStore, jira: JiraClient) {
-  const assigned = resource(cache, 'jira.assigned', LIST_TTL_MS, (signal) => jira.fetchAssignedIssues({ signal }), isIssues);
-  const projects = resource(cache, 'jira.projects', PROJECTS_TTL_MS, (signal) => jira.fetchProjects({ signal }), isArray<JiraProjectSummary>);
-  const issue = (keyOrId: string) => detail(cache, `jira.issue:${keyOrId}`, (signal) => jira.fetchIssue(keyOrId, { signal }));
+/** Tracker reads through the cache, plus explicit refresh/peek. */
+export function createCachedTracker(cache: CacheStore, tracker: Tracker) {
+  const prefix = `tracker.${tracker.provider}`;
+  const assigned = resource(cache, `${prefix}.assignedIssues`, LIST_TTL_MS, (signal) => tracker.fetchAssignedIssues({ signal }), isIssues);
+  const issue = (idOrKey: string) => detail(cache, `${prefix}.issue:${idOrKey}`, (signal) => tracker.fetchIssue(idOrKey, { signal }));
   return {
-    isConfigured: () => jira.isConfigured(),
+    provider: tracker.provider,
+    name: tracker.name,
+    isConfigured: () => tracker.isConfigured(),
+    parseIssueRef: (input: { key?: string; url?: string }) => tracker.parseIssueRef(input),
     refreshAssignedIssues: assigned.refresh,
     peekAssignedIssues: assigned.peek,
-    refreshProjects: projects.refresh,
-    peekProjects: projects.peek,
-    fetchIssue: (keyOrId: string) => issue(keyOrId).read(),
-    refreshIssue: (keyOrId: string) => issue(keyOrId).refresh(),
+    fetchIssue: (idOrKey: string) => issue(idOrKey).read(),
+    refreshIssue: (idOrKey: string) => issue(idOrKey).refresh(),
   };
 }
 
@@ -90,11 +90,19 @@ function isArray<T>(value: unknown): value is T[] {
   return Array.isArray(value);
 }
 
-function isIssues(value: unknown): value is JiraIssueSummary[] {
+function isIssues(value: unknown): value is TrackerIssue[] {
   return Array.isArray(value) && value.every((entry) => {
     const issue = entry as Record<string, unknown> | null;
     return Boolean(issue) && ['id', 'key', 'title', 'url', 'updatedAt'].every((key) => typeof issue![key] === 'string')
-      && issue!.id !== '' && issue!.key !== ''
-      && ['status', 'issueType', 'statusCategory'].every((key) => issue![key] === null || typeof issue![key] === 'string');
+      && issue!.id !== '' && issue!.key !== '' && typeof issue!.done === 'boolean'
+      && ['status', 'issueType'].every((key) => issue![key] === null || typeof issue![key] === 'string');
+  });
+}
+
+function isChangeRequests(value: unknown): value is ChangeRequest[] {
+  return Array.isArray(value) && value.every((entry) => {
+    const request = entry as Record<string, unknown> | null;
+    return Boolean(request) && ['id', 'repository', 'title', 'url', 'status', 'updatedAt'].every((key) => typeof request![key] === 'string')
+      && Number.isInteger(request!.number);
   });
 }

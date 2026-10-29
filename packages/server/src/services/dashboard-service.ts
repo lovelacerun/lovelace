@@ -1,9 +1,8 @@
 import {
-  isJiraStatusTerminal,
   isLaunchInProgress,
   type DashboardSettings,
   type DashboardFreshness,
-  type DashboardJiraIssue,
+  type DashboardIssue,
   type DashboardResponse,
   type DashboardReview,
   type DashboardRecent,
@@ -13,13 +12,13 @@ import {
 } from '@lovelace/core';
 import groupBy from '@nkzw/core/groupBy.js';
 import type { DatabaseState, LaunchRecord, WorkActivityRow } from '../database.js';
-import type { CachedGitHub, CachedJira } from '../cached-providers.js';
+import type { CachedCodeHost, CachedTracker } from '../cached-providers.js';
 import { pendingReviewRequests } from './review-request-service.js';
 
 interface DashboardDeps {
   database: DatabaseState;
-  github: Pick<CachedGitHub, 'peekRepositories' | 'peekReviewRequests'>;
-  jira: Pick<CachedJira, 'peekAssignedIssues'>;
+  codeHost: Pick<CachedCodeHost, 'provider' | 'peekRepositories' | 'peekReviewRequests'>;
+  tracker: Pick<CachedTracker, 'provider' | 'peekAssignedIssues'>;
   settings: DashboardSettings;
   syncIntervalMs: number;
   /** Allows deterministic recent-activity windows in tests. Server passes `new Date()`. */
@@ -37,14 +36,14 @@ export function buildDashboard(deps: DashboardDeps): DashboardResponse {
     .map((item) => toSummary(item, attachmentsByWorkItemId.get(item.id) ?? [], launchesByWorkItemId.get(item.id) ?? []))
     .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 
-  const pendingJiraIssues = buildPendingJiraIssues(deps.jira, deps.database, workItems, attachmentsByWorkItemId);
-  const pendingReviews = buildPendingReviews(deps.database, deps.github);
+  const pendingIssues = buildPendingIssues(deps.tracker, deps.database, workItems, attachmentsByWorkItemId);
+  const pendingReviews = buildPendingReviews(deps.database, deps.codeHost);
   const recent = buildRecent(deps.database, workItems, attachmentsByWorkItemId, launchesByWorkItemId, now);
   const freshness = buildFreshness(deps, deps.syncIntervalMs, now);
 
   return {
     activeWorkItems,
-    pendingJiraIssues,
+    pendingIssues,
     pendingReviews,
     recent,
     settings: deps.settings,
@@ -52,24 +51,24 @@ export function buildDashboard(deps: DashboardDeps): DashboardResponse {
   };
 }
 
-function buildPendingJiraIssues(
-  jira: DashboardDeps['jira'],
+function buildPendingIssues(
+  tracker: DashboardDeps['tracker'],
   database: DatabaseState,
   workItems: WorkItem[],
   attachmentsByWorkItemId: Map<string, WorkItemAttachment[]>,
-): DashboardJiraIssue[] {
-  const issues = jira.peekAssignedIssues()?.value ?? [];
+): DashboardIssue[] {
+  const issues = tracker.peekAssignedIssues()?.value ?? [];
   const hiddenInboxIds = new Set(database.listInboxMeta()
-    .filter((meta) => meta.sourceType === 'tracker-item' && meta.provider === 'jira')
+    .filter((meta) => meta.sourceType === 'tracker-item' && meta.provider === tracker.provider)
     .filter((meta) => meta.state === 'dismissed')
     .map((meta) => meta.externalId));
   const activeAttachedIds = new Set<string>();
   const activeAttachedKeys = new Set<string>();
   for (const workItem of workItems) {
-    // Local completion is not an invitation to start the same Jira issue again.
+    // Local completion is not an invitation to start the same issue again.
     if (workItem.state === 'cancelled') continue;
     for (const attachment of attachmentsByWorkItemId.get(workItem.id) ?? []) {
-      if (attachment.type !== 'tracker-item' || attachment.provider !== 'jira') continue;
+      if (attachment.type !== 'tracker-item' || attachment.provider !== tracker.provider) continue;
       activeAttachedIds.add(attachment.externalId);
       if (attachment.payload.key) activeAttachedKeys.add(attachment.payload.key.toUpperCase());
     }
@@ -79,8 +78,8 @@ function buildPendingJiraIssues(
     .filter((issue) => !activeAttachedIds.has(issue.id))
     .filter((issue) => !activeAttachedKeys.has(issue.key.toUpperCase()))
     .filter((issue) => !hiddenInboxIds.has(issue.id) && !hiddenInboxIds.has(issue.key))
-    .filter((issue) => issue.statusCategory ? issue.statusCategory.trim().toLowerCase() !== 'done' : !isJiraStatusTerminal(issue.status))
-    .map((issue): DashboardJiraIssue => ({
+    .filter((issue) => !issue.done)
+    .map((issue): DashboardIssue => ({
       id: issue.id,
       key: issue.key,
       title: issue.title,
@@ -91,18 +90,18 @@ function buildPendingJiraIssues(
     }));
 }
 
-function buildPendingReviews(database: DatabaseState, github: DashboardDeps['github']): DashboardReview[] {
+function buildPendingReviews(database: DatabaseState, codeHost: DashboardDeps['codeHost']): DashboardReview[] {
   const repositories = database.listRepos();
-  return pendingReviewRequests(database, github).map((review): DashboardReview => ({
+  return pendingReviewRequests(database, codeHost).map((review): DashboardReview => ({
     id: review.id,
     number: review.number,
     title: review.title,
     url: review.url,
-    repoFullName: review.repoFullName,
-    repoId: repositories.find((repo) => repo.fullName.toLowerCase() === review.repoFullName.toLowerCase())?.id ?? null,
-    authorLogin: review.authorLogin,
-    headRefName: review.headRefName ?? null,
-    baseRefName: review.baseRefName ?? null,
+    repository: review.repository,
+    repoId: repositories.find((repo) => repo.fullName.toLowerCase() === review.repository.toLowerCase())?.id ?? null,
+    author: review.author,
+    sourceBranch: review.sourceBranch,
+    targetBranch: review.targetBranch,
     updatedAt: review.updatedAt,
   }));
 }
@@ -140,16 +139,16 @@ function buildRecent(
   };
 }
 
-function buildFreshness(deps: Pick<DashboardDeps, 'github' | 'jira'>, syncIntervalMs: number, now: Date): DashboardFreshness {
-  const jiraFetchedAt = deps.jira.peekAssignedIssues()?.fetchedAt ?? null;
-  const githubFetchedAt = [deps.github.peekRepositories()?.fetchedAt, deps.github.peekReviewRequests()?.fetchedAt]
+function buildFreshness(deps: Pick<DashboardDeps, 'codeHost' | 'tracker'>, syncIntervalMs: number, now: Date): DashboardFreshness {
+  const trackerFetchedAt = deps.tracker.peekAssignedIssues()?.fetchedAt ?? null;
+  const codeHostFetchedAt = [deps.codeHost.peekRepositories()?.fetchedAt, deps.codeHost.peekReviewRequests()?.fetchedAt]
     .reduce<string | null>((latest, fetchedAt) => (fetchedAt && (!latest || fetchedAt > latest) ? fetchedAt : latest), null);
   const staleAfter = syncIntervalMs * 2;
   return {
-    jiraFetchedAt,
-    githubFetchedAt,
-    jiraStale: isStale(jiraFetchedAt, now, staleAfter),
-    githubStale: isStale(githubFetchedAt, now, staleAfter),
+    trackerFetchedAt,
+    codeHostFetchedAt,
+    trackerStale: isStale(trackerFetchedAt, now, staleAfter),
+    codeHostStale: isStale(codeHostFetchedAt, now, staleAfter),
   };
 }
 
@@ -162,7 +161,7 @@ function isStale(fetchedAt: string | null, now: Date, staleAfter: number): boole
 
 function toSummary(workItem: WorkItem, attachments: WorkItemAttachment[], launches: LaunchRecord[]): WorkItemSummary {
   const trackerIssueKeys: string[] = [];
-  const pullRequestRefs: Array<{ repoFullName: string; number: number }> = [];
+  const changeRequestRefs: WorkItemSummary['changeRequestRefs'] = [];
   let sessionCount = 0;
   let repositoryCount = 0;
   for (const attachment of attachments) {
@@ -170,10 +169,10 @@ function toSummary(workItem: WorkItem, attachments: WorkItemAttachment[], launch
       if (attachment.payload.status !== 'ended') sessionCount += 1;
     } else if (attachment.type === 'worktree') {
       if (attachment.payload.status === 'ready') repositoryCount += 1;
-    } else if (attachment.type === 'tracker-item' && attachment.provider === 'jira') {
+    } else if (attachment.type === 'tracker-item') {
       if (attachment.payload.key) trackerIssueKeys.push(attachment.payload.key);
     } else if (attachment.type === 'pull-request') {
-      pullRequestRefs.push({ repoFullName: attachment.payload.repoFullName, number: attachment.payload.number });
+      changeRequestRefs.push({ repository: attachment.payload.repository, number: attachment.payload.number });
     }
   }
   // A launch in progress takes priority; a later launch supersedes an old failure.
@@ -191,7 +190,7 @@ function toSummary(workItem: WorkItem, attachments: WorkItemAttachment[], launch
     repositoryCount,
     ...(launchState && launchState !== 'started' ? { launchState } : {}),
     trackerIssueKeys,
-    pullRequestRefs,
+    changeRequestRefs,
   };
 }
 

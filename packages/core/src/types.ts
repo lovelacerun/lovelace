@@ -1,5 +1,3 @@
-import type { GitHubReviewRequest, PullRequestBuildStatus, PullRequestStatus, RepoRecord, ReviewDecision } from '@lovelace/github-client';
-import type { JiraIssueSummary } from '@lovelace/jira-client';
 import type { HerdrConfig, HerdrPaneRef } from './herdr.js';
 import type { SidebarSide } from './dashboard.js';
 import type { CodingHarnessId, ToolLaunchOptions, ToolLaunchOptionsById } from './harnesses.js';
@@ -18,19 +16,63 @@ export function isWorkspaceMode(value: string | undefined): value is WorkspaceMo
   return Boolean(value && WORKSPACE_MODES.includes(value as WorkspaceMode));
 }
 
-export type { GitHubReviewRequest, JiraIssueSummary, RepoRecord };
+/** A repository in the code host's catalog. */
+export interface Repository {
+  /** `<provider>:<externalId>`. */
+  id: string;
+  provider: string;
+  externalId: string;
+  name: string;
+  /** Owner and name, e.g. `org/service`. */
+  fullName: string;
+  cloneUrl: string;
+  defaultBranch: string | null;
+  isArchived: boolean;
+  topics: string[];
+  lastSyncedAt: string;
+}
 
-export interface PullRequestPayload {
-  repoFullName: string;
+/** An issue in the issue tracker. */
+export interface TrackerIssue {
+  id: string;
+  /** Human-readable key, e.g. `PROJ-123`. */
+  key: string;
+  title: string;
+  url: string;
+  project: string | null;
+  status: string | null;
+  /** The tracker considers the issue finished. */
+  done: boolean;
+  issueType: string | null;
+  author: string | null;
+  description: string | null;
+  updatedAt: string;
+}
+
+export type ChangeRequestStatus = 'draft' | 'open' | 'approved' | 'changes-requested' | 'merged' | 'closed';
+export type ChangeRequestReview = 'approved' | 'changes-requested' | 'required';
+export type ChangeRequestBuild = 'pending' | 'success' | 'failure';
+
+/** A pull or merge request on the code host. */
+export interface ChangeRequest {
+  /** `<repository>#<number>`. */
+  id: string;
+  /** Full name of the target repository. */
+  repository: string;
   number: number;
   title: string;
   url: string;
-  authorLogin: string | null;
-  headRefName: string | null;
-  baseRefName: string | null;
-  status: PullRequestStatus;
-  reviewDecision: ReviewDecision;
-  buildStatus: PullRequestBuildStatus | null;
+  author: string | null;
+  sourceBranch: string | null;
+  targetBranch: string | null;
+  status: ChangeRequestStatus;
+  review: ChangeRequestReview | null;
+  build: ChangeRequestBuild | null;
+  updatedAt: string;
+}
+
+/** A change request attached to a work item; refreshed while open. */
+export interface TrackedChangeRequest extends ChangeRequest {
   attachedAt: string;
   lastSyncedAt: string;
 }
@@ -125,10 +167,10 @@ export interface LinkAttachment<Type extends string, Payload> extends Attachment
 
 /** Everything attached to a work item, discriminated by `type`. */
 export type WorkItemAttachment =
-  | LinkAttachment<'tracker-item', JiraIssueSummary>
+  | LinkAttachment<'tracker-item', TrackerIssue>
   /** Review request the work item was started from. */
-  | LinkAttachment<'change-request', GitHubReviewRequest>
-  | LinkAttachment<'pull-request', PullRequestPayload>
+  | LinkAttachment<'change-request', ChangeRequest>
+  | LinkAttachment<'pull-request', TrackedChangeRequest>
   | AttachmentOfType<'herdr-workspace', HerdrWorkspacePayload>
   | AttachmentOfType<'worktree', Worktree>
   | AttachmentOfType<'session', AgentSession>;

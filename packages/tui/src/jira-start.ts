@@ -1,7 +1,7 @@
-import type { RepoRecord } from '@lovelace/core';
+import type { Repository } from '@lovelace/core';
 
 /** Name terms intersect; comma-separated topics within a topic: term are alternatives. */
-export function filterRepositories(repositories: RepoRecord[], query: string): RepoRecord[] {
+export function filterRepositories(repositories: Repository[], query: string): Repository[] {
   const terms = query.toLowerCase().trim().split(/\s+/).filter(Boolean);
   return repositories.filter(repo => terms.every(term => {
     if (term.startsWith('topic:')) {

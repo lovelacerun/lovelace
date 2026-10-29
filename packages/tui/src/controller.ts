@@ -235,7 +235,7 @@ export async function submitLaunch(
       ? await deps.client.launches.newSession.mutate({ workItemId, ...launch }, request)
       : await deps.client.launches.quickStart.mutate({
         ...launch,
-        jiraIssueId: state.view === 'jira' ? state.selectedJira?.id : undefined,
+        trackerIssueId: state.view === 'jira' ? state.selectedJira?.id : undefined,
         reviewRequestId: state.view === 'review' ? state.selectedReview?.id : undefined,
       }, request));
     deps.signal?.throwIfAborted();

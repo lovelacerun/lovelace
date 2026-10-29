@@ -8,6 +8,6 @@ export const workspacesRouter = router({
   }),
 
   /** Removes worktrees of work items completed longer than the retention period. */
-  cleanup: procedure.mutation(({ ctx: { database, github, logger, workspaceManager } }) =>
-    cleanupManagedWorktrees({ database, github, logger, workspaceManager })),
+  cleanup: procedure.mutation(({ ctx: { database, codeHost, logger, workspaceManager } }) =>
+    cleanupManagedWorktrees({ database, codeHost, logger, workspaceManager })),
 });

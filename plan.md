@@ -17,8 +17,8 @@ In order:
    and in-flight request ID.~~ Done.
 5. ~~Typed API: a tRPC router on the server; clients infer every
    procedure's types from it.~~ Done.
-6. Provider-neutral domain types (`Repository`, `TrackerIssue`,
-   `ChangeRequest`) with tracker and code host interfaces in the server.
+6. ~~Provider-neutral domain types (`Repository`, `TrackerIssue`,
+   `ChangeRequest`) with tracker and code host interfaces in the server.~~ Done.
 7. Validated config, split into server config and client settings; fewer
    environment overrides.
 8. TUI: a route union for navigation, split `app.ts`, one launch dialog.

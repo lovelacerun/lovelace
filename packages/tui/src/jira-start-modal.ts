@@ -1,7 +1,7 @@
 import type { Component, Editor, TuiAltScreen, TuiMouseEvent, TuiMouseEventResult } from '@earendil-works/pi-tui';
 import { Input, isKeyRelease, matchesKey, stripTerminalSequences } from '@earendil-works/pi-tui';
 import type { LovelaceClient } from '@lovelace/client';
-import type { DashboardJiraIssue, JiraIssueSummary, PromptTemplate, RepoRecord } from '@lovelace/core';
+import type { DashboardIssue, TrackerIssue, PromptTemplate, Repository } from '@lovelace/core';
 import type { AppState } from './state.js';
 import { filterRepositories } from './jira-start.js';
 import {
@@ -41,7 +41,7 @@ export class JiraStartModal implements Component {
   readonly editor: Editor;
   readonly launchOptions: LaunchOptionsRow;
   readonly templateMenu = new Dropdown(selectTheme('template'), value => void this.chooseTemplate(value || undefined));
-  repositories: RepoRecord[];
+  repositories: Repository[];
   templates: PromptTemplate[];
   loading = true;
   renderingPrompt = false;
@@ -69,7 +69,7 @@ export class JiraStartModal implements Component {
   private templateId?: string;
   private readonly lifetime = new AbortController();
   private readonly draftKey: string;
-  private issue: DashboardJiraIssue | JiraIssueSummary;
+  private issue: DashboardIssue | TrackerIssue;
   private readonly abort = () => this.lifetime.abort();
 
   constructor(private readonly options: JiraStartModalOptions) {
@@ -110,7 +110,7 @@ export class JiraStartModal implements Component {
     const { client, state } = this.options;
     const signal = this.lifetime.signal;
     const [templates, repositories, issues, tools] = await Promise.allSettled([
-      client.prompts.list.query(undefined, { signal }), client.repositories.list.query(undefined, { signal }), client.jira.issues.query(undefined, { signal }), client.tools.list.query(undefined, { signal }),
+      client.prompts.list.query(undefined, { signal }), client.repositories.list.query(undefined, { signal }), client.tracker.issues.query(undefined, { signal }), client.tools.list.query(undefined, { signal }),
     ]);
     if (!this.active) return;
     let loadError: string | null = null;
@@ -169,7 +169,7 @@ export class JiraStartModal implements Component {
     this.templateMenu.setItems([{ value: '', label: 'Manual prompt' }, ...this.templates.map(template => ({ value: template.id, label: template.title }))], this.templateId ?? '');
   }
 
-  get visibleRepositories(): RepoRecord[] {
+  get visibleRepositories(): Repository[] {
     const topics = this.topicFilter.getValue().split(/[\s,]+/).filter(Boolean).join(',');
     return filterRepositories(this.repositories, `${this.nameFilter.getValue()} ${topics ? 'topic:' + topics : ''}`)
       .filter(repo => this.showArchived || !repo.isArchived);

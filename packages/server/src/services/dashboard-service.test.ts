@@ -3,8 +3,8 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
-import type { JiraIssueSummary, LovelaceConfig } from '@lovelace/core';
-import { fixtureProviders, storedSnapshot } from '../test-support/providers.js';
+import type { LovelaceConfig, TrackerIssue } from '@lovelace/core';
+import { fixtureProviders, storedSnapshot, trackerIssue } from '../test-support/providers.js';
 import { openDatabase } from '../database.js';
 import { createActiveWorkItem, createManualWorkItem } from '../repositories/work-item-repository.js';
 import { buildDashboard, startOfPreviousLocalDay } from './dashboard-service.js';
@@ -21,25 +21,11 @@ function configForRoot(root: string): LovelaceConfig {
   };
 }
 
-function jiraIssue(id: string, overrides: Partial<JiraIssueSummary> = {}): JiraIssueSummary {
-  return {
-    id,
-    key: `PROJ-${id}`,
-    title: `Issue ${id}`,
-    url: `https://jira.example.com/browse/PROJ-${id}`,
-    project: 'PROJ',
-    status: 'In Progress',
-    statusCategory: null,
-    issueType: 'Task',
-    type: 'Task',
-    author: 'alice',
-    descriptionText: null,
-    updatedAt: '2026-10-06T10:00:00.000Z',
-    ...overrides,
-  };
+function jiraIssue(id: string, overrides: Partial<TrackerIssue> = {}): TrackerIssue {
+  return trackerIssue({ id, title: `Issue ${id}`, status: 'In Progress', author: 'alice', updatedAt: '2026-10-06T10:00:00.000Z', ...overrides });
 }
 
-test('dashboard pendingJiraIssues excludes attached + terminal issues', async () => {
+test('dashboard pendingIssues excludes attached + terminal issues', async () => {
   const root = await mkdtemp(join(tmpdir(), 'lovelace-dashboard-'));
   const config = configForRoot(root);
   const database = openDatabase(config);
@@ -47,7 +33,7 @@ test('dashboard pendingJiraIssues excludes attached + terminal issues', async ()
   try {
     const open = jiraIssue('1');
     const attached = jiraIssue('2');
-    const done = jiraIssue('3', { status: 'Done' });
+    const done = jiraIssue('3', { status: 'Done', done: true });
     await providers.setAssigned([open, attached, done]);
 
     createActiveWorkItem(database, {
@@ -57,13 +43,13 @@ test('dashboard pendingJiraIssues excludes attached + terminal issues', async ()
 
     const dashboard = buildDashboard({
       database,
-      github: providers.github,
-      jira: providers.jira,
+      codeHost: providers.codeHost,
+      tracker: providers.tracker,
       settings: { defaultAgent: 'pi', sidebarSide: 'right', repositoryTopics: [] },
       syncIntervalMs: 300_000,
     });
 
-    assert.deepEqual(dashboard.pendingJiraIssues.map((issue) => issue.id), ['1']);
+    assert.deepEqual(dashboard.pendingIssues.map((issue) => issue.id), ['1']);
     assert.equal(dashboard.activeWorkItems.length, 1);
     assert.deepEqual(dashboard.activeWorkItems[0]!.trackerIssueKeys, [attached.key]);
     assert.equal(dashboard.settings.defaultAgent, 'pi');
@@ -93,8 +79,8 @@ test('dashboard recent counts work_activity rows from yesterday and today', asyn
 
     const dashboard = buildDashboard({
       database,
-      github: providers.github,
-      jira: providers.jira,
+      codeHost: providers.codeHost,
+      tracker: providers.tracker,
       settings: { defaultAgent: 'pi', sidebarSide: 'right', repositoryTopics: [] },
       syncIntervalMs: 300_000,
       now,
@@ -118,22 +104,22 @@ test('dashboard freshness marks stale caches', async () => {
   const database = openDatabase(config);
   const now = new Date('2026-10-07T12:00:00.000Z');
   const providers = fixtureProviders([
-    storedSnapshot('jira.assigned', [], new Date(now.getTime() - 60_000)),
-    storedSnapshot('github.reviewRequests', [], new Date(now.getTime() - 60 * 60_000)),
+    storedSnapshot('tracker.jira.assignedIssues', [], new Date(now.getTime() - 60_000)),
+    storedSnapshot('codeHost.github.reviewRequests', [], new Date(now.getTime() - 60 * 60_000)),
   ]);
   try {
 
     const dashboard = buildDashboard({
       database,
-      github: providers.github,
-      jira: providers.jira,
+      codeHost: providers.codeHost,
+      tracker: providers.tracker,
       settings: { defaultAgent: 'pi', sidebarSide: 'right', repositoryTopics: [] },
       syncIntervalMs: 300_000,
       now,
     });
 
-    assert.equal(dashboard.freshness.jiraStale, false);
-    assert.equal(dashboard.freshness.githubStale, true);
+    assert.equal(dashboard.freshness.trackerStale, false);
+    assert.equal(dashboard.freshness.codeHostStale, true);
   } finally {
     database.db.close();
     await rm(root, { recursive: true, force: true });

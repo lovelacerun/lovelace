@@ -3,14 +3,14 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test, { type TestContext } from 'node:test';
-import type { JiraIssueSummary, LovelaceConfig } from '@lovelace/core';
+import type { LovelaceConfig, TrackerIssue } from '@lovelace/core';
 import { openDatabase } from '../database.js';
 import { createActiveWorkItem, createManualWorkItem } from '../repositories/work-item-repository.js';
-import { fixtureProviders, storedSnapshot } from '../test-support/providers.js';
+import { fixtureProviders, storedSnapshot, trackerIssue } from '../test-support/providers.js';
 import { buildDashboard, startOfPreviousLocalDay } from './dashboard-service.js';
 
-function jiraIssue(id: string): JiraIssueSummary {
-  return { id, key: `PROJ-${id}`, title: `Issue ${id}`, url: `https://jira.invalid/browse/PROJ-${id}`, project: 'PROJ', status: 'In Progress', statusCategory: null, issueType: 'Task', type: 'Task', author: 'fixture', descriptionText: null, updatedAt: '2026-01-01T10:00:00.000Z' };
+function jiraIssue(id: string): TrackerIssue {
+  return trackerIssue({ id, title: `Issue ${id}`, status: 'In Progress', author: 'fixture', updatedAt: '2026-01-01T10:00:00.000Z' });
 }
 
 async function fixture(t: TestContext) {
@@ -20,39 +20,37 @@ async function fixture(t: TestContext) {
   const providers = fixtureProviders();
   const now = new Date();
   t.after(async () => { database.db.close(); await rm(root, { recursive: true, force: true }); });
-  const dashboard = () => buildDashboard({ database, github: providers.github, jira: providers.jira, settings: { defaultAgent: 'codex', sidebarSide: 'left', repositoryTopics: [] }, syncIntervalMs: 300_000, now });
+  const dashboard = () => buildDashboard({ database, codeHost: providers.codeHost, tracker: providers.tracker, settings: { defaultAgent: 'codex', sidebarSide: 'left', repositoryTopics: [] }, syncIntervalMs: 300_000, now });
   return { database, providers, now, dashboard };
 }
 
-test('pending Jira respects category, dismissal, snooze and all non-cancelled linked work', async (t) => {
+test('pending issues respect completion, dismissal, snooze and all non-cancelled linked work', async (t) => {
   const { database, providers, now, dashboard } = await fixture(t);
   const issues = Array.from({ length: 12 }, (_, i) => jiraIssue(String(i + 1)));
-  issues[1]!.status = 'Erledigt';
-  issues[1]!.statusCategory = 'done';
-  issues[2]!.status = 'Resolved';
-  issues[3]!.status = 'Done';
-  issues[3]!.statusCategory = 'new'; // Category, when present, wins over display text.
+  issues[1]!.done = true;
+  issues[2]!.done = true;
+  issues[3]!.status = 'Done'; // Only the tracker decides completion, not the display text.
   await providers.setAssigned(issues);
   database.upsertInboxMeta({ sourceType: 'tracker-item', provider: 'jira', externalId: '5', state: 'dismissed', createdAt: now.toISOString(), updatedAt: now.toISOString() });
   for (const [id, state] of [['9', 'active'], ['10', 'done'], ['12', 'cancelled']] as const) {
     const work = createActiveWorkItem(database, { title: id, attachments: [{ type: 'tracker-item', provider: 'jira', externalId: id, payload: jiraIssue(id) }] });
     database.updateWorkItemState(work.id, state);
   }
-  assert.deepEqual(dashboard().pendingJiraIssues.map((issue) => issue.id), ['1', '4', '6', '7', '8', '11', '12']);
+  assert.deepEqual(dashboard().pendingIssues.map((issue) => issue.id), ['1', '4', '6', '7', '8', '11', '12']);
   assert.deepEqual(dashboard().settings, { defaultAgent: 'codex', sidebarSide: 'left', repositoryTopics: [] });
   assert.equal(database.listWorkItems().find((work) => work.title === '10')!.state, 'done');
 });
 
 test('persisted assigned issues render before the first sync; malformed payloads count as missing', async (t) => {
   const { database, now } = await fixture(t);
-  const render = (providers: ReturnType<typeof fixtureProviders>) => buildDashboard({ database, github: providers.github, jira: providers.jira, settings: { defaultAgent: 'pi', sidebarSide: 'right', repositoryTopics: [] }, syncIntervalMs: 300_000, now });
-  const restored = render(fixtureProviders([storedSnapshot('jira.assigned', [jiraIssue('1')], now)]));
-  assert.deepEqual(restored.pendingJiraIssues.map((issue) => issue.id), ['1']);
-  assert.equal(restored.freshness.jiraStale, false);
+  const render = (providers: ReturnType<typeof fixtureProviders>) => buildDashboard({ database, codeHost: providers.codeHost, tracker: providers.tracker, settings: { defaultAgent: 'pi', sidebarSide: 'right', repositoryTopics: [] }, syncIntervalMs: 300_000, now });
+  const restored = render(fixtureProviders([storedSnapshot('tracker.jira.assignedIssues', [jiraIssue('1')], now)]));
+  assert.deepEqual(restored.pendingIssues.map((issue) => issue.id), ['1']);
+  assert.equal(restored.freshness.trackerStale, false);
   for (const payload of ['{}', '[null]', '[{"id":"broken"}]', '{broken']) {
-    const dashboard = render(fixtureProviders([storedSnapshot('jira.assigned', payload, now)]));
-    assert.equal(dashboard.pendingJiraIssues.length, 0);
-    assert.equal(dashboard.freshness.jiraStale, true);
+    const dashboard = render(fixtureProviders([storedSnapshot('tracker.jira.assignedIssues', payload, now)]));
+    assert.equal(dashboard.pendingIssues.length, 0);
+    assert.equal(dashboard.freshness.trackerStale, true);
   }
 });
 

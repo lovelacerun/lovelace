@@ -7,7 +7,7 @@ import type { TestContext } from 'node:test';
 import { createLovelaceClient, type LovelaceClient } from '@lovelace/client';
 import { fakeClient, serverError, type FakeHandlers } from '@lovelace/client/testing';
 import {
-  CODING_HARNESSES, type AgentSession, type AvailableHarness, type DashboardResponse, type PullRequestPayload, type LaunchResponse, type SessionOpenResponse,
+  CODING_HARNESSES, type AgentSession, type AvailableHarness, type DashboardResponse, type TrackedChangeRequest, type LaunchResponse, type SessionOpenResponse,
   type LaunchState, type WorkItemDetails, type WorkItemState,
 } from '@lovelace/core';
 import { AppRoot } from './app.js';
@@ -68,7 +68,7 @@ class FakeTui {
 // -- FakeServer -----------------------------------------------------------
 
 interface OpenCall { workItemId: string; sessionId: string }
-interface LaunchCall { endpoint: 'quickStart' | 'newSession'; workItemId?: string; jiraIssueId?: string | null; reviewRequestId?: string | null; prompt: string; requestId?: string; repoIds?: string[]; promptId?: string }
+interface LaunchCall { endpoint: 'quickStart' | 'newSession'; workItemId?: string; trackerIssueId?: string | null; reviewRequestId?: string | null; prompt: string; requestId?: string; repoIds?: string[]; promptId?: string }
 
 /** Server state behind a typed fake client; tests may replace `handlers` entries before the call. */
 class FakeServer {
@@ -82,7 +82,7 @@ class FakeServer {
   readonly handlers: FakeHandlers = {
     'dashboard.get': async () => this.dashboardResponse,
     'workItems.get': async ({ id }) => this.workItemByIdResponse[id] ?? detailsOf(id),
-    'jira.issues': async () => [],
+    'tracker.issues': async () => [],
     'tools.list': async () => fixtureTools(),
     'sessions.open': async ({ workItemId, sessionId }) => {
       this.openCalls.push({ workItemId, sessionId });
@@ -93,8 +93,8 @@ class FakeServer {
     },
     'workItems.setState': async ({ id, state }) => detailsOf(id, state).workItem,
     'launches.get': async () => { throw serverError(404, 'launch not found'); },
-    'launches.quickStart': async ({ prompt, jiraIssueId, requestId, reviewRequestId, repoIds, promptId }) => {
-      this.launchCalls.push({ endpoint: 'quickStart', jiraIssueId, prompt, requestId, ...(reviewRequestId ? { reviewRequestId } : {}), ...(repoIds ? { repoIds } : {}), ...(promptId ? { promptId } : {}) });
+    'launches.quickStart': async ({ prompt, trackerIssueId, requestId, reviewRequestId, repoIds, promptId }) => {
+      this.launchCalls.push({ endpoint: 'quickStart', trackerIssueId, prompt, requestId, ...(reviewRequestId ? { reviewRequestId } : {}), ...(repoIds ? { repoIds } : {}), ...(promptId ? { promptId } : {}) });
       return this.nextLaunch();
     },
     'launches.newSession': async ({ workItemId, prompt, requestId }) => {
@@ -125,10 +125,10 @@ function fixtureTools(): AvailableHarness[] {
 function emptyDashboard(): DashboardResponse {
   return {
     activeWorkItems: [],
-    pendingJiraIssues: [], pendingReviews: [],
+    pendingIssues: [], pendingReviews: [],
     recent: { since: '', workItems: [], sessionCount: 0, completedCount: 0, activityCount: 0 },
     settings: { defaultAgent: 'pi', sidebarSide: 'right', repositoryTopics: [] },
-    freshness: { jiraFetchedAt: null, githubFetchedAt: null, jiraStale: false, githubStale: false },
+    freshness: { trackerFetchedAt: null, codeHostFetchedAt: null, trackerStale: false, codeHostStale: false },
   };
 }
 
@@ -174,8 +174,8 @@ describe('AppRoot review list', () => {
     const rendered: unknown[] = [];
     server.handlers['prompts.render'] = async input => { rendered.push(input); return { promptId: 'review', content: 'Review org/a#7\n' }; };
     const review = {
-      id: 'PR_1', number: 7, title: 'Retry uploads', url: '', repoFullName: 'org/a', repoId: 'github:a',
-      authorLogin: 'human', headRefName: 'feature/retry', baseRefName: 'main', updatedAt: '',
+      id: 'PR_1', number: 7, title: 'Retry uploads', url: '', repository: 'org/a', repoId: 'github:a',
+      author: 'human', sourceBranch: 'feature/retry', targetBranch: 'main', updatedAt: '',
     };
     server.dashboardResponse.pendingReviews = [review];
     const done = root.start();
@@ -209,7 +209,7 @@ describe('AppRoot Jira start-work overlay', () => {
     }));
     server.handlers['prompts.render'] = async () => ({ promptId: 'refine', content: '  Rendered prompt\n' });
     const issue = { id: '42', key: 'PROJ-42', title: 'Fix sync', url: '', status: 'To Do', issueType: 'Task', updatedAt: '' };
-    server.dashboardResponse.pendingJiraIssues = [issue];
+    server.dashboardResponse.pendingIssues = [issue];
     server.dashboardResponse.settings.repositoryTopics = ['infra', 'examplecom'];
     const done = root.start();
     t.after(async () => { root.quit(); await done; });
@@ -257,7 +257,7 @@ describe('AppRoot Jira start-work overlay', () => {
     tui.feedInput('\x13');
     await waitFor(() => !root.state.mutationInFlight);
     const launch = server.launchCalls[0]!;
-    assert.equal(launch.jiraIssueId, '42');
+    assert.equal(launch.trackerIssueId, '42');
     assert.deepEqual(launch.repoIds, ['0', '1']);
     assert.equal(launch.promptId, 'refine');
     assert.equal(launch.prompt, prompt);
@@ -275,7 +275,7 @@ describe('AppRoot Jira start-work overlay', () => {
     server.handlers['prompts.list'] = async () => [];
     server.handlers['repositories.list'] = async () => [];
     const issue = { id: '42', key: 'PROJ-42', title: 'Task', url: '', status: null, issueType: null, updatedAt: '' };
-    server.dashboardResponse.pendingJiraIssues = [issue];
+    server.dashboardResponse.pendingIssues = [issue];
     const done = root.start();
     t.after(async () => { root.quit(); await done; });
     root.state.applyDashboardResponse(server.dashboardResponse);
@@ -310,7 +310,7 @@ describe('AppRoot Jira start-work overlay', () => {
     server.handlers['prompts.list'] = async () => [];
     server.handlers['repositories.list'] = async () => [];
     const issue = { id: '42', key: 'PROJ-42', title: 'Task', url: '', status: null, issueType: null, updatedAt: '' };
-    server.dashboardResponse.pendingJiraIssues = [issue];
+    server.dashboardResponse.pendingIssues = [issue];
     const done = root.start();
     t.after(async () => { root.quit(); await done; });
     root.state.applyDashboardResponse(server.dashboardResponse);
@@ -450,8 +450,8 @@ describe('AppRoot editor sync across drafts', () => {
     const { root, server, tui } = makeRoot();
     const dash = emptyDashboard();
     dash.activeWorkItems = [
-      { id: 'wi-A', title: 'A', state: 'active', notes: null, createdAt: '', updatedAt: '', startedAt: null, completedAt: null, sessionCount: 0, repositoryCount: 0, trackerIssueKeys: [], pullRequestRefs: [] },
-      { id: 'wi-B', title: 'B', state: 'active', notes: null, createdAt: '', updatedAt: '', startedAt: null, completedAt: null, sessionCount: 0, repositoryCount: 0, trackerIssueKeys: [], pullRequestRefs: [] },
+      { id: 'wi-A', title: 'A', state: 'active', notes: null, createdAt: '', updatedAt: '', startedAt: null, completedAt: null, sessionCount: 0, repositoryCount: 0, trackerIssueKeys: [], changeRequestRefs: [] },
+      { id: 'wi-B', title: 'B', state: 'active', notes: null, createdAt: '', updatedAt: '', startedAt: null, completedAt: null, sessionCount: 0, repositoryCount: 0, trackerIssueKeys: [], changeRequestRefs: [] },
     ];
     server.dashboardResponse = dash;
     root.state.applyDashboardResponse(dash);
@@ -505,7 +505,7 @@ describe('AppRoot offline rendering', () => {
     const { root, server } = makeRoot();
     const dash = emptyDashboard();
     dash.activeWorkItems = [
-      { id: 'wi-A', title: 'Alpha Task', state: 'active', notes: null, createdAt: '', updatedAt: '', startedAt: null, completedAt: null, sessionCount: 0, repositoryCount: 0, trackerIssueKeys: [], pullRequestRefs: [] },
+      { id: 'wi-A', title: 'Alpha Task', state: 'active', notes: null, createdAt: '', updatedAt: '', startedAt: null, completedAt: null, sessionCount: 0, repositoryCount: 0, trackerIssueKeys: [], changeRequestRefs: [] },
     ];
     server.dashboardResponse = dash;
     root.state.applyDashboardResponse(dash);
@@ -566,7 +566,7 @@ describe('AppRoot sizing + resize', () => {
       d.activeWorkItems.push({
         id: `wi-${i}`, title: `Active task ${i}`, state: 'active', notes: null,
         createdAt: '', updatedAt: '', startedAt: null, completedAt: null,
-        sessionCount: 0, repositoryCount: 0, trackerIssueKeys: [], pullRequestRefs: [],
+        sessionCount: 0, repositoryCount: 0, trackerIssueKeys: [], changeRequestRefs: [],
       });
     }
     return d;
@@ -635,7 +635,7 @@ describe('AppRoot sizing + resize', () => {
       dash.recent.workItems.push({
         id: `y-${i}`, title: `Recent ${i}`, state: 'done', notes: null,
         createdAt: '', updatedAt: '', startedAt: null, completedAt: null,
-        sessionCount: 0, repositoryCount: 0, trackerIssueKeys: [], pullRequestRefs: [],
+        sessionCount: 0, repositoryCount: 0, trackerIssueKeys: [], changeRequestRefs: [],
       });
     }
     root.state.applyDashboardResponse(dash);
@@ -820,7 +820,7 @@ describe('AppRoot input/lifecycle integration', () => {
     const dash = emptyDashboard();
     dash.activeWorkItems = [{
       ...detailsOf('wi').workItem, sessionCount: 0, repositoryCount: 0,
-      trackerIssueKeys: [], pullRequestRefs: [],
+      trackerIssueKeys: [], changeRequestRefs: [],
     }];
     server.dashboardResponse = dash;
     const done = root.start();
@@ -843,7 +843,7 @@ describe('AppRoot input/lifecycle integration', () => {
     const { root, tui, server } = makeRoot();
     const dash = emptyDashboard();
     dash.activeWorkItems = ['a', 'b', 'c'].map(id => ({
-      ...detailsOf(id).workItem, sessionCount: 0, repositoryCount: 0, trackerIssueKeys: [], pullRequestRefs: [],
+      ...detailsOf(id).workItem, sessionCount: 0, repositoryCount: 0, trackerIssueKeys: [], changeRequestRefs: [],
     }));
     server.dashboardResponse = dash;
     const done = root.start();
@@ -914,10 +914,10 @@ describe('AppRoot input/lifecycle integration', () => {
     const dash = emptyDashboard();
     dash.activeWorkItems = Array.from({ length: 60 }, (_, n) => ({
       ...detailsOf('wi-' + n).workItem, title: 'Selected task ' + n, sessionCount: 0,
-      repositoryCount: 0, trackerIssueKeys: [], pullRequestRefs: [],
+      repositoryCount: 0, trackerIssueKeys: [], changeRequestRefs: [],
     }));
-    dash.freshness.jiraStale = true;
-    dash.freshness.githubStale = true;
+    dash.freshness.trackerStale = true;
+    dash.freshness.codeHostStale = true;
     root.state.applyDashboardResponse(dash);
     root.state.focus = 'sidebar';
     root.state.sidebarSelectedIndex = 51;
@@ -1007,7 +1007,7 @@ describe('Home-only quick-start dock', () => {
   it('shows no quick-start/input on Jira and skips hidden editor focus', () => {
     const { root } = makeRoot();
     const issue = { id: '42', key: 'PROJ-42', title: 'Task', url: '', status: null, issueType: null, updatedAt: '' };
-    root.state.applyDashboardResponse({ ...emptyDashboard(), pendingJiraIssues: [issue] });
+    root.state.applyDashboardResponse({ ...emptyDashboard(), pendingIssues: [issue] });
     root.state.navigate({ kind: 'jira', id: issue.id });
     root.state.setDraft({ text: 'retained Jira draft' });
     const output = root.render(120).join('\n');
@@ -1123,9 +1123,9 @@ describe('AppRoot mouse', () => {
     const root = new AppRoot({ tui: tui as unknown as TuiAltScreen, client: server.client, serverUrl: 'http://127.0.0.1:4747', openUrl: async url => { opened.push(url); } });
     const dash = emptyDashboard();
     dash.activeWorkItems = ['a', 'b'].map(id => ({
-      ...detailsOf(id).workItem, sessionCount: 0, repositoryCount: 0, trackerIssueKeys: [], pullRequestRefs: [],
+      ...detailsOf(id).workItem, sessionCount: 0, repositoryCount: 0, trackerIssueKeys: [], changeRequestRefs: [],
     }));
-    dash.recent.workItems = [{ ...detailsOf('y').workItem, title: 'Recent item', sessionCount: 0, repositoryCount: 0, trackerIssueKeys: [], pullRequestRefs: [] }];
+    dash.recent.workItems = [{ ...detailsOf('y').workItem, title: 'Recent item', sessionCount: 0, repositoryCount: 0, trackerIssueKeys: [], changeRequestRefs: [] }];
     root.state.applyDashboardResponse(dash);
     return { root, tui, server, opened };
   }
@@ -1148,7 +1148,7 @@ describe('AppRoot mouse', () => {
     const details = detailsOf('a');
     details.attachments.push({
       id: 'pr', workItemId: 'a', type: 'pull-request', provider: 'github', externalId: '7',
-      payload: { number: 7, url: 'https://github.invalid/org/repo/pull/7', status: 'open' } as PullRequestPayload, createdAt: '', updatedAt: '',
+      payload: { number: 7, url: 'https://github.invalid/org/repo/pull/7', status: 'open' } as TrackedChangeRequest, createdAt: '', updatedAt: '',
     });
     root.state.navigateToWorkItem('a');
     root.state.setWorkItemData(details);

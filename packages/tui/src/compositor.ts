@@ -90,7 +90,7 @@ export function fitChips({ status, chips }: { status: string; chips: string[] },
 export function connectionStatus(state: AppState): string {
   if (state.offline) return danger + icons.offline + ' offline' + (state.dashboardData ? faint + ' · last-known' : '') + reset;
   const freshness = state.dashboardData?.freshness;
-  const stale = [freshness?.jiraStale && 'Jira', freshness?.githubStale && 'GitHub'].filter(Boolean);
+  const stale = [freshness?.trackerStale && 'Jira', freshness?.codeHostStale && 'GitHub'].filter(Boolean);
   if (stale.length) return warning + icons.online + ' ' + stale.join(' + ') + ' stale' + reset;
   if (!state.dashboardData) return faint + icons.online + ' connecting…' + reset;
   if (state.isLoading) return muted + icons.online + ' loading…' + reset;

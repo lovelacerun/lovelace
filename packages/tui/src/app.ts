@@ -202,7 +202,7 @@ export class AppRoot implements Component {
     const view = this.state.view;
     const title = view === 'work-item' ? this.state.selectedWorkItemData?.workItem.title
       : view === 'jira' ? this.state.selectedJira?.key
-      : view === 'review' && this.state.selectedReview ? `${this.state.selectedReview.repoFullName}#${this.state.selectedReview.number}` : undefined;
+      : view === 'review' && this.state.selectedReview ? `${this.state.selectedReview.repository}#${this.state.selectedReview.number}` : undefined;
     const place = view === 'dashboard' ? 'Home' : safeText(title ? splitIssueKey(safeText(title)).key ?? title
       : view === 'jira' ? 'Jira' : view === 'review' ? 'Review' : 'Work');
     const mark = ' ' + accent + icons.app + reset + '  ' + (cols >= 50 ? bold + 'lovelace' + reset + faint + '  /  ' + reset : '');
@@ -553,7 +553,7 @@ export class AppRoot implements Component {
     this.state.setNotice('Rendering review prompt…');
     try {
       const rendered = await this.client.prompts.render.mutate({
-        promptId: 'review', title: `${review.repoFullName}#${review.number}: ${review.title}`,
+        promptId: 'review', title: `${review.repository}#${review.number}: ${review.title}`,
         sources: [{ sourceType: 'change-request', provider: 'github', externalId: review.id, payload: review }],
       }, { signal: this.lifetime.signal });
       if (this.stopped || this.state.draftKey !== draftKey) return;
@@ -649,7 +649,7 @@ export class AppRoot implements Component {
         const details = await this.client.workItems.get.query({ id: selectedWorkItemId }, { signal });
         if (current() && this.state.selectedWorkItemId === details.workItem.id) this.state.setWorkItemData(details);
       } else if (view === 'jira' && selectedJira) {
-        const issues = await this.client.jira.issues.query(undefined, { signal });
+        const issues = await this.client.tracker.issues.query(undefined, { signal });
         if (current()) this.state.setJiraDetails(issues.find(issue => issue.id === this.state.selectedJira?.id) ?? null);
       }
     } catch (error) {

@@ -15,16 +15,15 @@ const github = createGitHubClient({
 if (github.isConfigured()) {
   const repositories = await github.fetchRepositories({ signal });
   const reviewRequests = await github.fetchReviewRequests();
-  const branches = await github.fetchPullRequestDetails('example/service', 42);
-  const status = await github.fetchPullRequestStatus('example/service', 42);
+  const pullRequest = await github.fetchPullRequest('example/service', 42);
 }
 ```
 
-`suppliedToken`, `injectedFetch` and `signal` are caller-owned. `apiBaseUrl` overrides host-derived URLs. Enterprise hosts default to `https://<host>/api/v3` (Octokit derives the GraphQL endpoint). An optional `octokit: Pick<Octokit,'graphql'|'request'>` seam supports fixture tests.
+`suppliedToken`, `injectedFetch` and `signal` are caller-owned. `apiBaseUrl` overrides host-derived URLs. Enterprise hosts default to `https://<host>/api/v3` (Octokit derives the GraphQL endpoint). An optional `octokit: Pick<Octokit,'graphql'>` seam supports fixture tests.
 
 ## Guarantees and limits
 
-- Every GraphQL/REST request is aborted after `requestTimeoutMs` (positive integer, default 15000) or when the caller's optional `signal` aborts. The signal reaches Octokit's request options; custom transports must honour it.
+- Every GraphQL request is aborted after `requestTimeoutMs` (positive integer, default 15000) or when the caller's optional `signal` aborts. The signal reaches Octokit's request options; custom transports must honour it.
 - Request, rate-limit, pagination and malformed-response errors reject; methods never return partial catalog/review lists or empty lists for failures.
 - Repository discovery explicitly sets both `affiliations` and
   `ownerAffiliations` to owner, collaborator and organization-member access.
@@ -34,6 +33,6 @@ if (github.isConfigured()) {
   catalog; organization configuration is still required for review search.
 - Catalog and review pages are sequential, cursor-cycle checked and capped at 100 pages; exceeding the limit rejects instead of silently truncating. Native Octokit retry/throttling behavior is retained.
 - Review search matches open non-archived org PRs requesting review from the authenticated user. Drafts and authors matching `renovate|dependabot|bot` are omitted. This bot filter is heuristic, not an upstream human identity guarantee.
-- PR methods accept `repoFullName,number`; invalid references and upstream not-found return null. Status preserves review/build state and head/base branch data.
+- `fetchPullRequest` accepts `repoFullName,number`; invalid references and upstream not-found return null. Review requests and single pull requests share one shape with review/build state and head/base branches.
 
-Data interfaces (`RepoRecord`, `GitHubReviewRequest`, `GitHubPullRequestDetails`, `GitHubPullRequestStatus`) are exported locally. There are no repository-dashboard/security scans or repository-insight file/tag APIs.
+Data interfaces (`GitHubRepository`, `GitHubPullRequest`) are exported locally. There are no repository-dashboard/security scans or repository-insight file/tag APIs.

@@ -4,17 +4,17 @@ import { WorkspaceManager } from '@lovelace/coriol';
 import { loadConfig, type AgentCli } from '@lovelace/core';
 import { buildServer } from './app.js';
 import { createCacheStore } from '@lovelace/cache';
-import { createCachedGitHub, createCachedJira, createCachedModels } from './cached-providers.js';
+import { createCachedCodeHost, createCachedModels, createCachedTracker } from './cached-providers.js';
 import { openDatabase } from './database.js';
-import { createGitHubClient } from './github.js';
-import { createJiraClient } from './jira.js';
+import { createGitHubCodeHost } from './providers/github.js';
+import { createJiraTracker } from './providers/jira.js';
 import { createHerdrClient, herdrSocketPath } from './herdr/herdr-client.js';
 import { watchHerdrEvents } from './herdr/herdr-events.js';
 import { createLogger } from './logger.js';
 import { resolveProviderSecrets } from './secrets.js';
 import { startSessionSync } from './services/session-sync.js';
 import { refreshAttachedTrackerIssues } from './services/tracker-item-service.js';
-import { refreshGitHubReviews, refreshJiraAssignedIssues, refreshJiraProjectCatalog, refreshRepoCache } from './sync.js';
+import { refreshAssignedIssues, refreshRepoCache, refreshReviewRequests } from './sync.js';
 import { loadTools } from './tools/tool-loader.js';
 
 export { resolveMacOSSystemProxy } from './macos-system-proxy.js';
@@ -43,40 +43,37 @@ export async function startServer(options: StartServerOptions = {}): Promise<voi
     storage: database.cacheStorage,
     onError: (error, key) => logger.warn({ err: error, key }, 'Provider cache refresh or storage failed'),
   });
-  const github = createCachedGitHub(cache, createGitHubClient(config));
-  const jira = createCachedJira(cache, createJiraClient(config));
+  const codeHost = createCachedCodeHost(cache, createGitHubCodeHost(config));
+  const tracker = createCachedTracker(cache, createJiraTracker(config));
   const tools = loadTools(logger);
   const workspaceManager = new WorkspaceManager({ root: config.lovelaceDir, logger });
   const herdr = createHerdrClient(config.herdr);
-  const app = buildServer({ config, tools, listModels: createCachedModels(cache), workspaceManager, herdr, database, cache, github, jira }, logger);
+  const app = buildServer({ config, tools, listModels: createCachedModels(cache), workspaceManager, herdr, database, cache, codeHost, tracker }, logger);
   const shutdown = () => {
     void app.close().then(() => process.exit(0), () => process.exit(1));
   };
   process.once('SIGTERM', shutdown);
   process.once('SIGINT', shutdown);
 
-  const refreshRepos = () => void refreshRepoCache({ github, database, logger })
+  const refreshRepos = () => void refreshRepoCache({ codeHost, database, logger })
     .catch((error) => logger.error({ err: error }, 'Repository catalog sync failed'));
-  const refreshGitHub = () => void refreshGitHubReviews({ github, database, logger }).catch(() => undefined);
-  const refreshJira = () => {
-    void refreshJiraAssignedIssues({ jira, logger })
+  const refreshReviews = () => void refreshReviewRequests({ codeHost, database, logger }).catch(() => undefined);
+  const refreshIssues = () => {
+    void refreshAssignedIssues({ tracker, logger })
       .catch(() => undefined)
       .finally(() => {
-        // Attached Jira issues drift independently of the assigned-issue list;
-        // refresh their status so the dashboard filters terminal categories out.
-        void refreshAttachedTrackerIssues({ jira, database, logger })
+        // Attached issues drift independently of the assigned-issue list;
+        // refresh their status so the dashboard filters finished ones out.
+        void refreshAttachedTrackerIssues({ tracker, database, logger })
           .catch((error) => logger.error({ err: error }, 'Attached tracker-item refresh failed'));
       });
   };
-  const refreshJiraProjects = () => void refreshJiraProjectCatalog({ jira, logger }).catch(() => undefined);
   refreshRepos();
-  refreshGitHub();
-  refreshJira();
-  refreshJiraProjects();
+  refreshReviews();
+  refreshIssues();
   setInterval(refreshRepos, config.syncIntervalMs).unref();
-  setInterval(refreshGitHub, config.syncIntervalMs).unref();
-  setInterval(refreshJira, config.syncIntervalMs).unref();
-  setInterval(refreshJiraProjects, 24 * 60 * 60 * 1000).unref();
+  setInterval(refreshReviews, config.syncIntervalMs).unref();
+  setInterval(refreshIssues, config.syncIntervalMs).unref();
   // Herdr owns agent state; follow its events so native identities are recorded before agents exit.
   startSessionSync({
     database, herdr, logger,

@@ -18,8 +18,6 @@
     "dev": "tsc --watch"
   },
   "dependencies": {
-    "@lovelace/github-client": "workspace:*",
-    "@lovelace/jira-client": "workspace:*",
     "@lovelace/model-catalog": "workspace:*",
     "jsonc-parser": "3.3.1"
   },

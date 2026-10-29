@@ -45,7 +45,7 @@ async function fixture(t: TestContext) {
     },
   } as unknown as RouteDeps['workspaceManager'];
   const deps: RouteDeps = {
-    config, database, tools: [], listModels: async () => [], cache: providers.cache, github: providers.github, jira: providers.jira,
+    config, database, tools: [], listModels: async () => [], cache: providers.cache, codeHost: providers.codeHost, tracker: providers.tracker,
     workspaceManager, herdr,
   };
   const api = callerFor(deps);

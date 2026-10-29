@@ -1,14 +1,15 @@
-import type { CachedGitHub, CachedJira } from './cached-providers.js';
+import type { CachedCodeHost, CachedTracker } from './cached-providers.js';
 import type { DatabaseState } from './database.js';
 import { describeActivityError, emitActivity } from './services/activity-bus.js';
-import { refreshOpenPullRequests } from './services/pull-request-service.js';
+import { refreshOpenChangeRequests } from './services/change-request-service.js';
 
 type SyncLogger = Pick<Console, 'info' | 'error' | 'warn'>;
 
 interface SyncJob {
   /** Activity type prefix, e.g. `sync.jira.issues`. */
   type: string;
-  provider: 'GitHub' | 'Jira';
+  /** Provider display name, e.g. `Jira`. */
+  provider: string;
   /** Name in skip/failure activity messages, e.g. `issue`. */
   name: string;
   /** Name in log messages, e.g. `assigned issue sync`. */
@@ -40,97 +41,77 @@ async function runSync(logger: SyncLogger, job: SyncJob): Promise<void> {
   }
 }
 
-export async function refreshGitHubReviews(deps: {
-  github: CachedGitHub;
+export async function refreshReviewRequests(deps: {
+  codeHost: CachedCodeHost;
   database: DatabaseState;
   logger: SyncLogger;
 }) {
-  const { github, database, logger } = deps;
+  const { codeHost, database, logger } = deps;
   await runSync(logger, {
-    type: 'sync.github.reviews',
-    provider: 'GitHub',
+    type: `sync.${codeHost.provider}.reviews`,
+    provider: codeHost.name,
     name: 'review',
     logName: 'review sync',
-    configured: github.isConfigured(),
-    startMessage: 'Syncing GitHub review requests and tracked pull requests',
+    configured: codeHost.isConfigured(),
+    startMessage: `Syncing ${codeHost.name} review requests and tracked change requests`,
     data: {
-      provider: 'GitHub',
-      resource: 'review requests and tracked pull requests',
-      filters: ['open pull requests', 'review requested from current user', 'attached open pull requests'],
+      provider: codeHost.name,
+      resource: 'review requests and tracked change requests',
+      filters: ['open change requests', 'review requested from current user', 'attached open change requests'],
     },
     async run() {
-      const reviews = await github.refreshReviewRequests();
-      const trackedPullRequests = await refreshOpenPullRequests(database, github, logger);
-      const partial = trackedPullRequests.failed > 0;
+      const reviews = await codeHost.refreshReviewRequests();
+      const trackedChangeRequests = await refreshOpenChangeRequests(database, codeHost, logger);
+      const partial = trackedChangeRequests.failed > 0;
       return {
         partial,
         message: partial
-          ? `Synced GitHub reviews; ${trackedPullRequests.failed} tracked pull request update(s) failed`
-          : `Synced ${reviews.length} GitHub review request(s)`,
-        data: { reviewCount: reviews.length, trackedPullRequests },
+          ? `Synced ${codeHost.name} reviews; ${trackedChangeRequests.failed} tracked change request update(s) failed`
+          : `Synced ${reviews.length} ${codeHost.name} review request(s)`,
+        data: { reviewCount: reviews.length, trackedChangeRequests },
       };
     },
   });
 }
 
-export async function refreshJiraAssignedIssues(deps: {
-  jira: CachedJira;
+export async function refreshAssignedIssues(deps: {
+  tracker: CachedTracker;
   logger: SyncLogger;
 }) {
-  const { jira, logger } = deps;
+  const { tracker, logger } = deps;
   await runSync(logger, {
-    type: 'sync.jira.issues',
-    provider: 'Jira',
+    type: `sync.${tracker.provider}.issues`,
+    provider: tracker.name,
     name: 'issue',
     logName: 'assigned issue sync',
-    configured: jira.isConfigured(),
-    startMessage: 'Syncing assigned Jira issues',
-    data: { provider: 'Jira', resource: 'issues assigned to the current user' },
+    configured: tracker.isConfigured(),
+    startMessage: `Syncing assigned ${tracker.name} issues`,
+    data: { provider: tracker.name, resource: 'issues assigned to the current user' },
     async run() {
-      const issues = await jira.refreshAssignedIssues();
-      return { message: `Synced ${issues.length} assigned Jira issue(s)`, data: { issueCount: issues.length } };
-    },
-  });
-}
-
-export async function refreshJiraProjectCatalog(deps: {
-  jira: CachedJira;
-  logger: SyncLogger;
-}) {
-  const { jira, logger } = deps;
-  await runSync(logger, {
-    type: 'sync.jira.projects',
-    provider: 'Jira',
-    name: 'project',
-    logName: 'project catalog sync',
-    configured: jira.isConfigured(),
-    startMessage: 'Syncing Jira project catalog',
-    data: { provider: 'Jira', resource: 'project catalog' },
-    async run() {
-      const projects = await jira.refreshProjects();
-      return { message: `Synced ${projects.length} Jira project(s)`, data: { projectCount: projects.length } };
+      const issues = await tracker.refreshAssignedIssues();
+      return { message: `Synced ${issues.length} assigned ${tracker.name} issue(s)`, data: { issueCount: issues.length } };
     },
   });
 }
 
 export async function refreshRepoCache(deps: {
-  github: CachedGitHub;
+  codeHost: CachedCodeHost;
   database: DatabaseState;
   logger: SyncLogger;
 }) {
-  const { github, database, logger } = deps;
+  const { codeHost, database, logger } = deps;
   await runSync(logger, {
-    type: 'sync.github.repositories',
-    provider: 'GitHub',
+    type: `sync.${codeHost.provider}.repositories`,
+    provider: codeHost.name,
     name: 'repository',
     logName: 'repository catalog sync',
-    configured: github.isConfigured(),
-    startMessage: 'Syncing GitHub repository catalog',
-    data: { provider: 'GitHub', resource: 'accessible repository catalog', fields: ['name', 'clone URL', 'default branch', 'archived state', 'topics'] },
+    configured: codeHost.isConfigured(),
+    startMessage: `Syncing ${codeHost.name} repository catalog`,
+    data: { provider: codeHost.name, resource: 'accessible repository catalog', fields: ['name', 'clone URL', 'default branch', 'archived state', 'topics'] },
     async run() {
-      const repos = await github.refreshRepositories();
+      const repos = await codeHost.refreshRepositories();
       database.replaceRepos(repos);
-      return { message: `Synced ${repos.length} GitHub repositories`, data: { repositoryCount: repos.length }, log: { repoCount: repos.length } };
+      return { message: `Synced ${repos.length} ${codeHost.name} repositories`, data: { repositoryCount: repos.length }, log: { repoCount: repos.length } };
     },
   });
 }

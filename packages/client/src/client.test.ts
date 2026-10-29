@@ -42,13 +42,13 @@ describe('createLovelaceClient', () => {
     await client.repositories.list.query();
     await client.prompts.list.query();
     const selection = { repoIds: ['github:2', 'github:1'], promptId: 'refine' };
-    await client.launches.quickStart.mutate({ prompt: '  exact\n', jiraIssueId: '42', ...selection });
+    await client.launches.quickStart.mutate({ prompt: '  exact\n', trackerIssueId: '42', ...selection });
     await client.launches.newSession.mutate({ workItemId: 'w/1', prompt: '  exact\n', ...selection });
     await client.workItems.setState.mutate({ id: 'abc', state: 'done' });
     assert.deepEqual(calls, [
       { path: 'repositories.list', method: 'GET', input: undefined },
       { path: 'prompts.list', method: 'GET', input: undefined },
-      { path: 'launches.quickStart', method: 'POST', input: { prompt: '  exact\n', jiraIssueId: '42', ...selection } },
+      { path: 'launches.quickStart', method: 'POST', input: { prompt: '  exact\n', trackerIssueId: '42', ...selection } },
       { path: 'launches.newSession', method: 'POST', input: { workItemId: 'w/1', prompt: '  exact\n', ...selection } },
       { path: 'workItems.setState', method: 'POST', input: { id: 'abc', state: 'done' } },
     ]);
@@ -84,11 +84,11 @@ describe('createLovelaceClient', () => {
     const { calls, client } = recording(() => ({ details: { workItem: {}, attachments: [] }, launch: { state: 'running' } }));
     const exact = '  spaced\n\n  ';
     await client.launches.quickStart.mutate({ prompt: exact });
-    await client.launches.quickStart.mutate({ prompt: 'p', jiraIssueId: 'JIRA-42', agentId: 'claude', options: { claude: { thinkingLevel: 'high' } }, requestId: 'uuid-abc' });
+    await client.launches.quickStart.mutate({ prompt: 'p', trackerIssueId: 'JIRA-42', agentId: 'claude', options: { claude: { thinkingLevel: 'high' } }, requestId: 'uuid-abc' });
     await client.launches.newSession.mutate({ workItemId: 'wi-1', prompt: 'go', agentId: 'pi', options: { pi: { model: 'opus' } }, requestId: 'uuid-xyz' });
     assert.deepEqual(calls.map(call => call.input), [
       { prompt: exact },
-      { prompt: 'p', jiraIssueId: 'JIRA-42', agentId: 'claude', options: { claude: { thinkingLevel: 'high' } }, requestId: 'uuid-abc' },
+      { prompt: 'p', trackerIssueId: 'JIRA-42', agentId: 'claude', options: { claude: { thinkingLevel: 'high' } }, requestId: 'uuid-abc' },
       { workItemId: 'wi-1', prompt: 'go', agentId: 'pi', options: { pi: { model: 'opus' } }, requestId: 'uuid-xyz' },
     ]);
   });

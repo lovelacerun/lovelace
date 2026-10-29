@@ -1,5 +1,5 @@
 import type {
-  AvailableHarness, CodingHarnessId, DashboardJiraIssue, DashboardReview, ToolLaunchOptions, DashboardResponse, JiraIssueSummary, LaunchSelection, PromptTemplate, RepoRecord,
+  AvailableHarness, CodingHarnessId, DashboardIssue, DashboardReview, ToolLaunchOptions, DashboardResponse, TrackerIssue, LaunchSelection, PromptTemplate, Repository,
   ToolLaunchOptionsById,
   SidebarSide, WorkItemDetails, WorkItemState, WorkItemSummary,
 } from '@lovelace/core';
@@ -53,11 +53,11 @@ export class AppState {
   dashboardData: DashboardResponse | null = null;
   selectedWorkItemId: string | null = null;
   selectedWorkItemData: WorkItemDetails | null = null;
-  selectedJira: DashboardJiraIssue | null = null;
-  jiraDetails: JiraIssueSummary | null = null;
+  selectedJira: DashboardIssue | null = null;
+  jiraDetails: TrackerIssue | null = null;
   selectedReview: DashboardReview | null = null;
 
-  repositories: RepoRecord[] | null = null;
+  repositories: Repository[] | null = null;
   promptTemplates: PromptTemplate[] | null = null;
   /** Harnesses detected on the server; null until first loaded. */
   tools: AvailableHarness[] | null = null;
@@ -107,8 +107,8 @@ export class AppState {
     return this.dashboardData?.activeWorkItems ?? [];
   }
 
-  get pendingJiraIssues(): DashboardJiraIssue[] {
-    return this.dashboardData?.pendingJiraIssues ?? [];
+  get pendingIssues(): DashboardIssue[] {
+    return this.dashboardData?.pendingIssues ?? [];
   }
 
   get pendingReviews(): DashboardReview[] {
@@ -120,8 +120,8 @@ export class AppState {
     return [
       { kind: 'home', id: 'home', label: 'Home' },
       ...this.activeWorkItems.map(item => ({ kind: 'work' as const, id: item.id, label: item.title })),
-      ...this.pendingJiraIssues.map(issue => ({ kind: 'jira' as const, id: issue.id, label: `${issue.key} ${issue.title}` })),
-      ...this.pendingReviews.map(review => ({ kind: 'review' as const, id: review.id, label: `${review.repoFullName.split('/').pop()}#${review.number} ${review.title}` })),
+      ...this.pendingIssues.map(issue => ({ kind: 'jira' as const, id: issue.id, label: `${issue.key} ${issue.title}` })),
+      ...this.pendingReviews.map(review => ({ kind: 'review' as const, id: review.id, label: `${review.repository.split('/').pop()}#${review.number} ${review.title}` })),
     ];
   }
 
@@ -246,7 +246,7 @@ export class AppState {
     this.changed();
   }
 
-  setJiraDetails(details: JiraIssueSummary | null): void {
+  setJiraDetails(details: TrackerIssue | null): void {
     this.jiraDetails = details;
     this.changed();
   }
@@ -276,7 +276,7 @@ export class AppState {
       this.selectedWorkItemData = null;
     } else {
       this.view = 'jira';
-      this.selectedJira = this.pendingJiraIssues.find((issue) => issue.id === entry.id) ?? null;
+      this.selectedJira = this.pendingIssues.find((issue) => issue.id === entry.id) ?? null;
       this.jiraDetails = null;
       this.selectedWorkItemId = null;
       this.selectedWorkItemData = null;

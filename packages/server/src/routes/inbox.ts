@@ -7,7 +7,7 @@ import { nonEmpty, sourceType, startWorkSource } from './schemas.js';
 const workItemSource = z.object({ sourceType: z.literal('work-item'), id: nonEmpty });
 
 export const inboxRouter = router({
-  get: procedure.query(({ ctx: { database, github, jira } }) => buildInbox(database, { github, jira })),
+  get: procedure.query(({ ctx: { database, codeHost, tracker } }) => buildInbox(database, { codeHost, tracker })),
 
   /** Marks an inbox item active locally; external sources become a new work item. */
   activate: procedure

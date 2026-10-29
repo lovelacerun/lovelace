@@ -5,7 +5,7 @@ import type { CreateWorkspaceRequest } from '@lovelace/coriol';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test, { type TestContext } from 'node:test';
-import { attachmentsOfType, isLaunchInProgress, type JiraIssueSummary, type LovelaceConfig, type LaunchResponse, type AgentSession } from '@lovelace/core';
+import { attachmentsOfType, isLaunchInProgress, type TrackerIssue, type LovelaceConfig, type LaunchResponse, type AgentSession } from '@lovelace/core';
 import { createTRPCClient, httpLink, TRPCClientError } from '@trpc/client';
 import { openDatabase } from '../database.js';
 import { buildServer } from '../app.js';
@@ -15,7 +15,7 @@ import type { LoadedTool } from '../tools/tool-loader.js';
 import { createActiveWorkItem } from '../repositories/work-item-repository.js';
 import { HerdrError } from '../herdr/herdr-client.js';
 import { FakeHerdr } from '../test-support/fake-herdr.js';
-import { fixtureProviders, storedSnapshot } from '../test-support/providers.js';
+import { changeRequest, fixtureProviders, storedSnapshot, trackerIssue } from '../test-support/providers.js';
 import { callerFor, rejectsWith } from '../test-support/trpc.js';
 import { syncSessions } from '../services/session-service.js';
 
@@ -39,7 +39,7 @@ async function fixture(t: TestContext, fail = false, providers = fixtureProvider
     refreshTools: () => {},
     listModels: async tool => [{ id: `${tool.id}-model` }],
     workspaceManager: {} as RouteDeps['workspaceManager'],
-    github: providers.github, jira: providers.jira,
+    codeHost: providers.codeHost, tracker: providers.tracker,
   };
   const closers: Array<() => Promise<void>> = [];
   /** Serves the routes over HTTP for transport tests; build after swapping seams in `deps`. */
@@ -64,10 +64,7 @@ const session = (details: LaunchResponse['details']) => {
   return { meta, payload: meta.payload as AgentSession };
 };
 
-const issue: JiraIssueSummary = {
-  id: '42', key: 'PROJ-42', title: 'Something', url: 'https://jira.invalid/browse/PROJ-42', project: 'PROJ',
-  status: 'To Do', statusCategory: 'new', issueType: 'Task', type: 'Task', author: 'fixture', descriptionText: null, updatedAt: '2026-01-01T10:00:00.000Z',
-};
+const issue: TrackerIssue = trackerIssue({ id: '42', title: 'Something', author: 'fixture', updatedAt: '2026-01-01T10:00:00.000Z' });
 
 test('dashboard exposes configured repository topic defaults without provider access', async t => {
   const { api, deps } = await fixture(t);
@@ -79,7 +76,7 @@ test('dashboard exposes configured repository topic defaults without provider ac
 
 test('quick-start validates every field before creating work or drafts', async (t) => {
   const { api, database, starts } = await fixture(t);
-  for (const payload of [{}, { prompt: '   ' }, { prompt: 42 }, { prompt: '\0' }, { prompt: 'Fix', agentId: 'unknown' }, { prompt: 'Fix', agentId: null }, { prompt: 'Fix', jiraIssueId: '' }, { prompt: 'Fix', jiraIssueId: 42 }, { prompt: 'Fix', jiraIssueId: 'missing' }]) {
+  for (const payload of [{}, { prompt: '   ' }, { prompt: 42 }, { prompt: '\0' }, { prompt: 'Fix', agentId: 'unknown' }, { prompt: 'Fix', agentId: null }, { prompt: 'Fix', trackerIssueId: '' }, { prompt: 'Fix', trackerIssueId: 42 }, { prompt: 'Fix', trackerIssueId: 'missing' }]) {
     await rejectsWith(quickStart(api, payload), 'BAD_REQUEST', undefined, JSON.stringify(payload));
   }
   assert.equal(database.getWorkItemCount(), 0);
@@ -156,7 +153,7 @@ test('retitling work relabels its own Herdr workspace; attaching Jira keys the t
   await settled();
   assert.deepEqual(renames(), [{ workspaceId, label: 'Renamed' }]);
 
-  providers.jira.fetchIssue = async () => issue;
+  providers.tracker.fetchIssue = async () => issue;
   await api.workItems.attachTrackerItem({ id, key: 'PROJ-42' });
   await settled();
   assert.equal((await api.workItems.get({ id })).workItem.title, 'PROJ-42: Renamed');
@@ -220,13 +217,13 @@ test('a failed launch keeps its work and exact prompt and retries in place', asy
 test('Jira quick-start resolves only server cache and selects no repositories', async (t) => {
   const { api, database, providers, starts } = await fixture(t);
   await providers.setAssigned([issue]);
-  const { details, launch } = await api.launches.quickStart({ prompt: 'Fix', jiraIssueId: issue.id });
+  const { details, launch } = await api.launches.quickStart({ prompt: 'Fix', trackerIssueId: issue.id });
   assert.equal(launch.state, 'started');
   assert.equal(details.workItem.title, 'PROJ-42: Something');
   assert.equal(attachmentsOfType(details.attachments, 'tracker-item').length, 1);
   assert.equal(attachmentsOfType(details.attachments, 'worktree').length, 0);
   assert.equal(starts().length, 1);
-  assert.equal((await api.dashboard.get()).pendingJiraIssues.length, 0);
+  assert.equal((await api.dashboard.get()).pendingIssues.length, 0);
   assert.equal(database.listWorkActivity().filter((row) => row.kind === 'work-item.tracker-attached').length, 1);
 });
 
@@ -280,7 +277,7 @@ test('Jira selections prepare isolated worktrees before a single idempotent agen
   const { calls, records } = repositoryFixture(deps);
   await providers.setAssigned([issue]);
   const prompt = '  Edited template\n\nExact final text.\n';
-  const payload = { prompt, jiraIssueId: issue.id, repoIds: records.map(repo => repo.id), promptId: 'refine', requestId: randomUUID() };
+  const payload = { prompt, trackerIssueId: issue.id, repoIds: records.map(repo => repo.id), promptId: 'refine', requestId: randomUUID() };
   const { details, launch } = await api.launches.quickStart(payload);
   assert.equal(launch.state, 'started', launch.error ?? '');
   assert.equal(calls.length, 2);
@@ -303,21 +300,20 @@ test('Jira selections prepare isolated worktrees before a single idempotent agen
 test('review quick-start checks out the pull request branch of its repository and hides the review', async (t) => {
   const { api, providers, database, deps, starts } = await fixture(t);
   const { calls, records } = repositoryFixture(deps);
-  providers.data.reviews = [{
-    id: 'PR_1', number: 7, title: 'Retry uploads', url: 'https://github.invalid/org/a/pull/7', repoFullName: 'org/a', project: 'org/a',
-    type: null, authorLogin: 'human', author: 'human', descriptionText: null, headRefName: 'feature/retry', baseRefName: 'main', updatedAt: '2026-01-01T10:00:00.000Z',
-  }];
-  await providers.github.refreshReviewRequests();
-  assert.deepEqual((await api.dashboard.get()).pendingReviews.map(review => [review.id, review.repoId]), [['PR_1', records[0]!.id]]);
-  for (const payload of [{ reviewRequestId: 'missing', repoIds: [records[0]!.id] }, { reviewRequestId: 'PR_1', repoIds: [records[1]!.id] }, { reviewRequestId: 42 }]) {
+  providers.data.reviews = [changeRequest({
+    repository: 'org/a', number: 7, title: 'Retry uploads', author: 'human', sourceBranch: 'feature/retry', targetBranch: 'main', updatedAt: '2026-01-01T10:00:00.000Z',
+  })];
+  await providers.codeHost.refreshReviewRequests();
+  assert.deepEqual((await api.dashboard.get()).pendingReviews.map(review => [review.id, review.repoId]), [['org/a#7', records[0]!.id]]);
+  for (const payload of [{ reviewRequestId: 'missing', repoIds: [records[0]!.id] }, { reviewRequestId: 'org/a#7', repoIds: [records[1]!.id] }, { reviewRequestId: 42 }]) {
     await rejectsWith(quickStart(api, { prompt: 'Review', ...payload }), 'BAD_REQUEST', undefined, JSON.stringify(payload));
   }
   assert.equal(database.getWorkItemCount(), 0);
 
-  const { details, launch } = await api.launches.quickStart({ prompt: 'Review', reviewRequestId: 'PR_1', repoIds: records.map(repo => repo.id), promptId: 'review' });
+  const { details, launch } = await api.launches.quickStart({ prompt: 'Review', reviewRequestId: 'org/a#7', repoIds: records.map(repo => repo.id), promptId: 'review' });
   assert.equal(launch.state, 'started', launch.error ?? '');
   assert.equal(details.workItem.title, 'org/a#7: Retry uploads');
-  assert.deepEqual(attachmentsOfType(details.attachments, 'change-request').map(meta => meta.externalId), ['PR_1']);
+  assert.deepEqual(attachmentsOfType(details.attachments, 'change-request').map(meta => meta.externalId), ['org/a#7']);
   assert.deepEqual(calls.map(call => [call.repository.id, call.mode, call.remoteBranch]).sort(), [['github/org/a', 'existing', 'feature/retry'], ['github/org/b', 'fresh', null]]);
   assert.equal(starts().length, 1);
   assert.equal((await api.dashboard.get()).pendingReviews.length, 0);
@@ -449,7 +445,7 @@ test('a harness whose models cannot be listed is still offered', async (t) => {
 });
 
 test('excluded v3 routes are not mounted and malformed Jira hydration is safe', async (t) => {
-  const { api, serve } = await fixture(t, false, fixtureProviders([storedSnapshot('jira.assigned', '{broken')]));
+  const { api, serve } = await fixture(t, false, fixtureProviders([storedSnapshot('tracker.jira.assignedIssues', '{broken')]));
   const excluded = ['kizzy', 'repo-dashboard', 'security-alerts', 'repository-insights', 'agent-signals'];
   const procedures = Object.keys(appRouter._def.procedures);
   for (const name of excluded) {
@@ -462,7 +458,7 @@ test('excluded v3 routes are not mounted and malformed Jira hydration is safe', 
   }
   const dashboard = await api.dashboard.get();
   assert.deepEqual(dashboard.settings, { defaultAgent: 'pi', sidebarSide: 'right', repositoryTopics: [] });
-  assert.equal(dashboard.freshness.jiraStale, true);
+  assert.equal(dashboard.freshness.trackerStale, true);
 });
 
 test('stable request IDs coalesce concurrent submissions and replay uncertain replies without another launch', async (t) => {
@@ -628,7 +624,7 @@ test('independent accepted tasks prepare concurrently; later task can finish whi
     if (input.kind === 'pi') { starting.resolve(); await agent.promise; }
     return start(input);
   };
-  const firstPayload = { prompt: 'First task', jiraIssueId: issue.id, repoIds: [records[0]!.id], requestId: randomUUID(), wait: false };
+  const firstPayload = { prompt: 'First task', trackerIssueId: issue.id, repoIds: [records[0]!.id], requestId: randomUUID(), wait: false };
   const first = await api.launches.quickStart(firstPayload);
   const secondPayload = { prompt: 'Second task', agentId: 'claude' as const, repoIds: [records[1]!.id], requestId: randomUUID(), wait: false };
   const second = await api.launches.quickStart(secondPayload);
@@ -636,7 +632,7 @@ test('independent accepted tasks prepare concurrently; later task can finish whi
   assert.notEqual(first.details.workItem.id, second.details.workItem.id);
   let dashboard = await api.dashboard.get();
   assert.ok(dashboard.activeWorkItems.every(item => item.launchState === 'preparing'));
-  assert.equal(dashboard.pendingJiraIssues.length, 0, 'accepted Jira work is no longer pending');
+  assert.equal(dashboard.pendingIssues.length, 0, 'accepted Jira work is no longer pending');
   preparation[0]!.resolve();
   await starting.promise;
   assert.equal((await api.launches.get({ id: firstPayload.requestId })).launch.state, 'starting');

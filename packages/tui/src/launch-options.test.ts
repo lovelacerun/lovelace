@@ -15,10 +15,10 @@ const tools: AvailableHarness[] = (['pi', 'claude'] as const).map((id, index) =>
 function stateWith(defaultAgent: 'pi' | 'codex' = 'pi', detected: AvailableHarness[] | null = tools): AppState {
   const state = new AppState({ onInvalidate() {} });
   state.applyDashboardResponse({
-    activeWorkItems: [], pendingJiraIssues: [], pendingReviews: [],
+    activeWorkItems: [], pendingIssues: [], pendingReviews: [],
     recent: { since: '', workItems: [], sessionCount: 0, completedCount: 0, activityCount: 0 },
     settings: { defaultAgent, sidebarSide: 'right', repositoryTopics: [] },
-    freshness: { jiraFetchedAt: null, githubFetchedAt: null, jiraStale: false, githubStale: false },
+    freshness: { trackerFetchedAt: null, codeHostFetchedAt: null, trackerStale: false, codeHostStale: false },
   } satisfies DashboardResponse);
   if (detected) state.setTools(detected);
   return state;

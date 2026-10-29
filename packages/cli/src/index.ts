@@ -69,15 +69,15 @@ async function main() {
       return printJson(await client().system.cacheSnapshots.query());
     case 'github':
       if (subcommand === 'reviews' && rest[0] === 'refresh') {
-        return printJson(await client().github.refreshReviewRequests.mutate());
+        return printJson(await client().codeHost.refreshReviewRequests.mutate());
       }
-      if (subcommand === 'reviews') return printJson(await client().github.reviewRequests.query());
+      if (subcommand === 'reviews') return printJson(await client().codeHost.reviewRequests.query());
       return printJson({ error: 'Usage: lovelace github reviews [refresh]' });
     case 'jira':
       if (subcommand === 'issues' && rest[0] === 'refresh') {
-        return printJson(await client().jira.refreshIssues.mutate());
+        return printJson(await client().tracker.refreshIssues.mutate());
       }
-      if (subcommand === 'issues') return printJson(await client().jira.issues.query());
+      if (subcommand === 'issues') return printJson(await client().tracker.issues.query());
       return printJson({ error: 'Usage: lovelace jira issues [refresh]' });
     case 'help':
     default:
@@ -242,7 +242,7 @@ async function handleAttachPr(args: string[]) {
   if (!id || refs.length === 0) throw new Error('Usage: lovelace work-items attach-pr <id> <pr...>');
   const attachments = [];
   for (const ref of refs) {
-    attachments.push(await client().workItems.attachPullRequest.mutate({ id, ...bodyForPullRequestRef(ref) }));
+    attachments.push(await client().workItems.attachChangeRequest.mutate({ id, ...bodyForPullRequestRef(ref) }));
   }
   return printJson(attachments);
 }
@@ -251,9 +251,9 @@ async function handleDetachPr(args: string[]) {
   const [id, ref] = args.map((value) => value.trim()).filter(Boolean);
   if (!id || !ref) throw new Error('Usage: lovelace work-items detach-pr <id> <pr>');
   const parsed = parsePullRequestShorthand(ref);
-  const externalId = parsed ? `${parsed.repoFullName}#${parsed.number}` : externalIdFromUrl(ref);
+  const externalId = parsed ? `${parsed.repository}#${parsed.number}` : externalIdFromUrl(ref);
   if (!externalId) throw new Error('Pull request must be a GitHub URL or owner/repo#number');
-  return printJson(await client().workItems.detachPullRequest.mutate({ id, externalId }));
+  return printJson(await client().workItems.detachChangeRequest.mutate({ id, externalId }));
 }
 
 async function handleAttachJira(args: string[]) {
@@ -288,7 +288,7 @@ async function handlePrs(args: string[]) {
   if (!id) throw new Error('Usage: lovelace work-items prs <id> [--refresh]');
   const refresh = args.includes('--refresh');
   const attachments = refresh
-    ? await client().workItems.refreshPullRequests.mutate({ id })
+    ? await client().workItems.refreshChangeRequests.mutate({ id })
     : (await client().workItems.get.query({ id })).attachments;
   return printJson(extractPullRequests(attachments));
 }
@@ -366,15 +366,13 @@ function bodyForJiraIssueRef(ref: string) {
 }
 
 function extractJiraIssues(attachments: WorkItemAttachment[]) {
-  return attachmentsOfType(attachments, 'tracker-item')
-    .filter((attachment) => attachment.provider === 'jira')
-    .map((attachment) => ({ externalId: attachment.externalId, ...attachment.payload }));
+  return attachmentsOfType(attachments, 'tracker-item').map((attachment) => ({ externalId: attachment.externalId, ...attachment.payload }));
 }
 
-function parsePullRequestShorthand(value: string): { repoFullName: string; number: number } | null {
+function parsePullRequestShorthand(value: string): { repository: string; number: number } | null {
   const match = value.match(/^([^/]+\/[^#]+)#(\d+)$/);
   if (!match) return null;
-  return { repoFullName: match[1], number: Number(match[2]) };
+  return { repository: match[1], number: Number(match[2]) };
 }
 
 function externalIdFromUrl(value: string): string | null {

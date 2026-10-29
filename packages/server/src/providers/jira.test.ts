@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { LovelaceConfig } from '@lovelace/core';
-import { createJiraClient } from '../jira.js';
+import { createJiraTracker } from './jira.js';
 
 test('assigned issue sync uses fetch with the Jira search endpoint', async () => {
   let requestUrl = '';
@@ -30,7 +30,7 @@ test('assigned issue sync uses fetch with the Jira search endpoint', async () =>
     );
   };
 
-  const issues = await createJiraClient(config(), { fetch }).fetchAssignedIssues();
+  const issues = await createJiraTracker(config(), { fetch }).fetchAssignedIssues();
 
   assert.equal(requestUrl, 'https://api.atlassian.test/ex/jira/cloud-id/rest/api/3/search/jql');
   assert.equal(requestInit?.method, 'POST');
@@ -43,13 +43,31 @@ test('assigned issue sync uses fetch with the Jira search endpoint', async () =>
   assert.equal(issues.length, 1);
   assert.equal(issues[0]?.key, 'TEST-1');
   assert.equal(issues[0]?.url, 'https://jira.atlassian.test/browse/TEST-1');
+  assert.equal(issues[0]?.done, false);
+});
+
+test('issues are done by status category, or by status name without one', async () => {
+  const statuses = [{ name: 'Erledigt', statusCategory: { key: 'done' } }, { name: 'Closed' }, { name: 'In Progress', statusCategory: { key: 'indeterminate' } }];
+  const fetch: typeof globalThis.fetch = async () => Response.json({
+    issues: statuses.map((status, index) => ({ id: String(index), key: `TEST-${index}`, fields: { summary: 'S', status, updated: '2026-08-10T08:00:00.000Z' } })),
+  });
+  const issues = await createJiraTracker(config(), { fetch }).fetchAssignedIssues();
+  assert.deepEqual(issues.map((issue) => issue.done), [true, true, false]);
+});
+
+test('issue references are keys, numeric IDs or browse URLs', () => {
+  const jira = createJiraTracker(config());
+  assert.equal(jira.parseIssueRef({ key: ' test-1 ' }), 'TEST-1');
+  assert.equal(jira.parseIssueRef({ key: '10001' }), '10001');
+  assert.equal(jira.parseIssueRef({ url: 'https://jira.atlassian.test/browse/TEST-2' }), 'TEST-2');
+  assert.equal(jira.parseIssueRef({ key: 'nope', url: 'https://jira.atlassian.test/projects/TEST' }), null);
 });
 
 test('assigned issue sync reports non-successful Jira responses', async () => {
   const fetch: typeof globalThis.fetch = async () => new Response(null, { status: 502 });
 
   await assert.rejects(
-    createJiraClient(config(), { fetch }).fetchAssignedIssues(),
+    createJiraTracker(config(), { fetch }).fetchAssignedIssues(),
     /jira assigned issue sync failed \(502\)/,
   );
 });

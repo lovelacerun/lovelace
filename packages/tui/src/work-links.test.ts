@@ -7,10 +7,10 @@ import type { DashboardResponse, WorkItemAttachment, WorkItemDetails } from '@lo
 import { AppRoot } from './app.js';
 
 const dashboard: DashboardResponse = {
-  activeWorkItems: [], pendingJiraIssues: [], pendingReviews: [],
+  activeWorkItems: [], pendingIssues: [], pendingReviews: [],
   recent: { since: '', workItems: [], sessionCount: 0, completedCount: 0, activityCount: 0 },
   settings: { defaultAgent: 'pi', sidebarSide: 'right', repositoryTopics: [] },
-  freshness: { jiraFetchedAt: null, githubFetchedAt: null, jiraStale: false, githubStale: false },
+  freshness: { trackerFetchedAt: null, codeHostFetchedAt: null, trackerStale: false, codeHostStale: false },
 };
 const details: WorkItemDetails = {
   workItem: { id: 'work', title: 'Linked work', state: 'active', notes: null, createdAt: '', updatedAt: '', startedAt: null, completedAt: null },
@@ -18,8 +18,8 @@ const details: WorkItemDetails = {
   attachments: [
     { key: 'PROJ-1', title: 'A long Jira title '.repeat(8), url: 'https://jira.example/browse/PROJ-1' },
     { key: 'PROJ-2', title: 'Second ticket', url: 'https://jira.example/browse/PROJ-2' },
-    { number: 12, repoFullName: 'example/service', url: 'https://github.com/example/service/pull/12' },
-    { number: 13, repoFullName: 'example/service', url: 'https://github.com/example/service/pull/13' },
+    { number: 12, repository: 'example/service', url: 'https://github.com/example/service/pull/12' },
+    { number: 13, repository: 'example/service', url: 'https://github.com/example/service/pull/13' },
   ].map((data, index) => ({
     id: String(index), workItemId: 'work', type: index < 2 ? 'tracker-item' : 'pull-request', provider: index < 2 ? 'jira' : 'github',
     externalId: String(index), payload: data, createdAt: '', updatedAt: '',

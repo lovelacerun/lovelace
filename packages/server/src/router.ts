@@ -2,7 +2,7 @@ import { activityRouter } from './routes/activity.js';
 import { dashboardRouter, launchesRouter, sessionsRouter } from './routes/dashboard.js';
 import { inboxRouter } from './routes/inbox.js';
 import { promptsRouter } from './routes/prompts.js';
-import { githubRouter, jiraRouter } from './routes/providers.js';
+import { codeHostRouter, trackerRouter } from './routes/providers.js';
 import { repositoriesRouter } from './routes/repos.js';
 import { systemRouter } from './routes/system.js';
 import { toolsRouter } from './routes/tools.js';
@@ -22,8 +22,8 @@ export const appRouter = router({
   launches: launchesRouter,
   sessions: sessionsRouter,
   workspaces: workspacesRouter,
-  github: githubRouter,
-  jira: jiraRouter,
+  codeHost: codeHostRouter,
+  tracker: trackerRouter,
 });
 
 /** The server API; clients infer every route's input and output from it. */

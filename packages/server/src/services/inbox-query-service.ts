@@ -1,14 +1,14 @@
-import type { GitHubReviewRequest, InboxSourceType, JiraIssueSummary, LovelaceLink, StartWorkSource, WorkItem, WorkItemAttachment, WorkItemDetails } from '@lovelace/core';
+import type { ChangeRequest, InboxSourceType, LovelaceLink, TrackerIssue, StartWorkSource, WorkItem, WorkItemAttachment, WorkItemDetails } from '@lovelace/core';
 import groupBy from '@nkzw/core/groupBy.js';
 import isPresent from '@nkzw/core/isPresent.js';
-import type { CachedGitHub, CachedJira } from '../cached-providers.js';
+import type { CachedCodeHost, CachedTracker } from '../cached-providers.js';
 import { toLaunch, type DatabaseState, type LaunchRecord } from '../database.js';
 import { dedupeLinks, isNonEmptyString, truncateText } from '../helpers.js';
 import { pendingReviewRequests } from './review-request-service.js';
 
 export interface InboxProviders {
-  github: Pick<CachedGitHub, 'peekReviewRequests'>;
-  jira: Pick<CachedJira, 'peekAssignedIssues'>;
+  codeHost: Pick<CachedCodeHost, 'provider' | 'peekReviewRequests'>;
+  tracker: Pick<CachedTracker, 'provider' | 'peekAssignedIssues'>;
 }
 
 export interface RelatedWorkItemRef {
@@ -28,7 +28,7 @@ export interface InboxItem {
   sources?: StartWorkSource[];
   links?: LovelaceLink[];
   relatedWorkItems?: RelatedWorkItemRef[];
-  raw: JiraIssueSummary | WorkItemDetails | GitHubReviewRequest;
+  raw: TrackerIssue | WorkItemDetails | ChangeRequest;
 }
 
 export function buildInbox(database: DatabaseState, providers: InboxProviders) {
@@ -38,14 +38,15 @@ export function buildInbox(database: DatabaseState, providers: InboxProviders) {
   const launchesByWorkItemId = groupBy(database.listLaunches(), (launch) => launch.workItemId);
   const dismissedSourceKeys = buildDismissedSourceKeySet(database.listInboxMeta());
   const linkedSourceKeys = buildLinkedSourceKeySet(workItems, attachments);
-  const assignedIssues = providers.jira.peekAssignedIssues()?.value ?? [];
+  const { tracker, codeHost } = providers;
+  const assignedIssues = tracker.peekAssignedIssues()?.value ?? [];
 
   const relatedWorkItemsBySourceKey = buildRelatedWorkItemRefMap(workItems, attachments);
 
-  const jiraIssues = assignedIssues
-    .filter((issue) => !dismissedSourceKeys.has(sourceKey('tracker-item', 'jira', issue.id)))
-    .filter((issue) => !linkedSourceKeys.has(sourceKey('tracker-item', 'jira', issue.id)))
-    .map((issue) => toTrackerInboxItem(issue, relatedWorkItemsBySourceKey.get(sourceKey('tracker-item', 'jira', issue.id)) ?? []));
+  const trackerIssues = assignedIssues
+    .filter((issue) => !dismissedSourceKeys.has(sourceKey('tracker-item', tracker.provider, issue.id)))
+    .filter((issue) => !linkedSourceKeys.has(sourceKey('tracker-item', tracker.provider, issue.id)))
+    .map((issue) => toTrackerInboxItem(tracker.provider, issue, relatedWorkItemsBySourceKey.get(sourceKey('tracker-item', tracker.provider, issue.id)) ?? []));
 
   const activeWorkItems = workItems
     .filter((workItem) => workItem.state === 'active')
@@ -53,8 +54,8 @@ export function buildInbox(database: DatabaseState, providers: InboxProviders) {
 
   return {
     activeWorkItems: sortByUpdatedAt(activeWorkItems),
-    jiraIssues: sortByUpdatedAt(jiraIssues),
-    reviewRequests: pendingReviewRequests(database, providers.github).map(toChangeRequestInboxItem),
+    trackerIssues: sortByUpdatedAt(trackerIssues),
+    reviewRequests: pendingReviewRequests(database, codeHost).map((review) => toChangeRequestInboxItem(codeHost.provider, review)),
   };
 }
 
@@ -72,8 +73,8 @@ function toWorkItemInboxItem(workItem: WorkItem, attachments: WorkItemAttachment
   };
 }
 
-function toTrackerInboxItem(issue: JiraIssueSummary, relatedWorkItems: RelatedWorkItemRef[]): InboxItem {
-  const slimIssue = toSlimTrackerIssue(issue);
+function toTrackerInboxItem(provider: string, issue: TrackerIssue, relatedWorkItems: RelatedWorkItemRef[]): InboxItem {
+  const slimIssue = { ...issue, description: truncateText(issue.description, 4000) };
   return {
     id: issue.id,
     sourceType: 'tracker-item',
@@ -85,7 +86,7 @@ function toTrackerInboxItem(issue: JiraIssueSummary, relatedWorkItems: RelatedWo
     sources: [
       {
         sourceType: 'tracker-item',
-        provider: 'jira',
+        provider,
         externalId: issue.id,
         payload: slimIssue,
       },
@@ -94,24 +95,16 @@ function toTrackerInboxItem(issue: JiraIssueSummary, relatedWorkItems: RelatedWo
   };
 }
 
-function toChangeRequestInboxItem(review: GitHubReviewRequest): InboxItem {
-  const slimReview = { ...review, descriptionText: truncateText(review.descriptionText, 4000) };
+function toChangeRequestInboxItem(provider: string, review: ChangeRequest): InboxItem {
   return {
     id: review.id,
     sourceType: 'change-request',
-    title: `${review.repoFullName}#${review.number}: ${review.title}`,
-    subtitle: review.authorLogin,
+    title: `${review.repository}#${review.number}: ${review.title}`,
+    subtitle: review.author,
     url: review.url,
     updatedAt: review.updatedAt,
-    sources: [{ sourceType: 'change-request', provider: 'github', externalId: review.id, payload: slimReview }],
-    raw: slimReview,
-  };
-}
-
-function toSlimTrackerIssue(issue: JiraIssueSummary): JiraIssueSummary {
-  return {
-    ...issue,
-    descriptionText: truncateText(issue.descriptionText, 4000),
+    sources: [{ sourceType: 'change-request', provider, externalId: review.id, payload: review }],
+    raw: review,
   };
 }
 

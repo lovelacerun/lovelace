@@ -1,4 +1,4 @@
-import type { DashboardJiraIssue, DashboardReview, WorkItemSummary } from '@lovelace/core';
+import type { DashboardIssue, DashboardReview, WorkItemSummary } from '@lovelace/core';
 import type { AppState } from '../state.js';
 import { muted, faint, heading, icons, reset } from '../theme.js';
 import { columnWidths, columns, safeText } from '@lovelace/tui-components';
@@ -12,14 +12,14 @@ const workDetail = (item: WorkItemSummary): string => muted + meta([
   (item.launchState ? launchStateBadge(item.launchState) : stateBadge(item.state)) + muted,
   item.sessionCount && plural(item.sessionCount, 'session'),
   item.repositoryCount && plural(item.repositoryCount, 'repo'),
-  item.pullRequestRefs.length && plural(item.pullRequestRefs.length, 'PR'),
+  item.changeRequestRefs.length && plural(item.changeRequestRefs.length, 'PR'),
 ]) + reset;
 
-const jiraDetail = (issue: DashboardJiraIssue): string =>
+const jiraDetail = (issue: DashboardIssue): string =>
   muted + meta([issue.status && safeText(issue.status), issue.issueType && safeText(issue.issueType)]) + reset;
 
 const reviewDetail = (review: DashboardReview): string =>
-  muted + meta([safeText(`${review.repoFullName}#${review.number}`), review.authorLogin && safeText(review.authorLogin)]) + reset;
+  muted + meta([safeText(`${review.repository}#${review.number}`), review.author && safeText(review.author)]) + reset;
 
 /**
  * Home: recorded work from yesterday and today beside pending Jira and reviews, two columns when
@@ -75,13 +75,13 @@ export function renderDashboard(state: AppState, width: number): Document {
   if (recent && !recent.workItems.length) left.push(muted + '  No recorded work.' + reset);
 
   const right: string[] = [];
-  section(right, 'Pending Jira', loaded ? state.pendingJiraIssues.length : '', loaded ? 'Assigned and not started'
+  section(right, 'Pending Jira', loaded ? state.pendingIssues.length : '', loaded ? 'Assigned and not started'
     : unavailable ? 'Issues unavailable' : 'Loading issues…', icons.pending);
-  entries(right, state.pendingJiraIssues, cell, split ? offset : offset + left.length + 1, issue => ({
+  entries(right, state.pendingIssues, cell, split ? offset : offset + left.length + 1, issue => ({
     rows: [keyedTitle(issue.title, issue.key), jiraDetail(issue)],
     entry: { kind: 'navigate', entry: { kind: 'jira', id: issue.id } },
   }));
-  if (loaded && !state.pendingJiraIssues.length) right.push(muted + '  Nothing waiting.' + reset);
+  if (loaded && !state.pendingIssues.length) right.push(muted + '  Nothing waiting.' + reset);
   // Reviews take room only when one is waiting; small screens keep their layout.
   if (state.pendingReviews.length) {
     right.push('');

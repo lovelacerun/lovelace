@@ -45,7 +45,7 @@ class FakeServer {
       if (this.failReads) throw new Error('fixture offline');
       return structuredClone(this.records.get(id)!);
     },
-    'jira.issues': async () => [],
+    'tracker.issues': async () => [],
     'prompts.list': async () => [{ id: 'refine', title: 'Refine', content: '', builtIn: true, overridden: false }],
     'repositories.list': async () => [
       { id: 'repo', provider: 'github', externalId: 'repo', name: 'api', fullName: 'org/api', cloneUrl: '', defaultBranch: 'main', isArchived: false, topics: [], lastSyncedAt: '' },
@@ -60,20 +60,20 @@ class FakeServer {
     const activeWorkItems: WorkItemSummary[] = [...this.records.values()].map(({ workItem, attachments, launches }) => {
       const launch = launches.findLast(launch => isLaunchInProgress(launch.state)) ?? launches.at(-1)!;
       return { ...workItem, sessionCount: attachments.filter(meta => meta.type === 'session').length, repositoryCount: 1,
-        trackerIssueKeys: [], pullRequestRefs: [], ...(launch.state === 'started' ? {} : { launchState: launch.state }) };
+        trackerIssueKeys: [], changeRequestRefs: [], ...(launch.state === 'started' ? {} : { launchState: launch.state }) };
     });
     return {
-      activeWorkItems, pendingJiraIssues: issues.filter(issue => !this.linkedIssues.has(issue.id)), pendingReviews: [],
+      activeWorkItems, pendingIssues: issues.filter(issue => !this.linkedIssues.has(issue.id)), pendingReviews: [],
       recent: { since: '', workItems: activeWorkItems, sessionCount: 0, completedCount: 0, activityCount: 0 },
       settings: { defaultAgent: 'pi', sidebarSide: 'right', repositoryTopics: [] },
-      freshness: { jiraFetchedAt: null, githubFetchedAt: null, jiraStale: false, githubStale: false },
+      freshness: { trackerFetchedAt: null, codeHostFetchedAt: null, trackerStale: false, codeHostStale: false },
     };
   }
-  quickStart = async ({ prompt, jiraIssueId, agentId, requestId = '', repoIds, promptId, wait }: QuickStartInput): Promise<LaunchResponse> => {
+  quickStart = async ({ prompt, trackerIssueId, agentId, requestId = '', repoIds, promptId, wait }: QuickStartInput): Promise<LaunchResponse> => {
     const existing = [...this.records.values()].find(details => details.launches.some(launch => launch.id === requestId));
     const id = existing?.workItem.id ?? `work-${this.records.size + 1}`;
     this.calls.push({ endpoint: 'quickStart', id, prompt, requestId, agentId, repoIds, promptId, wait });
-    if (jiraIssueId) this.linkedIssues.add(jiraIssueId);
+    if (trackerIssueId) this.linkedIssues.add(trackerIssueId);
     return existing ? this.response(id, requestId) : this.accept({ id, prompt, requestId, agentId, repoIds, promptId });
   };
   private newSession({ workItemId: id, prompt, agentId, options: overrides, requestId = '', repoIds, promptId, wait }: NewSessionInput) {

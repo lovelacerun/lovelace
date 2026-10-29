@@ -13,9 +13,9 @@ const prStatus = (): Record<string, Status> => ({
   closed: [icons.closed, 'Closed', muted],
 });
 const reviewStatus = (): Record<string, Status> => ({
-  APPROVED: [icons.check, 'Approved', success],
-  CHANGES_REQUESTED: [icons.warning, 'Changes requested', warning],
-  REVIEW_REQUIRED: [icons.waiting, 'Review required', warning],
+  'approved': [icons.check, 'Approved', success],
+  'changes-requested': [icons.warning, 'Changes requested', warning],
+  'required': [icons.waiting, 'Review required', warning],
 });
 const buildStatus = (): Record<string, Status> => ({
   success: [icons.check, 'Build passed', success], failure: [icons.cross, 'Build failed', danger], error: [icons.cross, 'Build failed', danger],
@@ -66,16 +66,15 @@ export function renderAttachments(attachments: WorkItemDetails['attachments'], w
   for (const [index, request] of requests.entries()) {
     const data = request.payload;
     if (index) prs.push('');
-    const review = safeText(data.reviewDecision).toUpperCase();
-    const reviewLabel = lookup(reviewStatus(), review,
-      review && review !== 'UNKNOWN' ? 'Review: ' + safeText(data.reviewDecision) : 'Review unknown');
-    const build = safeText(data.buildStatus).toLowerCase();
+    const review = safeText(data.review).toLowerCase();
+    const reviewLabel = lookup(reviewStatus(), review, review && review !== 'unknown' ? 'Review: ' + safeText(data.review) : 'Review unknown');
+    const build = safeText(data.build).toLowerCase();
     const buildLabel = lookup(buildStatus(), build, build && build !== 'unknown' ? 'Build: ' + build : 'Build unknown');
     const status = safeText(data.status).toLowerCase();
     const checks = reviewLabel + '  ' + buildLabel;
     prs.push(...linkCard([
       bold + '#' + safeText(String(data.number ?? request.externalId)) + reset + '  ' + lookup(prStatus(), status, status || 'Unknown'),
-      muted + safeText(data.repoFullName) + reset,
+      muted + safeText(data.repository) + reset,
       ...(visibleWidth(checks) <= Card.contentWidth(rightWidth) ? [checks] : [reviewLabel, buildLabel]),
     ], rightWidth, prCardTheme, data.url, prStartRow + prs.length, document));
   }

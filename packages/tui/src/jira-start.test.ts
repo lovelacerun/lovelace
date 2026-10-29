@@ -2,13 +2,13 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { LovelaceClient } from '@lovelace/client';
 import { fakeClient, serverError, type FakeHandlers } from '@lovelace/client/testing';
-import type { DashboardJiraIssue, JiraIssueSummary, Launch, LaunchResponse, RepoRecord, WorkItem } from '@lovelace/core';
+import type { DashboardIssue, TrackerIssue, Launch, LaunchResponse, Repository, WorkItem } from '@lovelace/core';
 import { AppState } from './state.js';
 import { filterRepositories } from './jira-start.js';
 import { submitLaunch } from './controller.js';
 
-const issue: DashboardJiraIssue = { id: '42', key: 'PROJ-42', title: 'Fix sync', url: 'https://jira.invalid/42', status: 'To Do', issueType: 'Task', updatedAt: '' };
-const repositories: RepoRecord[] = [
+const issue: DashboardIssue = { id: '42', key: 'PROJ-42', title: 'Fix sync', url: 'https://jira.invalid/42', status: 'To Do', issueType: 'Task', updatedAt: '' };
+const repositories: Repository[] = [
   { id: '1', provider: 'github', externalId: '1', name: 'sync', fullName: 'org/sync', cloneUrl: '', defaultBranch: 'main', isArchived: false, topics: ['infra', 'typescript'], lastSyncedAt: '' },
   { id: '2', provider: 'github', externalId: '2', name: 'sync-client', fullName: 'other/sync-client', cloneUrl: '', defaultBranch: 'main', isArchived: false, topics: ['examplecom'], lastSyncedAt: '' },
   { id: '3', provider: 'github', externalId: '3', name: 'website', fullName: 'org/website', cloneUrl: '', defaultBranch: 'main', isArchived: true, topics: [], lastSyncedAt: '' },
@@ -24,7 +24,7 @@ function client(overrides: FakeHandlers = {}): LovelaceClient {
   return fakeClient({
     'repositories.list': async () => repositories,
     'prompts.list': async () => templates,
-    'jira.issues': async () => [{ ...issue, project: 'PROJ', statusCategory: 'new', type: 'Task', author: null, descriptionText: 'Full description' } satisfies JiraIssueSummary],
+    'tracker.issues': async () => [{ ...issue, project: 'PROJ', done: false, author: null, description: 'Full description' } satisfies TrackerIssue],
     'prompts.render': async () => ({ promptId: 'refine', content: 'Rendered prompt' }),
     'launches.get': async () => { throw serverError(404, 'launch not found'); },
     ...overrides,
@@ -46,13 +46,13 @@ test('repository name/topic filters combine and never exclude topic-free or arch
 test('a lost reply resends the Jira request with its repositories and template; any answer hands it to the server', async () => {
   const state = stateForIssue();
   const key = state.draftKey;
-  const jiraIssueId = state.selectedJira!.id;
+  const trackerIssueId = state.selectedJira!.id;
   state.setDraft({ text: '  Edited\n', repoIds: ['1', '2'], promptId: 'refine' });
   const calls: unknown[] = [];
   let attempt = 0;
   const api = client({
-    'launches.quickStart': async ({ prompt, jiraIssueId, requestId, repoIds, promptId }) => {
-      calls.push({ prompt, jiraIssueId, requestId, repoIds, promptId });
+    'launches.quickStart': async ({ prompt, trackerIssueId, requestId, repoIds, promptId }) => {
+      calls.push({ prompt, trackerIssueId, requestId, repoIds, promptId });
       if (++attempt === 1) throw new Error('lost reply');
       const launch: Launch = { id: requestId!, workItemId: 'work', state: 'failed', error: 'install failed', harness: 'pi', repoIds: repoIds ?? [], promptId: promptId ?? null, prompt, createdAt: '', updatedAt: '' };
       const workItem: WorkItem = { id: 'work', title: 'Fix sync', state: 'active', notes: null, createdAt: '', updatedAt: '', startedAt: null, completedAt: null };
@@ -64,7 +64,7 @@ test('a lost reply resends the Jira request with its repositories and template; 
   assert.equal(state.draft.requestId, '0');
   await submitLaunch(state, deps, state.draft.text);
   assert.deepEqual(calls[1], calls[0]);
-  assert.deepEqual(calls[0], { prompt: '  Edited\n', jiraIssueId, requestId: '0', repoIds: ['1', '2'], promptId: 'refine' });
+  assert.deepEqual(calls[0], { prompt: '  Edited\n', trackerIssueId, requestId: '0', repoIds: ['1', '2'], promptId: 'refine' });
   assert.equal(state.view, 'work-item');
   assert.equal(state.selectedWorkItemId, 'work');
   assert.deepEqual(state.drafts.get(key), { text: '', repoIds: undefined, promptId: undefined, requestId: undefined });

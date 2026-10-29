@@ -4,6 +4,13 @@ import type { DatabaseSync } from 'node:sqlite';
 
 type Migration = (db: DatabaseSync) => void;
 
+/** GitHub pull request payload fields as `ChangeRequest` fields, for `json_object`. */
+const changeRequestFields = `'repository', ${field('repoFullName')}, 'number', ${field('number')}, 'title', ${field('title')}, 'url', ${field('url')},
+  'author', ${field('authorLogin')}, 'sourceBranch', ${field('headRefName')}, 'targetBranch', ${field('baseRefName')},
+  'review', case ${field('reviewDecision')} when 'APPROVED' then 'approved' when 'CHANGES_REQUESTED' then 'changes-requested'
+    when 'REVIEW_REQUIRED' then 'required' end,
+  'build', ${field('buildStatus')}`;
+
 /**
  * Append only: entry `i` upgrades a database from `user_version` `i` to `i + 1`.
  * Never edit a released migration; add a new one instead.
@@ -327,7 +334,53 @@ export const migrations: Migration[] = [
     drop table work_launch_operations;
     delete from work_item_attachments where type = 'prompt-draft';
   `),
+
+  // 4: provider-neutral payloads. Review requests are keyed `<repository>#<number>` like tracked change requests;
+  // dismissals and review worktrees follow their new IDs. Provider caches are refetched in the new shape.
+  (db) => db.exec(`
+    create temp table review_ids (old text primary key, new text not null);
+    insert or ignore into review_ids
+    select external_id, ${field('repoFullName')} || '#' || ${field('number')}
+    from work_item_attachments
+    where type = 'change-request' and provider = 'github' and json_valid(payload_json)
+      and json_type(payload_json, '$.repoFullName') = 'text' and json_type(payload_json, '$.number') = 'integer';
+    insert or ignore into review_ids
+    select json_extract(r.value, '$.id'), json_extract(r.value, '$.repoFullName') || '#' || json_extract(r.value, '$.number')
+    from (select payload_json from cache_snapshots where key = 'github.reviewRequests' and json_valid(payload_json)) s, json_each(s.payload_json) r
+    where json_type(r.value, '$.id') = 'text' and json_type(r.value, '$.repoFullName') = 'text' and json_type(r.value, '$.number') = 'integer';
+
+    update inbox_meta set external_id = (select new from review_ids where old = inbox_meta.external_id)
+    where source_type = 'change-request' and provider = 'github' and external_id in (select old from review_ids);
+    update worktrees set source_external_id = (select new from review_ids where old = worktrees.source_external_id)
+    where workspace_mode = 'change-request' and source_external_id in (select old from review_ids);
+
+    update work_item_attachments set
+      external_id = (select new from review_ids where old = work_item_attachments.external_id),
+      payload_json = json_object('id', (select new from review_ids where old = work_item_attachments.external_id), ${changeRequestFields},
+        'status', coalesce(${field('status')}, case when ${field('isDraft')} then 'draft' else 'open' end), 'updatedAt', ${field('updatedAt')})
+    where type = 'change-request' and provider = 'github' and external_id in (select old from review_ids);
+
+    update work_item_attachments set
+      payload_json = json_object('id', external_id, ${changeRequestFields}, 'status', ${field('status')}, 'updatedAt', ${field('lastSyncedAt')},
+        'attachedAt', ${field('attachedAt')}, 'lastSyncedAt', ${field('lastSyncedAt')})
+    where type = 'pull-request' and provider = 'github' and json_valid(payload_json) and json_type(payload_json, '$.repoFullName') = 'text';
+
+    update work_item_attachments set
+      payload_json = json_object('id', coalesce(${field('id')}, external_id), 'key', ${field('key')}, 'title', ${field('title')}, 'url', ${field('url')},
+        'project', ${field('project')}, 'status', ${field('status')},
+        'done', json(case when coalesce(lower(trim(${field('statusCategory')})) = 'done',
+          lower(trim(${field('status')})) in ('done', 'closed', 'resolved', 'cancelled', 'canceled'), 0) then 'true' else 'false' end),
+        'issueType', ${field('issueType')}, 'author', ${field('author')}, 'description', ${field('descriptionText')}, 'updatedAt', ${field('updatedAt')})
+    where type = 'tracker-item' and provider = 'jira' and json_valid(payload_json);
+
+    drop table review_ids;
+    delete from cache_snapshots where key like 'github.%' or key like 'jira.%';
+  `),
 ];
+
+function field(path: string): string {
+  return `json_extract(payload_json, '$.${path}')`;
+}
 
 /**
  * Upgrades `db` to the latest schema version. Existing databases are copied to

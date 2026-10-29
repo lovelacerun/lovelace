@@ -40,7 +40,7 @@ const trimmedId = z.string().trim().min(1).nullish();
 
 export const quickStartInput = z.object({
   ...launchFields,
-  jiraIssueId: trimmedId,
+  trackerIssueId: trimmedId,
   /** Review request to attach; its repository must be among `repoIds` and is checked out at the pull request's branch. */
   reviewRequestId: trimmedId,
 });

@@ -66,16 +66,24 @@ polling via `workItems.get`. Disconnects never cancel preparation.
 Orphaned pending/preparing records become retryable failures on server startup;
 worktrees and dependency caches are kept. Cleanup skips active preparations.
 
-## Provider cache
+## Providers
 
-`src/cached-providers.ts` wraps the plain GitHub/Jira clients with
-`@lovelace/cache`; services and procedures use only these accessors.
+Services see one `Tracker` and one `CodeHost` (`src/providers/types.ts`),
+which return the provider-neutral `TrackerIssue`, `Repository` and
+`ChangeRequest` from `@lovelace/core`. `src/providers/jira.ts` and
+`src/providers/github.ts` implement them over the plain provider clients:
+Jira decides when an issue is `done`; GitHub keys change requests
+`<repository>#<number>` and adds the application's token handling. Attachments
+and inbox entries record the implementation's `provider`.
 
-- Lists (`jira.assigned`, `jira.projects`, `github.reviewRequests`) persist to
-  the `cache_snapshots` table and load on startup, so the dashboard renders
-  before the first sync. `github.repoCatalog` stays in memory; its durable copy
-  is the `repos` table.
-- Per-PR/per-issue lookups are cached in memory for a minute to absorb bursts.
+`src/cached-providers.ts` wraps both with `@lovelace/cache`; services and
+procedures use only these accessors.
+
+- Lists (`tracker.<provider>.assignedIssues`, `codeHost.<provider>.reviewRequests`)
+  persist to the `cache_snapshots` table and load on startup, so the dashboard
+  renders before the first sync. The repository catalog stays in memory; its
+  durable copy is the `repos` table.
+- Per-change-request/per-issue lookups are cached in memory for a minute to absorb bursts.
 - The scheduled sync (`src/sync.ts`) calls `refresh*`, request-time reads use
   `fetch*` (TTL) or `peek*` (no network). Failures keep the last-good value;
   `GET /cache/snapshots` lists the in-memory entries.

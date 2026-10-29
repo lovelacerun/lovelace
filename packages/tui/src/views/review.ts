@@ -13,17 +13,17 @@ export function renderReview(state: AppState, width: number): Document {
     return b.build();
   }
   const gap = () => { if (!state.layout.compact) b.line(); };
-  b.line(keyColor + bold + safeText(`${review.repoFullName}#${review.number}`) + reset);
+  b.line(keyColor + bold + safeText(`${review.repository}#${review.number}`) + reset);
   for (const line of wrap(review.title, width)) b.line(bold + line + reset);
-  b.line(muted + meta([review.authorLogin && safeText(review.authorLogin),
-    review.headRefName && safeText(review.headRefName) + (review.baseRefName ? ' → ' + safeText(review.baseRefName) : '')]) + reset);
+  b.line(muted + meta([review.author && safeText(review.author),
+    review.sourceBranch && safeText(review.sourceBranch) + (review.targetBranch ? ' → ' + safeText(review.targetBranch) : '')]) + reset);
   const url = browserUrl(review.url);
   b.line(url ? hyperlink(faint + safeText(review.url) + reset, url) : faint + safeText(review.url) + reset);
   b.line();
   gap();
   if (state.draft.requestId) b.action(accent + icons.retry + reset + '  Resend unanswered launch', { kind: 'launch-retry' });
   else if (review.repoId) b.action(accent + icons.start + reset + '  Start review', { kind: 'review-start' }, faint + 'Enter' + reset);
-  else b.line(muted + '  ' + safeText(review.repoFullName) + ' is not in the repository catalog.' + reset);
+  else b.line(muted + '  ' + safeText(review.repository) + ' is not in the repository catalog.' + reset);
   if (url) b.action(accent + icons.link + reset + '  Open in browser', { kind: 'open-url', url });
   b.line();
   b.line(faint + 'Start review checks out the pull request branch and starts an agent with the review template.' + reset);

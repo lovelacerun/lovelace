@@ -45,9 +45,10 @@ boundary.
 | `inbox_meta` | Dismissed inbox entries |
 
 Attachments are one discriminated union, `WorkItemAttachment` in
-`packages/core/src/types.ts`, keyed by `type`: `tracker-item` (Jira issue),
-`pull-request`, `change-request` (review request a work item was started
-from), `worktree`, `session` (an agent in Herdr) and `herdr-workspace`.
+`packages/core/src/types.ts`, keyed by `type`: `tracker-item` (tracker issue),
+`pull-request` (tracked change request), `change-request` (review request a
+work item was started from), `worktree`, `session` (an agent in Herdr) and
+`herdr-workspace`.
 `server/src/attachments.ts` is the only place that maps them to and from
 rows; work item details carry them typed. Unique indexes allow one
 attachment per upstream record and work item, one Herdr workspace per work
@@ -55,8 +56,11 @@ item, one live worktree per path and one session per Herdr agent name.
 
 ## Provider data
 
-`server/src/cached-providers.ts` wraps the plain Jira and GitHub clients with
-`@lovelace/cache`. Lists (assigned issues, review requests without bots) persist and load
+Services use one tracker and one code host (`server/src/providers/types.ts`),
+implemented for Jira and GitHub. They return provider-neutral `TrackerIssue`,
+`Repository` and `ChangeRequest` records (`packages/core/src/types.ts`);
+change requests are keyed `<repository>#<number>`.
+`server/src/cached-providers.ts` wraps both with `@lovelace/cache`. Lists (assigned issues, review requests without bots) persist and load
 on startup, so the TUI has data before the first sync. A scheduled sync
 (about every five minutes) refreshes them; request-time reads use the TTL or
 peek without network. Failures keep the last good value.

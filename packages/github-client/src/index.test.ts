@@ -7,8 +7,8 @@ import { createGitHubClient, type GitHubTransport } from './index.js';
 const repo = (id: number) => ({ databaseId: id, name: `repo-${id}`, nameWithOwner: `org/repo-${id}`, url: `https://github.test/org/repo-${id}`, isArchived: false, defaultBranchRef: { name: 'main' }, repositoryTopics: { nodes: [{ topic: { name: 'INFRA' } }] } });
 const catalog = (nodes = [repo(1)], endCursor: string | null = null) => ({ viewer: { repositories: { nodes, pageInfo: { hasNextPage: Boolean(endCursor), endCursor } } } });
 const pr = (id: number, author: string, isDraft = false) => ({ __typename: 'PullRequest', id: String(id), databaseId: id, number: id, title: 'fix: Example', url: `https://github.test/org/repo/pull/${id}`, updatedAt: '2026-10-01T00:00:00Z', state: 'OPEN', isDraft, reviewDecision: 'APPROVED', headRefName: 'fix', baseRefName: 'main', commits: { nodes: [{ commit: { statusCheckRollup: { state: 'SUCCESS' } } }] }, repository: { nameWithOwner: 'org/repo' }, author: { login: author } });
-function transport(graphql: (query: string, variables: Record<string, unknown>) => Promise<unknown>, request = async (_route: string, _variables: Record<string, unknown>): Promise<unknown> => { throw new Error('Unexpected REST request'); }): GitHubTransport {
-  return { graphql, request } as unknown as GitHubTransport;
+function transport(graphql: (query: string, variables: Record<string, unknown>) => Promise<unknown>): GitHubTransport {
+  return { graphql } as unknown as GitHubTransport;
 }
 const credentials = { org: 'org', token: 'fixture-only-token' };
 
@@ -24,6 +24,7 @@ test('accessible catalog paginates, preserves topics, branch and enterprise clon
   assert.equal(repositories[0]?.cloneUrl, 'https://github.test/org/repo-1.git');
   assert.deepEqual(repositories[0]?.topics, ['infra']);
   assert.equal(repositories[0]?.defaultBranch, 'main');
+  assert.equal(repositories[0]?.databaseId, 1);
 });
 
 test('catalog uses all viewer affiliations, including repositories outside the configured organization', async () => {
@@ -37,7 +38,7 @@ test('catalog uses all viewer affiliations, including repositories outside the c
     return catalog([repo(1), outside]);
   }) });
   assert.equal(github.isConfigured(), true, 'repository discovery only requires authentication');
-  assert.deepEqual((await github.fetchRepositories()).map(repo => repo.fullName), ['org/repo-1', 'other/repo-2']);
+  assert.deepEqual((await github.fetchRepositories()).map(repo => repo.nameWithOwner), ['org/repo-1', 'other/repo-2']);
   await assert.rejects(github.fetchReviewRequests(), /organization or token missing/);
 });
 
@@ -61,7 +62,7 @@ test('review searches paginate atomically and omit drafts and bots', async () =>
   assert.deepEqual(result.map((item) => item.number), [1]);
   assert.equal(result[0]?.status, 'approved');
   assert.equal(result[0]?.buildStatus, 'success');
-  assert.equal(result[0]?.type, 'Fix');
+  assert.equal(result[0]?.headRefName, 'fix');
 });
 
 test('failure on a later page or an incomplete response rejects instead of returning a partial catalog', async () => {
@@ -86,22 +87,22 @@ test('missing auth rejects without calling the transport', async () => {
   assert.equal(github.isConfigured(), false);
   await assert.rejects(github.fetchRepositories(), /token missing/);
   await assert.rejects(github.fetchReviewRequests(), /token missing/);
-  await assert.rejects(github.fetchPullRequestStatus('org/repo', 1), /token missing/);
+  await assert.rejects(github.fetchPullRequest('org/repo', 1), /token missing/);
 });
 
-test('PR branch/status operations retain merge, approval and build metadata; not found is null', async () => {
+test('pull requests retain branches, merge, approval and build metadata; not found is null', async () => {
   let missing = false;
   const github = createGitHubClient({ ...credentials, octokit: transport(async () => {
     if (missing) throw { errors: [{ type: 'NOT_FOUND' }] };
     return { repository: { pullRequest: { ...pr(1, 'human'), state: 'MERGED' } } };
-  }, async () => ({ data: { head: { ref: 'feature' }, base: { ref: 'main' }, draft: true } })) });
-  assert.deepEqual(await github.fetchPullRequestDetails('org/repo', 1), { repoFullName: 'org/repo', number: 1, headRefName: 'feature', baseRefName: 'main', isDraft: true });
-  const status = await github.fetchPullRequestStatus('org/repo', 1);
-  assert.equal(status?.status, 'merged');
-  assert.equal(status?.buildStatus, 'success');
+  }) });
+  const pullRequest = await github.fetchPullRequest('org/repo', 1);
+  assert.equal(pullRequest?.status, 'merged');
+  assert.equal(pullRequest?.buildStatus, 'success');
+  assert.deepEqual([pullRequest?.headRefName, pullRequest?.baseRefName, pullRequest?.updatedAt], ['fix', 'main', '2026-10-01T00:00:00Z']);
   missing = true;
-  assert.equal(await github.fetchPullRequestStatus('org/repo', 1), null);
-  assert.equal(await github.fetchPullRequestStatus('bad', -1), null);
+  assert.equal(await github.fetchPullRequest('org/repo', 1), null);
+  assert.equal(await github.fetchPullRequest('bad', -1), null);
 });
 
 test('each request times out through its abort signal and a later request can succeed', async () => {
@@ -117,18 +118,15 @@ test('each request times out through its abort signal and a later request can su
   assert.equal((await github.fetchRepositories()).length, 1);
 });
 
-test('caller cancellation reaches GraphQL and REST requests', async () => {
+test('caller cancellation reaches every request', async () => {
   const signals: AbortSignal[] = [];
   const github = createGitHubClient({ ...credentials, requestTimeoutMs: 1000, octokit: transport(async (_, args) => {
     signals.push((args.request as { signal: AbortSignal }).signal);
-    return catalog();
-  }, async (_, args) => {
-    signals.push((args.request as { signal: AbortSignal }).signal);
-    return { data: { head: { ref: 'feature' }, base: { ref: 'main' }, draft: false } };
+    return args.number ? { repository: { pullRequest: pr(1, 'human') } } : catalog();
   }) });
   const controller = new AbortController();
   await github.fetchRepositories({ signal: controller.signal });
-  await github.fetchPullRequestDetails('org/repo', 1, { signal: controller.signal });
+  await github.fetchPullRequest('org/repo', 1, { signal: controller.signal });
   controller.abort();
   assert.deepEqual(signals.map((signal) => signal.aborted), [true, true]);
 });

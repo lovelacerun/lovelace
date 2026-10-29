@@ -3,12 +3,13 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test, { type TestContext } from 'node:test';
-import type { AgentSession, JiraIssueSummary, LovelaceConfig } from '@lovelace/core';
+import type { AgentSession, LovelaceConfig, TrackerIssue } from '@lovelace/core';
 import { DatabaseSync } from 'node:sqlite';
 import { openDatabase } from '../database.js';
 import { migrations } from '../migrations.js';
 import { addAttachments, createManualWorkItem } from '../repositories/work-item-repository.js';
 import { FakeHerdr } from '../test-support/fake-herdr.js';
+import { trackerIssue } from '../test-support/providers.js';
 import { syncSessions } from './session-service.js';
 
 async function fixture(t: TestContext) {
@@ -21,8 +22,8 @@ async function fixture(t: TestContext) {
 
 const logger = { info() {}, warn() {}, error() {} };
 
-function jiraIssue(status: string): JiraIssueSummary {
-  return { id: '1', key: 'PROJ-1', title: 'Issue', url: 'https://jira.example/browse/PROJ-1', status, statusCategory: null, issueType: null, updatedAt: 'now', descriptionText: null } as JiraIssueSummary;
+function jiraIssue(status: string): TrackerIssue {
+  return trackerIssue({ id: '1', title: 'Issue', status, issueType: null, updatedAt: 'now' });
 }
 
 test('activity records real DB mutations once and survives restart without backfill', async (t) => {

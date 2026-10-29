@@ -33,7 +33,7 @@ export function renderJira(state: AppState, width: number): Document {
   gap();
   b.line(heading('Description', '', icons.description));
   gap();
-  const description = state.jiraDetails?.descriptionText;
+  const description = state.jiraDetails?.description;
   for (const line of wrap(description ?? 'No cached description. Press r to refresh.', width)) {
     b.line(description ? line : muted + line + reset);
   }

@@ -9,21 +9,21 @@ function dashboard(overrides: Partial<DashboardResponse> = {}): DashboardRespons
       {
         id: 'wi-1', title: 'Active one', state: 'active', notes: null,
         createdAt: '', updatedAt: '', startedAt: null, completedAt: null,
-        sessionCount: 1, repositoryCount: 1, trackerIssueKeys: [], pullRequestRefs: [],
+        sessionCount: 1, repositoryCount: 1, trackerIssueKeys: [], changeRequestRefs: [],
       },
       {
         id: 'wi-2', title: 'Active two', state: 'active', notes: null,
         createdAt: '', updatedAt: '', startedAt: null, completedAt: null,
-        sessionCount: 0, repositoryCount: 0, trackerIssueKeys: [], pullRequestRefs: [],
+        sessionCount: 0, repositoryCount: 0, trackerIssueKeys: [], changeRequestRefs: [],
       },
     ],
     pendingReviews: [],
-    pendingJiraIssues: [
+    pendingIssues: [
       { id: 'J-1', key: 'PROJ-100', title: 'Fix docs', url: 'https://x', status: 'open', issueType: 'Task', updatedAt: '' },
     ],
     recent: { since: '2026-10-06T00:00:00.000Z', workItems: [], sessionCount: 0, completedCount: 0, activityCount: 0 },
     settings: { defaultAgent: 'pi', sidebarSide: 'right', repositoryTopics: [] },
-    freshness: { jiraFetchedAt: null, githubFetchedAt: null, jiraStale: false, githubStale: false },
+    freshness: { trackerFetchedAt: null, codeHostFetchedAt: null, trackerStale: false, codeHostStale: false },
     ...overrides,
   };
 }
@@ -43,7 +43,7 @@ describe('AppState sidebar entries', () => {
     const state = new AppState({ onInvalidate() {} });
     state.applyDashboardResponse(dashboard());
     state.sidebarSelectedIndex = 3;
-    state.applyDashboardResponse(dashboard({ pendingJiraIssues: [], activeWorkItems: [] }));
+    state.applyDashboardResponse(dashboard({ pendingIssues: [], activeWorkItems: [] }));
     assert.ok(state.sidebarSelectedIndex < state.sidebarEntries.length);
     assert.ok(state.sidebarSelectedIndex >= 0);
   });

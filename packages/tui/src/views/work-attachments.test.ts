@@ -12,7 +12,7 @@ function meta(type: Link['type'], data: Record<string, unknown>): Link {
   return { id: 'meta', workItemId: 'work', type, externalId: 'ref', payload: data, provider: 'fixture', createdAt: '', updatedAt: '' } as unknown as Link;
 }
 const jira = meta('tracker-item', { key: 'PROJ-1471', title: 'Regenerate the audio narration', status: 'In Review' });
-const pr = meta('pull-request', { repoFullName: 'examplecom/text-to-speech', number: 374, status: 'draft', reviewDecision: 'APPROVED', buildStatus: 'success' });
+const pr = meta('pull-request', { repository: 'examplecom/text-to-speech', number: 374, status: 'draft', review: 'approved', build: 'success' });
 const plain = (lines: string[]) => lines.map(stripTerminalSequences).join('\n');
 
 it('uses separate padded provider surfaces and space between entries', () => {
@@ -38,7 +38,7 @@ it('uses separate padded provider surfaces and space between entries', () => {
 for (const width of [31, 50, 63, 64, 65, 80, 120]) {
   it(`fits ${width} columns with long Unicode input and all status labels preserved`, () => {
     const wideJira = meta('tracker-item', { key: 'PROJ-1', title: 'テスト 🚀 '.repeat(12), status: 'In Progress' });
-    const widePr = meta('change-request', { repoFullName: 'examplecom/' + '長い名前'.repeat(6), number: 381, status: 'open', reviewDecision: 'CHANGES_REQUESTED', buildStatus: 'failure' });
+    const widePr = meta('change-request', { repository: 'examplecom/' + '長い名前'.repeat(6), number: 381, status: 'open', review: 'changes-requested', build: 'failure' });
     const lines = renderAttachments([wideJira, widePr], width);
     for (const line of lines) assert.ok(visibleWidth(line) <= width, JSON.stringify(line));
     // Wrapping may split labels, but may not elide them.
@@ -67,7 +67,7 @@ it('stacks providers on narrow terminals and keeps empty states honest', () => {
 });
 
 it('normalizes provider status casing without treating unknown as a warning', () => {
-  const lines = renderAttachments([meta('pull-request', { ...pr.payload, reviewDecision: 'approved', buildStatus: 'SUCCESS' })], 100);
+  const lines = renderAttachments([meta('pull-request', { ...pr.payload, review: 'APPROVED', build: 'SUCCESS' })], 100);
   assert.match(plain(lines), /✓ Approved  ✓ Build passed/);
   assert.ok(lines.some(line => line.includes(success + '✓ Build passed')));
 });
@@ -103,7 +103,7 @@ it('does not register missing or unsafe provider URLs', () => {
 it('sanitizes provider text before applying styling', () => {
   const lines = renderAttachments([
     meta('tracker-item', { key: 'PROJ-1', title: 'bad\x1b[41mred\x1b[0m title', status: '\x1b[2JIn Review' }),
-    meta('pull-request', { repoFullName: 'bad\x1b]0;title\x07/repo', reviewDecision: '\x1b[41mcustom', buildStatus: '\x1b[2Jcustom' }),
+    meta('pull-request', { repository: 'bad\x1b]0;title\x07/repo', review: '\x1b[41mcustom', build: '\x1b[2Jcustom' }),
   ], 100);
   for (const line of lines) {
     assert.ok(!line.includes('\x1b[41m'));

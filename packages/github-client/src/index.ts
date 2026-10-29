@@ -1,8 +1,8 @@
 import { Octokit } from 'octokit';
-import type { GitHubPullRequestDetails, GitHubPullRequestStatus, GitHubReviewRequest, RepoRecord, PullRequestBuildStatus, PullRequestStatus, ReviewDecision } from './types.js';
+import type { GitHubPullRequest, GitHubRepository, PullRequestBuildStatus, PullRequestStatus, ReviewDecision } from './types.js';
 export type * from './types.js';
 
-export type GitHubTransport = Pick<Octokit, 'graphql' | 'request'>;
+export type GitHubTransport = Pick<Octokit, 'graphql'>;
 
 export interface GitHubClientOptions {
   org?: string;
@@ -11,24 +11,22 @@ export interface GitHubClientOptions {
   apiBaseUrl?: string;
   /** Per-request budget, including retries and body parsing (default 15000). */
   requestTimeoutMs?: number;
-  now?: () => number;
   fetch?: typeof fetch;
   octokit?: GitHubTransport;
 }
 export interface RequestOptions { signal?: AbortSignal }
 export interface GitHubClient {
   isConfigured(): boolean;
-  fetchRepositories(options?: RequestOptions): Promise<RepoRecord[]>;
-  fetchReviewRequests(options?: RequestOptions): Promise<GitHubReviewRequest[]>;
-  fetchPullRequestDetails(repoFullName: string, number: number, options?: RequestOptions): Promise<GitHubPullRequestDetails | null>;
-  fetchPullRequestStatus(repoFullName: string, number: number, options?: RequestOptions): Promise<GitHubPullRequestStatus | null>;
+  fetchRepositories(options?: RequestOptions): Promise<GitHubRepository[]>;
+  /** Open pull requests in the organization that request the user's review. */
+  fetchReviewRequests(options?: RequestOptions): Promise<GitHubPullRequest[]>;
+  fetchPullRequest(repoFullName: string, number: number, options?: RequestOptions): Promise<GitHubPullRequest | null>;
 }
 
 export function createGitHubClient(options: GitHubClientOptions): GitHubClient {
   options = { ...options };
   const requestTimeoutMs = options.requestTimeoutMs ?? 15_000;
   if (!Number.isInteger(requestTimeoutMs) || requestTimeoutMs < 1) throw new Error('requestTimeoutMs must be a positive integer');
-  const now = options.now ?? Date.now;
   const apiBaseUrl = options.apiBaseUrl ?? resolveApiBaseUrl(options.host);
   let transport: GitHubTransport | undefined = options.octokit;
   /** Each request gets its own timeout, combined with the caller's cancellation. */
@@ -41,8 +39,6 @@ export function createGitHubClient(options: GitHubClientOptions): GitHubClient {
     return {
       graphql: ((query: string, variables: Record<string, unknown> = {}) => withTimeout(requestTimeoutMs, signal,
         (requestSignal) => source.graphql(query, { ...variables, request: { signal: requestSignal } }))) as GitHubTransport['graphql'],
-      request: ((route: string, parameters: Record<string, unknown> = {}) => withTimeout(requestTimeoutMs, signal,
-        (requestSignal) => source.request(route, { ...parameters, request: { signal: requestSignal } }))) as GitHubTransport['request'],
     };
   }
   const configured = () => Boolean(options.token);
@@ -51,10 +47,9 @@ export function createGitHubClient(options: GitHubClientOptions): GitHubClient {
     isConfigured: configured,
     async fetchRepositories(fetchOptions) {
       const octokit = client(fetchOptions?.signal);
-      const repositories: RepoRecord[] = [];
+      const repositories: GitHubRepository[] = [];
       const seen = new Set<string>();
       let cursor: string | null = null;
-      const fetchedAt = new Date(now()).toISOString();
       let pages = 0;
       do {
         if (++pages > 100) throw new Error('GitHub repository pagination limit exceeded');
@@ -66,10 +61,9 @@ export function createGitHubClient(options: GitHubClientOptions): GitHubClient {
             throw new Error('Invalid GitHub repository response');
           }
           repositories.push({
-            id: 'github:' + repo.databaseId, provider: 'github', externalId: String(repo.databaseId),
-            name: repo.name, fullName: repo.nameWithOwner, cloneUrl: resolveGitHubCloneUrl(repo.url),
+            databaseId: repo.databaseId, name: repo.name, nameWithOwner: repo.nameWithOwner, cloneUrl: resolveGitHubCloneUrl(repo.url),
             defaultBranch: repo.defaultBranchRef?.name ?? null, isArchived: repo.isArchived,
-            topics: repo.repositoryTopics.nodes.map((entry) => entry.topic.name.toLowerCase()), lastSyncedAt: fetchedAt,
+            topics: repo.repositoryTopics.nodes.map((entry) => entry.topic.name.toLowerCase()),
           });
         }
         cursor = page.pageInfo.hasNextPage ? page.pageInfo.endCursor : null;
@@ -84,11 +78,8 @@ export function createGitHubClient(options: GitHubClientOptions): GitHubClient {
       const all = await fetchAllReviewSearchResults(client(fetchOptions?.signal), q);
       return all.filter((item) => !item.isDraft && !isAutomatedAuthor(item.authorLogin));
     },
-    async fetchPullRequestDetails(repoFullName, number, fetchOptions) {
-      return fetchPullRequestDetailsInternal(client(fetchOptions?.signal), repoFullName, number);
-    },
-    async fetchPullRequestStatus(repoFullName, number, fetchOptions) {
-      return fetchPullRequestStatusInternal(client(fetchOptions?.signal), repoFullName, number);
+    async fetchPullRequest(repoFullName, number, fetchOptions) {
+      return fetchPullRequestInternal(client(fetchOptions?.signal), repoFullName, number);
     },
   };
 }
@@ -112,25 +103,7 @@ function hasStrings(value: unknown, keys: string[]): boolean {
   return Boolean(value && typeof value === 'object' && keys.every((key) => typeof (value as Record<string, unknown>)[key] === 'string'));
 }
 
-async function fetchPullRequestDetailsInternal(octokit: GitHubTransport, repoFullName: string, number: number): Promise<GitHubPullRequestDetails | null> {
-  const [owner, repo] = repoFullName.split('/');
-  if (!owner || !repo || !Number.isInteger(number) || number <= 0) return null;
-  try {
-    const response = await octokit.request('GET /repos/{owner}/{repo}/pulls/{pull_number}', {
-      owner, repo, pull_number: number,
-    });
-    if (!response.data || !response.data.head || !response.data.base) throw new Error('Incomplete GitHub pull request response');
-    return {
-      repoFullName, number, headRefName: response.data.head.ref ?? null,
-      baseRefName: response.data.base.ref ?? null, isDraft: response.data.draft ?? false,
-    };
-  } catch (error) {
-    if (isGraphQLNotFoundError(error)) return null;
-    throw error;
-  }
-}
-
-async function fetchPullRequestStatusInternal(octokit: GitHubTransport, repoFullName: string, number: number): Promise<GitHubPullRequestStatus | null> {
+async function fetchPullRequestInternal(octokit: GitHubTransport, repoFullName: string, number: number): Promise<GitHubPullRequest | null> {
   const [owner, repo] = repoFullName.split('/');
   if (!owner || !repo || !Number.isInteger(number) || number <= 0) return null;
 
@@ -141,33 +114,22 @@ async function fetchPullRequestStatusInternal(octokit: GitHubTransport, repoFull
     }
     const pullRequest = response.repository?.pullRequest;
     if (!pullRequest) return null;
-    if (!['OPEN', 'MERGED', 'CLOSED'].includes(pullRequest.state) || typeof pullRequest.isDraft !== 'boolean') {
+    if (!['OPEN', 'MERGED', 'CLOSED'].includes(pullRequest.state) || typeof pullRequest.isDraft !== 'boolean'
+      || !hasStrings(pullRequest, ['title', 'url', 'updatedAt'])) {
       throw new Error('Invalid GitHub pull request status response');
     }
     const buildStatus = mapStatusCheckRollupState(
       pullRequest.commits.nodes.at(0)?.commit.statusCheckRollup?.state ?? null,
     );
-    const reviewDecision = pullRequest.reviewDecision ?? null;
-    return {
-      repoFullName,
-      number: pullRequest.number,
-      title: pullRequest.title,
-      url: pullRequest.url,
-      authorLogin: pullRequest.author?.login ?? null,
-      headRefName: pullRequest.headRefName ?? null,
-      baseRefName: pullRequest.baseRefName ?? null,
-      status: derivePullRequestStatus({ state: pullRequest.state, isDraft: pullRequest.isDraft, reviewDecision }),
-      reviewDecision,
-      buildStatus,
-    };
+    return toPullRequest(repoFullName, pullRequest, buildStatus);
   } catch (error) {
     if (isGraphQLNotFoundError(error)) return null;
     throw error;
   }
 }
 
-async function fetchAllReviewSearchResults(octokit: GitHubTransport, q: string): Promise<GitHubReviewRequest[]> {
-  const items: GitHubReviewRequest[] = [];
+async function fetchAllReviewSearchResults(octokit: GitHubTransport, q: string): Promise<GitHubPullRequest[]> {
+  const items: GitHubPullRequest[] = [];
   let cursor: string | null = null;
   const seen = new Set<string>();
 
@@ -184,29 +146,8 @@ async function fetchAllReviewSearchResults(octokit: GitHubTransport, q: string):
         || !hasStrings(node, ['id', 'title', 'url', 'updatedAt']) || !hasStrings(node.repository, ['nameWithOwner'])) {
         throw new Error('Invalid GitHub review response');
       }
-      const repoFullName = node.repository.nameWithOwner;
-      const authorLogin = node.author?.login ?? null;
-      const reviewDecision = node.reviewDecision ?? null;
       const buildStatus = mapStatusCheckRollupState(node.commits.nodes.at(0)?.commit.statusCheckRollup?.state ?? null);
-      items.push({
-        id: String(node.databaseId ?? node.id),
-        number: node.number,
-        title: node.title,
-        url: node.url,
-        repoFullName,
-        project: repoFullName,
-        type: detectChangeRequestType(node.title),
-        authorLogin,
-        author: authorLogin,
-        descriptionText: null,
-        isDraft: node.isDraft,
-        headRefName: node.headRefName ?? null,
-        baseRefName: node.baseRefName ?? null,
-        status: derivePullRequestStatus({ state: node.state, isDraft: node.isDraft, reviewDecision }),
-        reviewDecision,
-        buildStatus,
-        updatedAt: node.updatedAt,
-      });
+      items.push(toPullRequest(node.repository.nameWithOwner, node, buildStatus));
     }
 
     if (!response.search.pageInfo.hasNextPage) return items;
@@ -240,6 +181,7 @@ const GITHUB_PULL_REQUEST_STATUS_QUERY = `
         number
         title
         url
+        updatedAt
         state
         isDraft
         reviewDecision
@@ -313,6 +255,7 @@ interface GitHubPullRequestStatusResponse {
       number: number;
       title: string;
       url: string;
+      updatedAt: string;
       state: 'OPEN' | 'MERGED' | 'CLOSED';
       isDraft: boolean;
       reviewDecision: ReviewDecision;
@@ -352,6 +295,26 @@ interface PullRequestSearchNode {
   author: { login?: string | null } | null;
 }
 
+type PullRequestNode = Omit<PullRequestSearchNode, '__typename' | 'id' | 'databaseId' | 'repository' | 'commits'>;
+
+function toPullRequest(repoFullName: string, node: PullRequestNode, buildStatus: PullRequestBuildStatus | null): GitHubPullRequest {
+  const reviewDecision = node.reviewDecision ?? null;
+  return {
+    repoFullName,
+    number: node.number,
+    title: node.title,
+    url: node.url,
+    authorLogin: node.author?.login ?? null,
+    headRefName: node.headRefName ?? null,
+    baseRefName: node.baseRefName ?? null,
+    isDraft: node.isDraft,
+    status: derivePullRequestStatus({ state: node.state, isDraft: node.isDraft, reviewDecision }),
+    reviewDecision,
+    buildStatus,
+    updatedAt: node.updatedAt,
+  };
+}
+
 function isPullRequestSearchNode(node: PullRequestSearchNode | { __typename: string } | null): node is PullRequestSearchNode {
   return node?.__typename === 'PullRequest';
 }
@@ -385,39 +348,6 @@ export function resolveGitHubCloneUrl(repositoryUrl: string): string {
 function isAutomatedAuthor(login: string | null | undefined): boolean {
   if (!login) return false;
   return /renovate|dependabot|bot/i.test(login);
-}
-
-function detectChangeRequestType(title: string): string | null {
-  const normalized = title.trim().toLowerCase();
-  if (!normalized) return null;
-
-  const conventionalType = normalized.match(/^([a-z]+)(?:\([^)]*\))?!?:\s+/)?.[1] ?? normalized.match(/^([a-z]+):\s+/)?.[1];
-  switch (conventionalType) {
-    case 'feat':
-      return 'Feature';
-    case 'fix':
-      return 'Fix';
-    case 'refactor':
-      return 'Refactor';
-    case 'perf':
-      return 'Performance';
-    case 'docs':
-      return 'Documentation';
-    case 'test':
-      return 'Test';
-    case 'build':
-      return 'Build';
-    case 'ci':
-      return 'CI';
-    case 'chore':
-      return 'Chore';
-    case 'style':
-      return 'Style';
-    case 'revert':
-      return 'Revert';
-    default:
-      return 'Pull Request';
-  }
 }
 
 function derivePullRequestStatus(input: {

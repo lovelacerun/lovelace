@@ -1,5 +1,5 @@
 import type { CodingHarnessId, ToolLaunchOptionsById } from './harnesses.js';
-import type { Launch, LaunchState, WorkItemDetails, WorkItemState } from './types.js';
+import type { ChangeRequest, Launch, LaunchState, TrackerIssue, WorkItemDetails, WorkItemState } from './types.js';
 
 const SIDEBAR_SIDES = ['left', 'right'] as const;
 export type SidebarSide = (typeof SIDEBAR_SIDES)[number];
@@ -16,10 +16,10 @@ export interface DashboardSettings {
 }
 
 export interface DashboardFreshness {
-  jiraFetchedAt: string | null;
-  githubFetchedAt: string | null;
-  jiraStale: boolean;
-  githubStale: boolean;
+  trackerFetchedAt: string | null;
+  codeHostFetchedAt: string | null;
+  trackerStale: boolean;
+  codeHostStale: boolean;
 }
 
 export interface WorkItemSummary {
@@ -36,31 +36,15 @@ export interface WorkItemSummary {
   /** Latest active or unsuccessful launch; absent once the latest launch succeeds. */
   launchState?: LaunchState;
   trackerIssueKeys: string[];
-  pullRequestRefs: Array<{ repoFullName: string; number: number }>;
+  changeRequestRefs: Array<Pick<ChangeRequest, 'repository' | 'number'>>;
 }
 
-export interface DashboardJiraIssue {
-  id: string;
-  key: string;
-  title: string;
-  url: string;
-  status: string | null;
-  issueType: string | null;
-  updatedAt: string;
-}
+export type DashboardIssue = Pick<TrackerIssue, 'id' | 'key' | 'title' | 'url' | 'status' | 'issueType' | 'updatedAt'>;
 
-/** A pull request awaiting the user's review, with its catalog repository when known. */
-export interface DashboardReview {
-  id: string;
-  number: number;
-  title: string;
-  url: string;
-  repoFullName: string;
+/** A change request awaiting the user's review, with its catalog repository when known. */
+export interface DashboardReview extends Pick<ChangeRequest,
+  'id' | 'number' | 'title' | 'url' | 'repository' | 'author' | 'sourceBranch' | 'targetBranch' | 'updatedAt'> {
   repoId: string | null;
-  authorLogin: string | null;
-  headRefName: string | null;
-  baseRefName: string | null;
-  updatedAt: string;
 }
 
 /** Recorded activity from the start of yesterday (server-local) until now. */
@@ -76,7 +60,7 @@ export interface DashboardRecent {
 
 export interface DashboardResponse {
   activeWorkItems: WorkItemSummary[];
-  pendingJiraIssues: DashboardJiraIssue[];
+  pendingIssues: DashboardIssue[];
   pendingReviews: DashboardReview[];
   recent: DashboardRecent;
   settings: DashboardSettings;
@@ -100,7 +84,7 @@ export interface QuickStartRequest extends LaunchSelection {
   wait?: boolean;
   requestId?: string;
   prompt: string;
-  jiraIssueId?: string | null;
+  trackerIssueId?: string | null;
   /** Review request to attach; its repository must be among `repoIds` and is checked out at the pull request's branch. */
   reviewRequestId?: string | null;
   agentId?: CodingHarnessId;
@@ -122,13 +106,4 @@ export interface NewSessionRequest extends LaunchSelection {
 export interface SessionOpenResponse {
   action: 'focused' | 'continued';
   details: WorkItemDetails;
-}
-
-// Jira status categories considered terminal. Dashboard filtering removes
-// matching issues from pendingJiraIssues (local work-item state is independent).
-const JIRA_TERMINAL_STATUS_TEXTS = new Set<string>(['done', 'closed', 'resolved', 'cancelled', 'canceled']);
-
-export function isJiraStatusTerminal(status: string | null | undefined): boolean {
-  if (!status) return false;
-  return JIRA_TERMINAL_STATUS_TEXTS.has(status.trim().toLowerCase());
 }

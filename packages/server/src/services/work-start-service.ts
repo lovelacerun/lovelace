@@ -10,7 +10,7 @@ import {
   type WorkspaceMode,
   type WorkItemDetails,
 } from '@lovelace/core';
-import type { GitHubClient } from '@lovelace/github-client';
+import type { CachedCodeHost } from '../cached-providers.js';
 import type { DatabaseState } from '../database.js';
 import { attachmentSources, isNonEmptyString, isRecord, managedRepositoryId, slugify } from '../helpers.js';
 import { emitActivity } from './activity-bus.js';
@@ -29,7 +29,7 @@ interface WorkspaceActivityLogger {
 
 interface WorkStartDeps {
   database: DatabaseState;
-  github: GitHubClient;
+  codeHost: Pick<CachedCodeHost, 'fetchChangeRequest'>;
   logger: WorkspaceActivityLogger;
   workspaceManager: WorkspaceManager;
 }
@@ -238,7 +238,7 @@ async function prepareRepositoryWorkspace(input: {
   if (workspaceMode === 'change-request') updateProgress('Resolving review source');
   const preparedAt = new Date().toISOString();
   const reviewSource = workspaceMode === 'change-request'
-    ? await resolveReviewSource(deps.github, repo, repository, sources)
+    ? await resolveReviewSource(deps.codeHost, repo, repository, sources)
     : null;
   const baseBranch = reviewSource?.baseBranch ?? (repository.baseBranch?.trim() || repo.defaultBranch);
   const branchName = reviewSource
@@ -338,7 +338,7 @@ function resolveWorkspaceMode(repository: StartWorkRepositoryInput, sources: Sta
 }
 
 async function resolveReviewSource(
-  github: GitHubClient,
+  codeHost: WorkStartDeps['codeHost'],
   repo: { id: string; name: string; fullName: string; path: string; defaultBranch: string | null; cloneUrl: string },
   repository: StartWorkRepositoryInput,
   sources: StartWorkSource[],
@@ -351,9 +351,10 @@ async function resolveReviewSource(
   }
 
   const payload = parseSourcePayload(source.payload);
-  const fetchedBranch = payload.headRefName && payload.baseRefName ? null : await fetchPullRequestBranch(github, payload.repoFullName, payload.number);
-  const remoteBranch = payload.headRefName ?? fetchedBranch?.headRefName ?? null;
-  const baseBranch = payload.baseRefName ?? fetchedBranch?.baseRefName ?? null;
+  const fetched = payload.sourceBranch && payload.targetBranch || !payload.repository || payload.number === null
+    ? null : await codeHost.fetchChangeRequest({ repository: payload.repository, number: payload.number });
+  const remoteBranch = payload.sourceBranch ?? fetched?.sourceBranch ?? null;
+  const baseBranch = payload.targetBranch ?? fetched?.targetBranch ?? null;
   if (!remoteBranch) {
     throw new Error(`Could not resolve remote branch for change request ${source.externalId}`);
   }
@@ -365,34 +366,25 @@ async function resolveReviewSource(
   };
 }
 
-async function fetchPullRequestBranch(github: GitHubClient, repoFullName: string | null, number: number | null) {
-  if (!repoFullName || number === null) return { headRefName: null, baseRefName: null };
-  const details = await github.fetchPullRequestDetails(repoFullName, number);
-  return {
-    headRefName: details?.headRefName ?? null,
-    baseRefName: details?.baseRefName ?? null,
-  };
-}
-
 function matchesRepository(
   repo: { name: string; fullName: string },
   source: Pick<StartWorkSource, 'payload'>,
 ): boolean {
   const payload = parseSourcePayload(source.payload);
-  if (!payload.repoFullName) return false;
-  return repo.fullName.toLowerCase() === payload.repoFullName.toLowerCase();
+  if (!payload.repository) return false;
+  return repo.fullName.toLowerCase() === payload.repository.toLowerCase();
 }
 
-function parseSourcePayload(payload: unknown): { repoFullName: string | null; number: number | null; headRefName: string | null; baseRefName: string | null } {
+function parseSourcePayload(payload: unknown): { repository: string | null; number: number | null; sourceBranch: string | null; targetBranch: string | null } {
   if (!isRecord(payload)) {
-    return { repoFullName: null, number: null, headRefName: null, baseRefName: null };
+    return { repository: null, number: null, sourceBranch: null, targetBranch: null };
   }
 
   return {
-    repoFullName: isNonEmptyString(payload.repoFullName) ? payload.repoFullName.trim() : null,
+    repository: isNonEmptyString(payload.repository) ? payload.repository.trim() : null,
     number: typeof payload.number === 'number' ? payload.number : null,
-    headRefName: isNonEmptyString(payload.headRefName) ? payload.headRefName.trim() : null,
-    baseRefName: isNonEmptyString(payload.baseRefName) ? payload.baseRefName.trim() : null,
+    sourceBranch: isNonEmptyString(payload.sourceBranch) ? payload.sourceBranch.trim() : null,
+    targetBranch: isNonEmptyString(payload.targetBranch) ? payload.targetBranch.trim() : null,
   };
 }
 

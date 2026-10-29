@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { visibleWidth } from '@earendil-works/pi-tui';
-import type { AgentSession, DashboardResponse, JiraIssueSummary, PullRequestPayload, WorkItemDetails } from '@lovelace/core';
+import type { AgentSession, DashboardResponse, TrackerIssue, TrackedChangeRequest, WorkItemDetails } from '@lovelace/core';
 import { AppState } from './state.js';
 import { renderDashboard } from './views/dashboard.js';
 import { renderWorkItem } from './views/work-item.js';
@@ -13,11 +13,11 @@ function makeDashboard(overrides: Partial<DashboardResponse> = {}): DashboardRes
       {
         id: 'wi-1', title: 'Fix 🚀 render issue', state: 'active', notes: null,
         createdAt: '', updatedAt: '', startedAt: null, completedAt: null,
-        sessionCount: 1, repositoryCount: 1, trackerIssueKeys: [], pullRequestRefs: [],
+        sessionCount: 1, repositoryCount: 1, trackerIssueKeys: [], changeRequestRefs: [],
       },
     ],
     pendingReviews: [],
-    pendingJiraIssues: [
+    pendingIssues: [
       { id: 'J-1', key: 'PROJ-九', title: 'テスト Issue', url: 'https://x', status: 'open', issueType: 'Task', updatedAt: '' },
     ],
     recent: {
@@ -26,13 +26,13 @@ function makeDashboard(overrides: Partial<DashboardResponse> = {}): DashboardRes
         {
           id: 'wi-y', title: 'done thing', state: 'done', notes: null,
           createdAt: '', updatedAt: '', startedAt: null, completedAt: null,
-          sessionCount: 0, repositoryCount: 0, trackerIssueKeys: [], pullRequestRefs: [],
+          sessionCount: 0, repositoryCount: 0, trackerIssueKeys: [], changeRequestRefs: [],
         },
       ],
       sessionCount: 1, completedCount: 1, activityCount: 2,
     },
     settings: { defaultAgent: 'pi', sidebarSide: 'right', repositoryTopics: [] },
-    freshness: { jiraFetchedAt: null, githubFetchedAt: null, jiraStale: false, githubStale: false },
+    freshness: { trackerFetchedAt: null, codeHostFetchedAt: null, trackerStale: false, codeHostStale: false },
     ...overrides,
   };
 }
@@ -63,7 +63,7 @@ describe('renderDashboard', () => {
       activeWorkItems: [{
         id: 'wi-nasty', title: 'bad\x1b[31mred\x1b[0m title', state: 'active', notes: null,
         createdAt: '', updatedAt: '', startedAt: null, completedAt: null,
-        sessionCount: 0, repositoryCount: 0, trackerIssueKeys: [], pullRequestRefs: [],
+        sessionCount: 0, repositoryCount: 0, trackerIssueKeys: [], changeRequestRefs: [],
       }],
     });
     const state = new AppState({ onInvalidate() {} });
@@ -96,14 +96,14 @@ describe('renderWorkItem', () => {
         {
           id: 'm-pr', workItemId: 'wi-1', type: 'pull-request', externalId: '12',
           payload: {
-            repoFullName: 'examplecom/api', number: 12, status: 'open',
-            reviewDecision: 'approved', buildStatus: 'success',
-          } as unknown as PullRequestPayload,
+            repository: 'examplecom/api', number: 12, status: 'open',
+            review: 'approved', build: 'success',
+          } as unknown as TrackedChangeRequest,
           createdAt: '', updatedAt: '', provider: 'github',
         },
         {
           id: 'm-ji', workItemId: 'wi-1', type: 'tracker-item', externalId: 'PROJ-1',
-          payload: { key: 'PROJ-1', status: 'In Progress', title: 'Fix bug' } as JiraIssueSummary,
+          payload: { key: 'PROJ-1', status: 'In Progress', title: 'Fix bug' } as TrackerIssue,
           createdAt: '', updatedAt: '', provider: 'jira',
         },
       ],

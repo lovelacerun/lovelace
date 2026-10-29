@@ -127,3 +127,40 @@ test('launch operations and their drafts become launches with one state', async 
   assert.equal(db.prepare("select count(*) as count from work_item_attachments where type = 'prompt-draft'").get()!.count, 0);
   assert.equal(db.prepare("select name from sqlite_master where name = 'work_launch_operations'").get(), undefined);
 });
+
+test('provider payloads become neutral and review requests are keyed by repository and number', async (t) => {
+  const { db, backupDir } = await fixture(t);
+  migrateDatabase(db, backupDir, migrations.slice(0, 3));
+  db.exec("insert into work_items (id, title, state, created_at, updated_at) values ('w1', 'Work', 'active', 'now', 'now')");
+  const attach = (id: string, type: string, provider: string, externalId: string, payload: unknown) =>
+    db.prepare("insert into work_item_attachments values (?, 'w1', ?, ?, ?, ?, 'now', 'now')").run(id, type, provider, externalId, JSON.stringify(payload));
+  const review = { id: '77', number: 7, title: 'Fix', url: 'https://github.test/org/a/pull/7', repoFullName: 'org/a', project: 'org/a', type: 'Fix',
+    authorLogin: 'ann', author: 'ann', descriptionText: null, isDraft: false, headRefName: 'fix', baseRefName: 'main', status: 'open',
+    reviewDecision: 'REVIEW_REQUIRED', buildStatus: 'success', updatedAt: '2026-10-01' };
+  attach('cr', 'change-request', 'github', '77', review);
+  attach('pr', 'pull-request', 'github', 'org/a#8', { repoFullName: 'org/a', number: 8, title: 'Feat', url: 'u', authorLogin: 'bob', headRefName: 'feat',
+    baseRefName: 'main', status: 'approved', reviewDecision: 'APPROVED', buildStatus: null, attachedAt: 'a', lastSyncedAt: 'l' });
+  attach('done', 'tracker-item', 'jira', '10', { id: '10', key: 'PROJ-1', title: 'T', url: 'u', project: 'PROJ', status: 'Erledigt', statusCategory: 'done',
+    issueType: 'Task', type: 'Task', author: 'cy', descriptionText: 'Text', updatedAt: 'x' });
+  attach('open', 'tracker-item', 'jira', '11', { id: '11', key: 'PROJ-2', title: 'T', url: 'u', project: null, status: 'Closed', statusCategory: null,
+    issueType: null, type: null, author: null, descriptionText: null, updatedAt: 'x' });
+  db.exec(`insert into worktrees (id, work_item_id, created_at, updated_at, repo_id, repo_name, repo_path, role, workspace_mode, worktree_path,
+    source_external_id, status, prepared_at) values ('tree', 'w1', 'now', 'now', 'github:1', 'a', '/r', 'primary', 'change-request', '/w', '77', 'ready', 'now')`);
+  db.prepare("insert into cache_snapshots values ('github.reviewRequests', 'now', ?)").run(JSON.stringify([{ ...review, id: '99', number: 9 }]));
+  db.exec(`insert into inbox_meta values ('change-request', 'github', '99', 'dismissed', 'now', 'now'), ('change-request', 'github', '55', 'dismissed', 'now', 'now')`);
+
+  migrateDatabase(db, backupDir);
+
+  const payload = (id: string) => JSON.parse((db.prepare('select payload_json as json from work_item_attachments where id = ?').get(id) as { json: string }).json);
+  assert.deepEqual(payload('cr'), { id: 'org/a#7', repository: 'org/a', number: 7, title: 'Fix', url: 'https://github.test/org/a/pull/7', author: 'ann',
+    sourceBranch: 'fix', targetBranch: 'main', review: 'required', build: 'success', status: 'open', updatedAt: '2026-10-01' });
+  assert.equal((db.prepare("select external_id as id from work_item_attachments where id = 'cr'").get() as { id: string }).id, 'org/a#7');
+  assert.deepEqual(payload('pr'), { id: 'org/a#8', repository: 'org/a', number: 8, title: 'Feat', url: 'u', author: 'bob', sourceBranch: 'feat',
+    targetBranch: 'main', review: 'approved', build: null, status: 'approved', updatedAt: 'l', attachedAt: 'a', lastSyncedAt: 'l' });
+  assert.deepEqual(payload('done'), { id: '10', key: 'PROJ-1', title: 'T', url: 'u', project: 'PROJ', status: 'Erledigt', done: true, issueType: 'Task',
+    author: 'cy', description: 'Text', updatedAt: 'x' });
+  assert.equal(payload('open').done, true, 'terminal status without a category');
+  assert.deepEqual({ ...db.prepare('select source_external_id as id from worktrees').get() as object }, { id: 'org/a#7' });
+  assert.deepEqual(db.prepare('select external_id as id from inbox_meta order by id').all().map(row => row.id), ['55', 'org/a#9']);
+  assert.equal(db.prepare('select count(*) as count from cache_snapshots').get()!.count, 0);
+});

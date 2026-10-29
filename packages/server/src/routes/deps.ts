@@ -1,7 +1,7 @@
 import type { CacheStore } from '@lovelace/cache';
 import type { WorkspaceManager } from '@lovelace/coriol';
 import type { LovelaceConfig } from '@lovelace/core';
-import type { CachedGitHub, CachedJira, ModelLister } from '../cached-providers.js';
+import type { CachedCodeHost, CachedTracker, ModelLister } from '../cached-providers.js';
 import type { DatabaseState } from '../database.js';
 import type { HerdrClient } from '../herdr/herdr-client.js';
 import type { LoadedTool } from '../tools/tool-loader.js';
@@ -18,6 +18,6 @@ export interface RouteDeps {
   database: DatabaseState;
   /** Exposed for diagnostics only; services use the cached provider accessors. */
   cache: CacheStore;
-  github: CachedGitHub;
-  jira: CachedJira;
+  codeHost: CachedCodeHost;
+  tracker: CachedTracker;
 }

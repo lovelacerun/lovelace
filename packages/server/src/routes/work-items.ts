@@ -2,12 +2,12 @@ import { WORK_ITEM_STATES } from '@lovelace/core';
 import { z } from 'zod';
 import { createManualWorkItem, getWorkItemDetails, updateWorkItem } from '../repositories/work-item-repository.js';
 import {
-  attachPullRequestToWorkItem,
-  detachPullRequestFromWorkItem,
-  parsePullRequestRef,
-  refreshPullRequestsForWorkItem,
-} from '../services/pull-request-service.js';
-import { attachJiraIssueToWorkItem, detachJiraIssueFromWorkItem, parseJiraIssueRef } from '../services/tracker-item-service.js';
+  attachChangeRequestToWorkItem,
+  detachChangeRequestFromWorkItem,
+  parseChangeRequestRef,
+  refreshChangeRequestsForWorkItem,
+} from '../services/change-request-service.js';
+import { attachTrackerIssueToWorkItem, detachTrackerIssueFromWorkItem } from '../services/tracker-item-service.js';
 import { workItemIdForPath } from '../services/task-workspace-service.js';
 import { beginRepositoryPreparation } from '../services/work-start-service.js';
 import { renameWorkItemWorkspace } from '../herdr/work-item-workspace.js';
@@ -63,9 +63,9 @@ export const workItemsRouter = router({
   addRepositories: procedure
     .input(z.object({ id: z.string(), repositories: z.array(startWorkRepository), wait: z.boolean().optional() }))
     .mutation(async ({ ctx, input: { id, repositories, wait } }) => {
-      const { database, github, logger, workspaceManager } = ctx;
+      const { database, codeHost, logger, workspaceManager } = ctx;
       try {
-        const operation = beginRepositoryPreparation({ database, github, logger, workspaceManager }, id, repositories);
+        const operation = beginRepositoryPreparation({ database, codeHost, logger, workspaceManager }, id, repositories);
         if (!operation) notFound('work item not found');
         if (wait === false) {
           // Disconnecting the caller never cancels server-owned preparation.
@@ -80,46 +80,48 @@ export const workItemsRouter = router({
       }
     }),
 
-  attachPullRequest: procedure
-    .input(z.object({ id: z.string(), url: z.string().optional(), repoFullName: z.string().optional(), number: z.number().optional() }))
+  attachChangeRequest: procedure
+    .input(z.object({ id: z.string(), url: z.string().optional(), repository: z.string().optional(), number: z.number().optional() }))
     .mutation(async ({ ctx, input: { id, ...body } }) => {
-      const ref = parsePullRequestRef(body) ?? rejectInput('body must include a GitHub pull request url or repoFullName and number');
+      const { codeHost } = ctx;
+      const ref = parseChangeRequestRef(codeHost, body) ?? rejectInput(`body must include a ${codeHost.name} change request url or repository and number`);
       try {
-        return await attachPullRequestToWorkItem(ctx.database, ctx.github, id, ref) ?? notFound('work item not found');
+        return await attachChangeRequestToWorkItem(ctx.database, codeHost, id, ref) ?? notFound('work item not found');
       } catch (error) {
-        ctx.logger.error({ err: error, workItemId: id, ref }, 'Failed to attach pull request to work item');
-        throw rejected(error, 'failed to attach pull request');
+        ctx.logger.error({ err: error, workItemId: id, ref }, 'Failed to attach change request to work item');
+        throw rejected(error, 'failed to attach change request');
       }
     }),
 
-  detachPullRequest: procedure
+  detachChangeRequest: procedure
     .input(z.object({ id: z.string(), externalId: z.string() }))
     .mutation(({ ctx, input }) => {
-      if (!detachPullRequestFromWorkItem(ctx.database, input.id, input.externalId)) notFound('work item not found');
+      if (!detachChangeRequestFromWorkItem(ctx.database, input.id, input.externalId)) notFound('work item not found');
       return { ok: true as const };
     }),
 
-  /** Re-reads every attached pull request from GitHub. */
-  refreshPullRequests: procedure
+  /** Re-reads every attached change request from the code host. */
+  refreshChangeRequests: procedure
     .input(workItemId)
     .mutation(async ({ ctx, input: { id } }) => {
       try {
-        return await refreshPullRequestsForWorkItem(ctx.database, ctx.github, id) ?? notFound('work item not found');
+        return await refreshChangeRequestsForWorkItem(ctx.database, ctx.codeHost, id) ?? notFound('work item not found');
       } catch (error) {
-        ctx.logger.error({ err: error, workItemId: id }, 'Failed to refresh pull requests for work item');
-        throw rejected(error, 'failed to refresh pull requests');
+        ctx.logger.error({ err: error, workItemId: id }, 'Failed to refresh change requests for work item');
+        throw rejected(error, 'failed to refresh change requests');
       }
     }),
 
   attachTrackerItem: procedure
-    .input(z.object({ id: z.string(), provider: z.literal('jira').optional(), key: z.string().optional(), url: z.string().optional() }))
+    .input(z.object({ id: z.string(), key: z.string().optional(), url: z.string().optional() }))
     .mutation(async ({ ctx, input: { id, ...body } }) => {
-      const ref = parseJiraIssueRef(body) ?? rejectInput('body must include a Jira issue key or browse url');
+      const { tracker } = ctx;
+      const ref = tracker.parseIssueRef(body) ?? rejectInput(`body must include a ${tracker.name} issue key or url`);
       try {
-        return await retitling(ctx, id, () => attachJiraIssueToWorkItem(ctx.database, ctx.jira, id, ref)) ?? notFound('work item not found');
+        return await retitling(ctx, id, () => attachTrackerIssueToWorkItem(ctx.database, tracker, id, ref)) ?? notFound('work item not found');
       } catch (error) {
-        ctx.logger.error({ err: error, workItemId: id, ref }, 'Failed to attach Jira issue to work item');
-        throw rejected(error, 'failed to attach Jira issue');
+        ctx.logger.error({ err: error, workItemId: id, ref }, 'Failed to attach tracker issue to work item');
+        throw rejected(error, 'failed to attach tracker issue');
       }
     }),
 
@@ -127,7 +129,7 @@ export const workItemsRouter = router({
   detachTrackerItem: procedure
     .input(z.object({ id: z.string(), idOrKey: z.string() }))
     .mutation(async ({ ctx, input: { id, idOrKey } }) => {
-      if (!await retitling(ctx, id, () => detachJiraIssueFromWorkItem(ctx.database, id, idOrKey))) notFound('work item not found');
+      if (!await retitling(ctx, id, () => detachTrackerIssueFromWorkItem(ctx.database, id, idOrKey))) notFound('work item not found');
       return { ok: true as const };
     }),
 });

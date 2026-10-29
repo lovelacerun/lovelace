@@ -3,15 +3,15 @@ import test from 'node:test';
 import { getOsc8LinkAtColumn, stripTerminalSequences, type TuiAltScreen, type TuiMouseEvent } from '@earendil-works/pi-tui';
 import type { LovelaceClient } from '@lovelace/client';
 import { fakeClient, type FakeHandlers } from '@lovelace/client/testing';
-import { CODING_HARNESSES, type AvailableHarness, type DashboardJiraIssue, type PromptTemplate, type RepoRecord } from '@lovelace/core';
+import { CODING_HARNESSES, type AvailableHarness, type DashboardIssue, type PromptTemplate, type Repository } from '@lovelace/core';
 import { AppState } from './state.js';
 import { JiraStartModal } from './jira-start-modal.js';
 import { parseClickTarget } from './clickable.js';
 import { visibleWidth } from '@earendil-works/pi-tui';
 import { safeText } from '@lovelace/tui-components';
 
-const issue: DashboardJiraIssue = { id: '42', key: 'PROJ-42', title: 'Fix sync', url: 'https://jira.invalid/42', status: 'To Do', issueType: 'Task', updatedAt: '' };
-const repositories: RepoRecord[] = ['sync', 'client', 'old'].map((name, index) => ({
+const issue: DashboardIssue = { id: '42', key: 'PROJ-42', title: 'Fix sync', url: 'https://jira.invalid/42', status: 'To Do', issueType: 'Task', updatedAt: '' };
+const repositories: Repository[] = ['sync', 'client', 'old'].map((name, index) => ({
   id: String(index), provider: 'github', externalId: String(index), name, fullName: `org/${name}`,
   cloneUrl: '', defaultBranch: 'main', isArchived: index === 2,
   topics: [index ? 'examplecom' : 'infra'], lastSyncedAt: '',
@@ -25,7 +25,7 @@ function api(overrides: FakeHandlers = {}): LovelaceClient {
   return fakeClient({
     'repositories.list': async () => repositories,
     'prompts.list': async () => templates,
-    'jira.issues': async () => [{ ...issue, project: 'PROJ', statusCategory: 'new', type: 'Task', author: null, descriptionText: 'Full description' }],
+    'tracker.issues': async () => [{ ...issue, project: 'PROJ', done: false, author: null, description: 'Full description' }],
     'prompts.render': async input => ({ promptId: input.promptId, content: `  ${input.promptId} prompt\n` }),
     'repositories.sync': async () => ({ ok: true, repoCount: repositories.length, repos: repositories }),
     'tools.list': async () => tools,
@@ -35,10 +35,10 @@ function api(overrides: FakeHandlers = {}): LovelaceClient {
 function fixture(client = api(), text = '', repositoryTopics = ['infra', 'examplecom']) {
   const state = new AppState({ onInvalidate() {} });
   state.applyDashboardResponse({
-    activeWorkItems: [], pendingJiraIssues: [issue], pendingReviews: [],
+    activeWorkItems: [], pendingIssues: [issue], pendingReviews: [],
     recent: { since: '', workItems: [], sessionCount: 0, completedCount: 0, activityCount: 0 },
     settings: { defaultAgent: 'pi', sidebarSide: 'right', repositoryTopics },
-    freshness: { jiraFetchedAt: null, githubFetchedAt: null, jiraStale: false, githubStale: false },
+    freshness: { trackerFetchedAt: null, codeHostFetchedAt: null, trackerStale: false, codeHostStale: false },
   });
   state.view = 'jira'; state.selectedJira = issue;
   state.setDraft({ text });
@@ -57,7 +57,7 @@ function fixture(client = api(), text = '', repositoryTopics = ['infra', 'exampl
 test('loads full Jira context and a default template in the same dialog; selections survive separate filters', async () => {
   const f = fixture(api({ 'prompts.render': async input => {
     assert.equal(input.title, 'PROJ-42: Fix sync');
-    assert.equal((input.sources![0]!.payload as { descriptionText: string }).descriptionText, 'Full description');
+    assert.equal((input.sources![0]!.payload as { description: string }).description, 'Full description');
     return { promptId: input.promptId, content: '  Editable preview\n' };
   } }));
   await f.modal.load();
@@ -196,7 +196,7 @@ test('template changes cannot overwrite newer choices or subsequent manual editi
 });
 
 test('close and abort ignore late catalog/template replies and never clobber another draft', async () => {
-  let resolve!: (value: RepoRecord[]) => void;
+  let resolve!: (value: Repository[]) => void;
   const f = fixture(api({ 'repositories.list': () => new Promise(finish => { resolve = finish; }) }));
   const loading = f.modal.load();
   f.modal.close(); f.state.navigateToDashboard(); f.state.setDraft({ text: 'Home draft' });

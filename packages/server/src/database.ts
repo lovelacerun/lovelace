@@ -12,7 +12,7 @@ import type {
   LaunchState,
   LinkAttachmentType,
   LovelaceConfig,
-  RepoRecord,
+  Repository,
   WorkItem,
   WorkItemAttachment,
   WorkItemState,
@@ -86,8 +86,8 @@ export interface DatabaseState {
   getRepoCount(): number;
   getWorkItemCount(): number;
   getLastRepoSyncAt(): string | null;
-  replaceRepos(repos: RepoRecord[]): void;
-  listRepos(): RepoRecord[];
+  replaceRepos(repos: Repository[]): void;
+  listRepos(): Repository[];
   listWorkItems(state?: WorkItemState): WorkItem[];
   getWorkItem(id: string): WorkItem | null;
   createWorkItem(workItem: WorkItem): WorkItem;
@@ -161,8 +161,8 @@ export function openDatabase(config: LovelaceConfig): DatabaseState {
     values (@id, @provider, @externalId, @name, @fullName, @cloneUrl, @defaultBranch, @isArchived, @topicsJson, @lastSyncedAt)
   `);
 
-  const mapRepo = (row: unknown): RepoRecord => {
-    const record = row as Omit<RepoRecord, 'isArchived' | 'topics'> & { isArchived: number; topicsJson: string };
+  const mapRepo = (row: unknown): Repository => {
+    const record = row as Omit<Repository, 'isArchived' | 'topics'> & { isArchived: number; topicsJson: string };
     const { topicsJson, ...repository } = record;
     return { ...repository, isArchived: Boolean(record.isArchived), topics: JSON.parse(topicsJson) as string[] };
   };

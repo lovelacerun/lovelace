@@ -108,7 +108,7 @@ function renderTracker(sources: StartWorkSource[]): string {
   const payload = asRecord(source.payload);
   const key = readString(payload.key) ?? source.externalId;
   const url = readString(payload.url);
-  const description = readString(payload.descriptionText);
+  const description = readString(payload.description);
   const lines = ['Tracker item:', `- ${key}`];
   if (url) lines.push(`- ${url}`);
   if (description) lines.push('', 'Full tracker description:', '---', description, '---');
