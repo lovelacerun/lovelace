@@ -9,6 +9,12 @@ export const LAUNCH_FIELDS = ['agent', 'thinking', 'model'] as const;
 export type LaunchField = (typeof LAUNCH_FIELDS)[number];
 const LABELS: Record<LaunchField, string> = { agent: 'Agent', thinking: 'Thinking', model: 'Model' };
 
+/** An expanded list, drawn over the host's content from `column` of its field's row. */
+export interface Popup {
+  lines: string[];
+  column: number;
+}
+
 /** Select fields of the launch dialog; `prefix` scopes their click links. */
 export function selectTheme(prefix: string): DropdownTheme {
   return {
@@ -64,10 +70,13 @@ export class LaunchOptionsRow {
     return field;
   }
 
-  /** The row, then the expanded list of `focused` below its field. Other lists close. */
-  render(width: number, focused?: LaunchField): string[] {
+  /**
+   * The one-line row, and the expanded list of `focused` as a popup starting
+   * at `column` for the host to draw over its content. Other lists close.
+   */
+  render(width: number, focused?: LaunchField): { row: string; popup?: Popup } {
     for (const field of LAUNCH_FIELDS) if (field !== focused) this.menus[field].close();
-    if (!this.available) return [muted + truncate('No coding harness detected on the server', width) + reset];
+    if (!this.available) return { row: muted + truncate('No coding harness detected on the server', width) + reset };
     this.sync();
     // Narrow docks drop the labels before squeezing the model name.
     const fields = LAUNCH_FIELDS.reduce((sum, field) => sum + visibleWidth(this.menus[field].label) + 4, 0);
@@ -81,9 +90,9 @@ export class LaunchOptionsRow {
       if (field === focused) column = visibleWidth(row + label);
       row += label + this.menus[field].renderField(room, field === focused, labelled ? undefined : LABELS[field]);
     }
-    const list = focused ? this.menus[focused].renderList(Math.min(width, Math.max(28, Math.min(56, width - column)))) : [];
-    const indent = ' '.repeat(Math.max(0, Math.min(column, width - Math.max(0, ...list.map(line => visibleWidth(line))))));
-    return [truncate(row, width), ...list.map(line => indent + line)];
+    const lines = focused ? this.menus[focused].renderList(Math.min(width, Math.max(28, Math.min(56, width - column)))) : [];
+    const listWidth = Math.max(0, ...lines.map(line => visibleWidth(line)));
+    return { row: truncate(row, width), ...(lines.length ? { popup: { lines, column: Math.max(0, Math.min(column, width - listWidth)) } } : {}) };
   }
 
   /** Null until the server has answered; launches then use its default agent. */

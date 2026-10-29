@@ -39,9 +39,9 @@ const ENTER = '\r', DOWN = '\x1b[B', UP = '\x1b[A', ESC = '\x1b';
 test('each field expands into a list; Enter picks, and overrides are kept per harness', () => {
   const state = stateWith();
   const row = new LaunchOptionsRow(state);
-  assert.match(plain(row.render(120)[0]!), /Agent\s+Pi ▾\s+Thinking\s+default ▾\s+Model\s+default ▾/);
+  assert.match(plain(row.render(120).row), /Agent\s+Pi ▾\s+Thinking\s+default ▾\s+Model\s+default ▾/);
   type(row, 'agent', [ENTER]);
-  assert.deepEqual(plain(row.render(120, 'agent').join('\n')).split('\n').slice(2).map(line => line.trim()), ['• Pi', 'Claude Code']);
+  assert.deepEqual(plain(row.render(120, 'agent').popup!.lines.join('\n')).split('\n').slice(1).map(line => line.trim()), ['• Pi', 'Claude Code']);
   type(row, 'agent', [DOWN, ENTER]);
   assert.equal(state.launchAgent, 'claude');
   assert.equal(row.openField, undefined);
@@ -49,7 +49,7 @@ test('each field expands into a list; Enter picks, and overrides are kept per ha
   // Models come from the harness catalog; typing filters them.
   type(row, 'model', [...'opu', ENTER]);
   assert.deepEqual(state.launchToolOptions, { claude: { thinkingLevel: 'low', model: 'opus' } });
-  assert.match(plain(row.render(120)[0]!), /Claude Code ▾\s+Thinking\s+low ▾\s+Model\s+opus ▾/);
+  assert.match(plain(row.render(120).row), /Claude Code ▾\s+Thinking\s+low ▾\s+Model\s+opus ▾/);
 
   type(row, 'agent', [ENTER, UP, ENTER]); // back to Pi, which keeps its own defaults
   assert.equal(state.launchAgent, 'pi');
@@ -62,7 +62,7 @@ test('a model the catalog does not list can be typed; Esc and Tab leave the choi
   const state = stateWith();
   const row = new LaunchOptionsRow(state);
   type(row, 'model', [...'my-model']);
-  assert.match(plain(row.render(120, 'model').join('\n')), /my-model\s+use as typed/);
+  assert.match(plain(row.render(120, 'model').popup!.lines.join('\n')), /my-model\s+use as typed/);
   type(row, 'model', [ENTER]);
   assert.deepEqual(state.launchToolOptions, { pi: { model: 'my-model' } });
   type(row, 'model', [ENTER, UP]);
@@ -90,7 +90,7 @@ test('without detected harnesses the row says so and has nothing to open', () =>
   const state = stateWith('pi', []);
   const row = new LaunchOptionsRow(state);
   assert.equal(row.handleInput('agent', ENTER), false);
-  assert.match(plain(row.render(80, 'agent')[0]!), /No coding harness detected/);
+  assert.match(plain(row.render(80, 'agent').row), /No coding harness detected/);
 });
 
 test('launches send the chosen harness and overrides, and the choice outlives the launch', async () => {

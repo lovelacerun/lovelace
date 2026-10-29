@@ -132,7 +132,8 @@ request (**Start review**) or another session on an active work item
   branches.
 - **Right:** a template select field, a large editable prompt preview and,
   below it, the **Agent**, **Thinking** and **Model** select fields. Each
-  field expands into a list (`Enter`, `Space` or `↓`); typing filters it,
+  field expands into a list floating over the dialog, below the field where
+  it fits and above it otherwise (`Enter`, `Space` or `↓`); typing filters it,
   `↑/↓` move, `Enter` chooses and `Esc` closes. Agents are the harnesses
   detected on the server and models come from the harness's catalog; a model
   name the catalog lacks can be typed and chosen as typed. `default` keeps the

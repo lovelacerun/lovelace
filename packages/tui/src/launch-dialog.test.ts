@@ -287,6 +287,27 @@ test('column separators connect to the frame and align with the body divider aft
   f.modal.dispose();
 });
 
+test('open lists float over the dialog without moving its rows', async () => {
+  const f = fixture();
+  await f.modal.load();
+  f.modal.focus = 'thinking';
+  const closed = f.modal.render(118).map(line => safeText(line));
+  f.modal.handleInput('\r');
+  const open = f.modal.render(118);
+  assert.ok(open.every(line => visibleWidth(line) === 118));
+  const lines = open.map(line => safeText(line));
+  assert.equal(lines.length, closed.length);
+  const row = closed.findIndex(line => line.includes('Thinking'));
+  assert.equal(lines[row], closed[row], 'the field row stays put');
+  assert.match(lines.slice(0, row).join('\n'), /│ \/ type to filter/, 'the bottom row opens its list upwards');
+  f.modal.focus = 'template';
+  f.modal.handleInput('\r');
+  const template = f.modal.render(118).map(line => safeText(line));
+  const templateRow = template.findIndex(line => line.includes('Template'));
+  assert.match(template[templateRow + 2]!, /type to filter/, 'the top row opens its list downwards');
+  f.modal.dispose();
+});
+
 test('failed template rendering keeps the edited prompt and empty prompts never launch', async () => {
   const f = fixture(api({ 'prompts.render': async () => { throw new Error('render failed'); } }), '  Keep text\n');
   await f.modal.load();

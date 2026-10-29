@@ -1,16 +1,16 @@
 import type { Component, Editor, TuiAltScreen, TuiMouseEvent, TuiMouseEventResult } from '@earendil-works/pi-tui';
-import { Input, isKeyRelease, matchesKey, stripTerminalSequences } from '@earendil-works/pi-tui';
+import { compositeTuiLine, Input, isKeyRelease, matchesKey, stripTerminalSequences, visibleWidth } from '@earendil-works/pi-tui';
 import type { LovelaceClient } from '@lovelace/client';
 import { attachmentsOfType, type DashboardIssue, type DashboardReview, type PromptTemplate, type Repository, type StartWorkSource, type TrackerIssue, type WorkItemDetails } from '@lovelace/core';
 import type { AppState } from './state.js';
 import { filterRepositories } from './jira-start.js';
 import {
-  Dropdown, fitEditorLines, linkCell, padRight, PasteTracker, replaceEditorText, safeText, SplitPane, truncate, wrap,
+  Dropdown, fitEditorLines, LINK_END, linkCell, padRight, PasteTracker, replaceEditorText, safeText, SplitPane, truncate, wrap,
 } from '@lovelace/tui-components';
-import { bold, accent, canvas, cardBg, muted, icons, danger, reset, selectedBand, selectedBg, splitPaneTheme } from './theme.js';
+import { barBg, bold, accent, canvas, cardBg, muted, icons, danger, reset, selectedBand, selectedBg, splitPaneTheme } from './theme.js';
 import { clickable, type ClickTarget } from './clickable.js';
 import { dialogEditor } from './dialog-editor.js';
-import { LAUNCH_FIELDS, LaunchOptionsRow, selectTheme, type LaunchField } from './launch-options.js';
+import { LAUNCH_FIELDS, LaunchOptionsRow, selectTheme, type LaunchField, type Popup } from './launch-options.js';
 
 const control = (text: string, data: string) => clickable(text, { kind: 'modal', data });
 const button = (label: string, selected: boolean, data: string) =>
@@ -79,6 +79,8 @@ export class LaunchDialog implements Component {
   private promptRows = 5;
   /** Body rows of the last render, shared by both panes. */
   private body = { width: 1, height: 1, compact: false };
+  /** The expanded list of the last render, anchored to a prompt pane row. */
+  private popup?: Popup & { row: number };
   /** Repositories on the left, the prompt on the right. */
   private readonly split = new SplitPane(
     { render: width => this.renderPromptPane(width), handleMouse: event => this.scroll(event, 'prompt'), invalidate: () => {} },
@@ -465,6 +467,7 @@ export class LaunchDialog implements Component {
     this.topicFilter.focused = this.focused && this.focus === 'topics';
     this.editor.borderColor = text => (this.focus === 'prompt' ? accent : muted) + text + reset;
     const selected = this.selectedRepoIds.size;
+    this.popup = undefined;
     const lines = [
       muted + '╭' + '─'.repeat(Math.max(0, width - 2)) + '╮' + reset,
       this.row(bold + text.title + reset + '  ' + safeText(this.subject.kind === 'home' ? '' : this.templateInput.title), innerWidth),
@@ -481,7 +484,12 @@ export class LaunchDialog implements Component {
     lines.push(this.row((this.error ? danger : muted) + safeText(status) + reset, innerWidth));
     lines.push(muted + '╰' + '─'.repeat(Math.max(0, width - 2)) + '╯' + reset);
     // A raised surface over the page.
-    return lines.map(line => canvas(line, width, cardBg));
+    const surface = lines.map(line => canvas(line, width, cardBg));
+    const top = compact ? 2 : 3;
+    const left = 2 + (this.single ? 0 : this.split.layout(innerWidth).primaryX);
+    // Set while the panes rendered, which narrowing cannot see.
+    const popup = this.popup as (Popup & { row: number }) | undefined;
+    return popup ? drawPopup(surface, popup, top + popup.row, left, width) : surface;
   }
 
   private renderRepositoryPane(width: number): string[] {
@@ -520,23 +528,26 @@ export class LaunchDialog implements Component {
   private renderPromptPane(width: number): string[] {
     const template = this.renderTemplate(width);
     const launch = this.launchOptions.render(width, this.focused && isLaunchField(this.focus) ? this.focus : undefined);
-    const promptHeight = Math.max(3, this.body.height - 1 - template.length - launch.length);
+    const promptHeight = Math.max(3, this.body.height - 3);
+    if (template.popup) this.popup = { ...template.popup, row: 0 };
+    if (launch.popup) this.popup = { ...launch.popup, row: promptHeight + 2 };
     return [
-      ...template,
+      template.row,
       bold + 'Prompt' + reset + muted + (this.renderingPrompt ? '  rendering…' : '  editable preview') + reset,
       ...this.renderPrompt(width, promptHeight).map(line => this.focus === 'prompt' ? line : control(line, 'focus:prompt')),
-      ...launch,
+      launch.row,
     ].slice(0, this.body.height);
   }
 
-  /** The template field, and its list below it while expanded. */
-  private renderTemplate(width: number): string[] {
+  /** The template field, and its list as a popup while expanded. */
+  private renderTemplate(width: number): { row: string; popup?: Popup } {
     const focused = this.focused && this.focus === 'template';
     if (!focused) this.templateMenu.close();
     this.syncTemplateMenu();
     const label = (focused ? accent : muted) + 'Template ' + reset;
-    return [label + this.templateMenu.renderField(Math.max(8, Math.min(40, width - 9)), focused),
-      ...this.templateMenu.renderList(Math.max(1, Math.min(48, width - 9))).map(line => ' '.repeat(Math.min(9, width - 1)) + line)];
+    const lines = this.templateMenu.renderList(Math.max(1, Math.min(48, width - 9)));
+    return { row: label + this.templateMenu.renderField(Math.max(8, Math.min(40, width - 9)), focused),
+      ...(lines.length ? { popup: { lines, column: Math.min(9, width - 1) } } : {}) };
   }
 
   private renderFilter(input: Input, width: number, focus: DialogFocus): string {
@@ -575,4 +586,26 @@ export class LaunchDialog implements Component {
     if (this.focus === 'selection') return width < 60 ? 'All = matches · None = clear all · ←/→ · Enter' : 'Select all matches / Unselect all repositories · ←/→ choose · Enter apply · Tab next';
     return width < 60 ? `^A all · ^U clear · Tab · ${start} · Esc` : `Space select · Ctrl+A all · Ctrl+U clear · Tab · ${start} · Esc`;
   }
+}
+
+/**
+ * Draws `popup` framed over `surface`, below its field's `row` where it fits
+ * and above it otherwise, so an open list never moves the dialog's rows.
+ */
+function drawPopup(surface: string[], popup: Popup, row: number, left: number, width: number): string[] {
+  const inner = Math.max(1, ...popup.lines.map(line => visibleWidth(line)));
+  const boxWidth = Math.min(width, inner + 4);
+  const box = [
+    muted + '╭' + '─'.repeat(boxWidth - 2) + '╮' + reset,
+    ...popup.lines.map(line => muted + '│' + reset + ' ' + linkCell(line, boxWidth - 4) + ' ' + muted + '│' + reset),
+    muted + '╰' + '─'.repeat(boxWidth - 2) + '╯' + reset,
+  ].map(line => canvas(line, boxWidth, barBg) + LINK_END);
+  const below = row + 1 + box.length <= surface.length;
+  const top = below ? row + 1 : Math.max(0, row - box.length);
+  // The frame sits one column left so the list lines up with the field.
+  const column = Math.max(0, Math.min(left + popup.column - 2, width - boxWidth));
+  return surface.map((line, index) => {
+    const overlay = box[index - top];
+    return overlay === undefined ? line : compositeTuiLine(line, overlay, column, boxWidth, width);
+  });
 }
