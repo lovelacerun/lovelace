@@ -503,7 +503,7 @@ Commands:
   cache               List cache snapshots
   tui [--sidebar left|right]  Open the terminal dashboard explicitly
   dashboard                   Print the dashboard as JSON
-  github reviews              List grouped GitHub review requests
+  github reviews              List pending GitHub review requests
   github reviews refresh      Force-refresh GitHub review requests
   jira issues                 List cached Jira assigned issues
   jira issues refresh         Force-refresh Jira assigned issues

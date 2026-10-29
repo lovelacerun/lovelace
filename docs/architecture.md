@@ -52,7 +52,7 @@ exact prompt and selections of a launch), `session` (an agent in Herdr) and
 ## Provider data
 
 `server/src/cached-providers.ts` wraps the plain Jira and GitHub clients with
-`@lovelace/cache`. Lists (assigned issues, review requests) persist and load
+`@lovelace/cache`. Lists (assigned issues, review requests without bots) persist and load
 on startup, so the TUI has data before the first sync. A scheduled sync
 (about every five minutes) refreshes them; request-time reads use the TTL or
 peek without network. Failures keep the last good value.

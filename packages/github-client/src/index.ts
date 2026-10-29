@@ -1,5 +1,5 @@
 import { Octokit } from 'octokit';
-import type { GitHubPullRequestDetails, GitHubPullRequestStatus, GitHubReviewBuckets, GitHubReviewRequest, RepoRecord, PullRequestBuildStatus, PullRequestStatus, ReviewDecision } from './types.js';
+import type { GitHubPullRequestDetails, GitHubPullRequestStatus, GitHubReviewRequest, RepoRecord, PullRequestBuildStatus, PullRequestStatus, ReviewDecision } from './types.js';
 export type * from './types.js';
 
 export type GitHubTransport = Pick<Octokit, 'graphql' | 'request'>;
@@ -19,7 +19,7 @@ export interface RequestOptions { signal?: AbortSignal }
 export interface GitHubClient {
   isConfigured(): boolean;
   fetchRepositories(options?: RequestOptions): Promise<RepoRecord[]>;
-  fetchReviewRequests(options?: RequestOptions): Promise<GitHubReviewBuckets>;
+  fetchReviewRequests(options?: RequestOptions): Promise<GitHubReviewRequest[]>;
   fetchPullRequestDetails(repoFullName: string, number: number, options?: RequestOptions): Promise<GitHubPullRequestDetails | null>;
   fetchPullRequestStatus(repoFullName: string, number: number, options?: RequestOptions): Promise<GitHubPullRequestStatus | null>;
 }
@@ -82,8 +82,7 @@ export function createGitHubClient(options: GitHubClientOptions): GitHubClient {
       if (!configured() || !options.org) throw new Error('GitHub organization or token missing');
       const q = ['is:open', 'is:pr', 'org:' + options.org, 'archived:false', 'review-requested:@me'].join(' ');
       const all = await fetchAllReviewSearchResults(client(fetchOptions?.signal), q);
-      const visible = all.filter((item) => !item.isDraft);
-      return { human: visible.filter((item) => !isAutomatedAuthor(item.authorLogin)), automated: visible.filter((item) => isAutomatedAuthor(item.authorLogin)) };
+      return all.filter((item) => !item.isDraft && !isAutomatedAuthor(item.authorLogin));
     },
     async fetchPullRequestDetails(repoFullName, number, fetchOptions) {
       return fetchPullRequestDetailsInternal(client(fetchOptions?.signal), repoFullName, number);

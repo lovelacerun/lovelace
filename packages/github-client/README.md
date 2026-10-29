@@ -14,7 +14,7 @@ const github = createGitHubClient({
 });
 if (github.isConfigured()) {
   const repositories = await github.fetchRepositories({ signal });
-  const { human, automated } = await github.fetchReviewRequests();
+  const reviewRequests = await github.fetchReviewRequests();
   const branches = await github.fetchPullRequestDetails('example/service', 42);
   const status = await github.fetchPullRequestStatus('example/service', 42);
 }
@@ -33,7 +33,7 @@ if (github.isConfigured()) {
   filter by configured topics. Authentication only is required for the
   catalog; organization configuration is still required for review search.
 - Catalog and review pages are sequential, cursor-cycle checked and capped at 100 pages; exceeding the limit rejects instead of silently truncating. Native Octokit retry/throttling behavior is retained.
-- Review search matches open non-archived org PRs requesting review from the authenticated user. Drafts are omitted; authors matching `renovate|dependabot|bot` are separated from human review. This classification is heuristic, not an upstream human identity guarantee.
+- Review search matches open non-archived org PRs requesting review from the authenticated user. Drafts and authors matching `renovate|dependabot|bot` are omitted. This bot filter is heuristic, not an upstream human identity guarantee.
 - PR methods accept `repoFullName,number`; invalid references and upstream not-found return null. Status preserves review/build state and head/base branch data.
 
-Data interfaces (`RepoRecord`, `GitHubReviewRequest`, `GitHubReviewBuckets`, `GitHubPullRequestDetails`, `GitHubPullRequestStatus`) are exported locally. There are no repository-dashboard/security scans or repository-insight file/tag APIs.
+Data interfaces (`RepoRecord`, `GitHubReviewRequest`, `GitHubPullRequestDetails`, `GitHubPullRequestStatus`) are exported locally. There are no repository-dashboard/security scans or repository-insight file/tag APIs.

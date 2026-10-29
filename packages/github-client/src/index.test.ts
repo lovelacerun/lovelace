@@ -52,17 +52,16 @@ test('real Octokit request injection honors enterprise host and token without ex
   assert.equal(headers?.get('authorization'), 'token fixture-only-token');
 });
 
-test('human and automated review searches paginate atomically and omit drafts', async () => {
+test('review searches paginate atomically and omit drafts and bots', async () => {
   const github = createGitHubClient({ ...credentials, octokit: transport(async (_, args) => {
     assert.match(String(args.q), /org:org.*review-requested:@me/);
     return { search: { nodes: args.cursor ? [pr(3, 'dependabot[bot]')] : [pr(1, 'human'), pr(2, 'renovate', true), null, { __typename: 'Issue' }], pageInfo: { hasNextPage: !args.cursor, endCursor: args.cursor ? null : 'next' } } };
   }) });
   const result = await github.fetchReviewRequests();
-  assert.deepEqual(result.human.map((item) => item.number), [1]);
-  assert.deepEqual(result.automated.map((item) => item.number), [3]);
-  assert.equal(result.human[0]?.status, 'approved');
-  assert.equal(result.human[0]?.buildStatus, 'success');
-  assert.equal(result.human[0]?.type, 'Fix');
+  assert.deepEqual(result.map((item) => item.number), [1]);
+  assert.equal(result[0]?.status, 'approved');
+  assert.equal(result[0]?.buildStatus, 'success');
+  assert.equal(result[0]?.type, 'Fix');
 });
 
 test('failure on a later page or an incomplete response rejects instead of returning a partial catalog', async () => {

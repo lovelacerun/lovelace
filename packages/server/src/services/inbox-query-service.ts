@@ -1,20 +1,18 @@
-import type { InboxSourceType, JiraIssueSummary, LovelaceLink, WorkItem, WorkItemDetails, WorkItemMeta } from '@lovelace/core';
+import type { GitHubReviewRequest, InboxSourceType, JiraIssueSummary, LovelaceLink, WorkItem, WorkItemDetails, WorkItemMeta } from '@lovelace/core';
 import groupBy from '@nkzw/core/groupBy.js';
 import isPresent from '@nkzw/core/isPresent.js';
 import safeParse from '@nkzw/core/safeParse.js';
-import { groupPullRequests, splitPullRequestGroups, type PullRequestGroup } from '../automated-pr-groups.js';
 import type { CachedGitHub, CachedJira } from '../cached-providers.js';
 import type { DatabaseState } from '../database.js';
 import { asRecord, dedupeLinks, isNonEmptyString, truncateText } from '../helpers.js';
-import { inferChangeRequestLinks } from './link-inference-service.js';
+import { pendingReviewRequests } from './review-request-service.js';
 
 export interface InboxProviders {
   github: Pick<CachedGitHub, 'peekReviewRequests'>;
-  jira: Pick<CachedJira, 'peekAssignedIssues' | 'peekProjects'>;
-  jiraBaseUrl: string | null;
+  jira: Pick<CachedJira, 'peekAssignedIssues'>;
 }
 
-type InboxItemSourceType = 'work-item' | 'tracker-item' | 'change-request-group';
+type InboxItemSourceType = 'work-item' | 'tracker-item' | 'change-request';
 
 interface InboxItemSource {
   sourceType: InboxSourceType;
@@ -40,14 +38,13 @@ interface InboxItem {
   sources?: InboxItemSource[];
   links?: LovelaceLink[];
   relatedWorkItems?: RelatedWorkItemRef[];
-  raw: JiraIssueSummary | WorkItemDetails | PullRequestGroup;
+  raw: JiraIssueSummary | WorkItemDetails | GitHubReviewRequest;
 }
 
 interface InboxResponse {
   activeWorkItems: InboxItem[];
   jiraIssues: InboxItem[];
-  humanReviewGroups: InboxItem[];
-  automatedReviewGroups: InboxItem[];
+  reviewRequests: InboxItem[];
 }
 
 export function buildInbox(database: DatabaseState, providers: InboxProviders): InboxResponse {
@@ -56,9 +53,7 @@ export function buildInbox(database: DatabaseState, providers: InboxProviders): 
   const metasByWorkItemId = groupBy(metas, (meta) => meta.workItemId);
   const dismissedSourceKeys = buildDismissedSourceKeySet(database.listInboxMeta());
   const linkedSourceKeys = buildLinkedSourceKeySet(workItems, metas);
-  const groupedReviews = buildVisiblePullRequestGroups(database, providers.github, workItems, metas);
   const assignedIssues = providers.jira.peekAssignedIssues()?.value ?? [];
-  const changeRequestLinks = buildChangeRequestLinkMap(providers, assignedIssues);
 
   const relatedWorkItemsBySourceKey = buildRelatedWorkItemRefMap(workItems, metas);
 
@@ -74,26 +69,8 @@ export function buildInbox(database: DatabaseState, providers: InboxProviders): 
   return {
     activeWorkItems: sortByUpdatedAt(activeWorkItems),
     jiraIssues: sortByUpdatedAt(jiraIssues),
-    humanReviewGroups: sortByUpdatedAt(groupedReviews.human.map((group) => toChangeRequestGroupInboxItem(group, changeRequestLinks, relatedWorkItemsBySourceKey))),
-    automatedReviewGroups: sortByUpdatedAt(groupedReviews.automated.map((group) => toChangeRequestGroupInboxItem(group, changeRequestLinks, relatedWorkItemsBySourceKey))),
+    reviewRequests: pendingReviewRequests(database, providers.github).map(toChangeRequestInboxItem),
   };
-}
-
-export function buildVisiblePullRequestGroups(
-  database: DatabaseState,
-  github: Pick<CachedGitHub, 'peekReviewRequests'>,
-  workItems = database.listWorkItems(),
-  metas = database.listWorkItemMeta(),
-) {
-  const dismissedSourceKeys = buildDismissedSourceKeySet(database.listInboxMeta());
-  const linkedSourceKeys = buildLinkedSourceKeySet(workItems, metas);
-  const reviews = github.peekReviewRequests()?.value;
-  const rawReviews = filterVisibleChangeRequests(
-    [...reviews?.human ?? [], ...reviews?.automated ?? []],
-    dismissedSourceKeys,
-    linkedSourceKeys,
-  );
-  return splitPullRequestGroups(groupPullRequests(rawReviews));
 }
 
 function toWorkItemInboxItem(workItem: WorkItem, metas: WorkItemMeta[]): InboxItem {
@@ -132,29 +109,17 @@ function toTrackerInboxItem(issue: JiraIssueSummary, relatedWorkItems: RelatedWo
   };
 }
 
-function toChangeRequestGroupInboxItem(
-  group: PullRequestGroup,
-  changeRequestLinks: Map<string, LovelaceLink[]>,
-  relatedWorkItemsBySourceKey: Map<string, RelatedWorkItemRef[]>,
-): InboxItem {
-  const slimGroup = toSlimPullRequestGroup(group);
-  const relatedWorkItems = collectGroupRelatedWorkItems(group, relatedWorkItemsBySourceKey);
+function toChangeRequestInboxItem(review: GitHubReviewRequest): InboxItem {
+  const slimReview = { ...review, descriptionText: truncateText(review.descriptionText, 4000) };
   return {
-    id: group.key,
-    sourceType: 'change-request-group',
-    title: group.title,
-    subtitle: formatPullRequestGroupSubtitle(group),
-    url: group.items.length === 1 ? (group.items[0]?.url ?? null) : null,
-    updatedAt: group.updatedAt,
-    relatedWorkItems: relatedWorkItems.length > 0 ? relatedWorkItems : undefined,
-    sources: slimGroup.items.map((item) => ({
-      sourceType: 'change-request',
-      provider: 'github',
-      externalId: item.id,
-      payload: item,
-    })),
-    links: mergeChangeRequestLinks(group.items.map((item) => changeRequestLinks.get(item.id) ?? [])),
-    raw: slimGroup,
+    id: review.id,
+    sourceType: 'change-request',
+    title: `${review.repoFullName}#${review.number}: ${review.title}`,
+    subtitle: review.authorLogin,
+    url: review.url,
+    updatedAt: review.updatedAt,
+    sources: [{ sourceType: 'change-request', provider: 'github', externalId: review.id, payload: slimReview }],
+    raw: slimReview,
   };
 }
 
@@ -162,27 +127,6 @@ function toSlimTrackerIssue(issue: JiraIssueSummary): JiraIssueSummary {
   return {
     ...issue,
     descriptionText: truncateText(issue.descriptionText, 4000),
-  };
-}
-
-function toSlimPullRequestGroup(group: PullRequestGroup): PullRequestGroup {
-  return {
-    ...group,
-    items: group.items.map((item) => ({
-      id: item.id,
-      number: item.number,
-      title: item.title,
-      url: item.url,
-      repoFullName: item.repoFullName,
-      project: item.project,
-      type: item.type,
-      authorLogin: item.authorLogin,
-      author: item.author,
-      descriptionText: group.items.length === 1 ? truncateText(item.descriptionText, 4000) : null,
-      headRefName: item.headRefName ?? null,
-      baseRefName: item.baseRefName ?? null,
-      updatedAt: item.updatedAt,
-    })),
   };
 }
 
@@ -222,34 +166,10 @@ function extractManualTrackerLinks(metas: WorkItemMeta[]): LovelaceLink[] {
           externalId: meta.externalId,
           key: typeof payload.key === 'string' ? payload.key : meta.externalId,
           url: typeof payload.url === 'string' ? payload.url : null,
-          source: 'manual' as const,
         },
       ];
     }),
   );
-}
-
-function buildChangeRequestLinkMap(providers: InboxProviders, issues: JiraIssueSummary[]): Map<string, LovelaceLink[]> {
-  const reviews = providers.github.peekReviewRequests()?.value;
-  const entries = inferChangeRequestLinks([...reviews?.human ?? [], ...reviews?.automated ?? []], issues,
-    providers.jira.peekProjects()?.value ?? [], providers.jiraBaseUrl);
-  return new Map(entries.map((entry) => [entry.changeRequestId, entry.links]));
-}
-
-function mergeChangeRequestLinks(groups: LovelaceLink[][]): LovelaceLink[] {
-  return dedupeLinks(groups.flatMap((links) => links));
-}
-
-function filterVisibleChangeRequests(
-  items: PullRequestGroup['items'],
-  dismissedSourceKeys: Set<string>,
-  linkedSourceKeys: Set<string>,
-) {
-  return items.filter((item) => {
-    if (item.isDraft) return false;
-    const key = sourceKey('change-request', 'github', item.id);
-    return !dismissedSourceKeys.has(key) && !linkedSourceKeys.has(key);
-  });
 }
 
 function buildLinkedSourceKeySet(workItems: WorkItem[], metas: WorkItemMeta[]): Set<string> {
@@ -261,19 +181,6 @@ function buildLinkedSourceKeySet(workItems: WorkItem[], metas: WorkItemMeta[]): 
       .filter((meta) => (meta.metaType === 'tracker-item' || meta.metaType === 'change-request') && meta.externalId)
       .map((meta) => sourceKey(meta.metaType as InboxSourceType, meta.provider, meta.externalId as string)),
   );
-}
-
-function collectGroupRelatedWorkItems(
-  group: PullRequestGroup,
-  relatedWorkItemsBySourceKey: Map<string, RelatedWorkItemRef[]>,
-): RelatedWorkItemRef[] {
-  const refs: RelatedWorkItemRef[] = [];
-  for (const item of group.items) {
-    for (const ref of relatedWorkItemsBySourceKey.get(sourceKey('change-request', 'github', item.id)) ?? []) {
-      if (!refs.some((existing) => existing.id === ref.id)) refs.push(ref);
-    }
-  }
-  return refs;
 }
 
 function buildRelatedWorkItemRefMap(workItems: WorkItem[], metas: WorkItemMeta[]): Map<string, RelatedWorkItemRef[]> {
@@ -295,12 +202,6 @@ function buildRelatedWorkItemRefMap(workItems: WorkItem[], metas: WorkItemMeta[]
 
 function buildDismissedSourceKeySet(entries: { sourceType: InboxSourceType; provider: string | null; externalId: string; state: string }[]) {
   return new Set(entries.filter((entry) => entry.state === 'dismissed').map((entry) => sourceKey(entry.sourceType, entry.provider, entry.externalId)));
-}
-
-function formatPullRequestGroupSubtitle(group: PullRequestGroup): string {
-  const prPart = `${group.items.length} ${group.items.length === 1 ? 'PR' : 'PRs'}`;
-  const authorPart = group.authors.length > 0 ? group.authors.join(', ') : group.isAutomated ? 'automation' : 'unknown';
-  return `${prPart} · ${authorPart}`;
 }
 
 function sourceKey(sourceType: InboxSourceType, provider: string | null, externalId: string): string {

@@ -1,6 +1,6 @@
 import { createCacheStore, type CacheSnapshot } from '@lovelace/cache';
 import type { JiraIssueSummary } from '@lovelace/core';
-import type { GitHubReviewBuckets } from '@lovelace/github-client';
+import type { GitHubReviewRequest } from '@lovelace/github-client';
 import type { JiraProjectSummary } from '@lovelace/jira-client';
 import { createCachedGitHub, createCachedJira } from '../cached-providers.js';
 
@@ -9,7 +9,7 @@ export function fixtureProviders(stored: CacheSnapshot[] = []) {
   const data = {
     assigned: [] as JiraIssueSummary[],
     projects: [] as JiraProjectSummary[],
-    reviews: { human: [], automated: [] } as GitHubReviewBuckets,
+    reviews: [] as GitHubReviewRequest[],
   };
   const cache = createCacheStore({ storage: { load: () => stored, save() {}, delete() {} } });
   const jira = createCachedJira(cache, {

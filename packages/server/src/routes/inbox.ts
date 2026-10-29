@@ -7,9 +7,9 @@ import { activateInboxItem, dismissInboxItem } from '../services/inbox-command-s
 import { buildInbox } from '../services/inbox-query-service.js';
 
 export function registerInboxRoutes(app: FastifyInstance, deps: RouteDeps) {
-  const { database, github, jira, config } = deps;
+  const { database, github, jira } = deps;
 
-  app.get('/inbox', async () => buildInbox(database, { github, jira, jiraBaseUrl: config.jira?.siteUrl ?? config.jira?.baseUrl ?? null }));
+  app.get('/inbox', async () => buildInbox(database, { github, jira }));
 
   app.post('/inbox/activate', async (request, reply) => {
     if (!isValidActivateInboxInput(request.body)) {

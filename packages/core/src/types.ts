@@ -39,7 +39,6 @@ export interface PullRequestMetaPayload {
 
 type InboxMetaState = 'dismissed';
 export type InboxSourceType = 'tracker-item' | 'change-request';
-type LovelaceLinkSource = 'manual' | 'inferred';
 type LovelaceLinkType = 'tracker-item';
 
 export interface LovelaceLink {
@@ -48,7 +47,6 @@ export interface LovelaceLink {
   externalId: string;
   key: string | null;
   url: string | null;
-  source: LovelaceLinkSource;
 }
 
 interface GitHubConfig {

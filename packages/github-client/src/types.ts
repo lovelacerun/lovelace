@@ -53,7 +53,3 @@ export interface GitHubPullRequestStatus extends Omit<GitHubPullRequestDetails, 
   buildStatus: PullRequestBuildStatus | null;
 }
 
-export interface GitHubReviewBuckets {
-  human: GitHubReviewRequest[];
-  automated: GitHubReviewRequest[];
-}

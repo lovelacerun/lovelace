@@ -1,5 +1,5 @@
 import type { Cached, CacheStore } from '@lovelace/cache';
-import type { GitHubClient, GitHubPullRequestDetails, GitHubPullRequestStatus, GitHubReviewBuckets, RepoRecord } from '@lovelace/github-client';
+import type { GitHubClient, GitHubPullRequestDetails, GitHubPullRequestStatus, GitHubReviewRequest, RepoRecord } from '@lovelace/github-client';
 import type { JiraClient, JiraIssueSummary, JiraProjectSummary } from '@lovelace/jira-client';
 import { listModels, type HarnessModel } from '@lovelace/model-catalog';
 import { executableSearchPath } from './tools/executables.js';
@@ -36,7 +36,7 @@ export type CachedGitHub = ReturnType<typeof createCachedGitHub>;
 export function createCachedGitHub(cache: CacheStore, github: GitHubClient) {
   // The catalog's durable copy is the `repos` table; the cache only coalesces refreshes.
   const repositories = resource(cache, 'github.repoCatalog', LIST_TTL_MS, (signal) => github.fetchRepositories({ signal }), isArray<RepoRecord>, false);
-  const reviews = resource(cache, 'github.reviewRequests', LIST_TTL_MS, (signal) => github.fetchReviewRequests({ signal }), isReviewBuckets);
+  const reviews = resource(cache, 'github.reviewRequests', LIST_TTL_MS, (signal) => github.fetchReviewRequests({ signal }), isArray<GitHubReviewRequest>);
   const status = (repoFullName: string, number: number) => detail<GitHubPullRequestStatus | null>(cache, `github.pullRequestStatus:${repoFullName}#${number}`,
     (signal) => github.fetchPullRequestStatus(repoFullName, number, { signal }));
   const details = (repoFullName: string, number: number) => detail<GitHubPullRequestDetails | null>(cache, `github.pullRequestDetails:${repoFullName}#${number}`,
@@ -88,11 +88,6 @@ export function createCachedModels(cache: CacheStore): ModelLister {
 // Persisted values may predate a shape change; failing values count as missing and are refetched.
 function isArray<T>(value: unknown): value is T[] {
   return Array.isArray(value);
-}
-
-function isReviewBuckets(value: unknown): value is GitHubReviewBuckets {
-  const buckets = value as Partial<GitHubReviewBuckets> | null;
-  return Boolean(buckets && Array.isArray(buckets.human) && Array.isArray(buckets.automated));
 }
 
 function isIssues(value: unknown): value is JiraIssueSummary[] {

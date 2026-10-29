@@ -119,7 +119,7 @@ test('dashboard freshness marks stale caches', async () => {
   const now = new Date('2026-10-07T12:00:00.000Z');
   const providers = fixtureProviders([
     storedSnapshot('jira.assigned', [], new Date(now.getTime() - 60_000)),
-    storedSnapshot('github.reviewRequests', { human: [], automated: [] }, new Date(now.getTime() - 60 * 60_000)),
+    storedSnapshot('github.reviewRequests', [], new Date(now.getTime() - 60 * 60_000)),
   ]);
   try {
 

@@ -66,8 +66,8 @@ export async function refreshGitHubReviews(deps: {
         partial,
         message: partial
           ? `Synced GitHub reviews; ${trackedPullRequests.failed} tracked pull request update(s) failed`
-          : `Synced ${reviews.human.length} human and ${reviews.automated.length} automated GitHub review request(s)`,
-        data: { humanReviewCount: reviews.human.length, automatedReviewCount: reviews.automated.length, trackedPullRequests },
+          : `Synced ${reviews.length} GitHub review request(s)`,
+        data: { reviewCount: reviews.length, trackedPullRequests },
       };
     },
   });
