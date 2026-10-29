@@ -263,6 +263,7 @@ export const migrations: Migration[] = [
   `),
 
   // 3: launches. Operations and their prompt drafts become one row with a single state; unfinished ones become uncertain.
+  // Drafts without an operation keep their unanswered request ID, so resending it never launches again.
   (db) => db.exec(`
     create table launches (
       id text primary key,
@@ -304,7 +305,12 @@ export const migrations: Migration[] = [
     left join work_item_attachments d on d.id = o.draft_meta_id and json_valid(d.payload_json);
 
     insert into launches
-    select d.id, d.work_item_id, 'new-session', '{}',
+    select case when json_type(d.payload_json, '$.requestId') = 'text'
+        and not exists (select 1 from launches l where l.id = lower(json_extract(d.payload_json, '$.requestId')))
+        and (select count(*) from work_item_attachments x where x.type = 'prompt-draft' and json_valid(x.payload_json)
+          and lower(json_extract(x.payload_json, '$.requestId')) = lower(json_extract(d.payload_json, '$.requestId'))) = 1
+        then lower(json_extract(d.payload_json, '$.requestId')) else d.id end,
+      d.work_item_id, 'new-session', '{}',
       coalesce(json_extract(d.payload_json, '$.toolIds[0]'), ''),
       case when json_type(d.payload_json, '$.toolOptions') = 'object' then json_extract(d.payload_json, '$.toolOptions') end,
       case when json_type(d.payload_json, '$.repoIds') = 'array' then json_extract(d.payload_json, '$.repoIds') else '[]' end,

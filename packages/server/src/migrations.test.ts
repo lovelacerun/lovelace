@@ -107,6 +107,8 @@ test('launch operations and their drafts become launches with one state', async 
   draft('d2', { toolIds: ['pi'], repoIds: null, promptId: null, prompt: 'Failed', status: 'pending' });
   draft('d3', { toolIds: ['pi'], repoIds: null, promptId: null, prompt: 'Interrupted', status: 'pending' });
   draft('d4', { toolIds: ['codex'], repoIds: null, promptId: null, prompt: 'Orphan', status: 'pending' });
+  draft('d5', { requestId: 'R5', toolIds: ['pi'], repoIds: null, promptId: null, prompt: 'Unanswered', status: 'pending' });
+  draft('d6', { requestId: 'r1', toolIds: ['pi'], repoIds: null, promptId: null, prompt: 'Taken', status: 'pending' });
   operation('r1', 'd1', 'completed', { ok: true, phase: 'started', error: null });
   operation('r2', 'd2', 'completed', { ok: false, phase: 'failed', error: 'boom' });
   operation('r3', 'd3', 'pending', { ok: false, phase: 'starting', error: null });
@@ -116,9 +118,11 @@ test('launch operations and their drafts become launches with one state', async 
   assert.deepEqual(db.prepare(`select id, kind, request_json as request, harness, options_json as options, repo_ids_json as repoIds,
     prompt_id as promptId, prompt, state, error is not null as hasError from launches order by id`).all().map(row => ({ ...row })), [
     { id: 'd4', kind: 'new-session', request: '{}', harness: 'codex', options: null, repoIds: '[]', promptId: null, prompt: 'Orphan', state: 'uncertain', hasError: 1 },
+    { id: 'd6', kind: 'new-session', request: '{}', harness: 'pi', options: null, repoIds: '[]', promptId: null, prompt: 'Taken', state: 'uncertain', hasError: 1 },
     { id: 'r1', kind: 'quick-start', request: '{"prompt":"p"}', harness: 'claude', options: '{"claude":{"model":"opus"}}', repoIds: '["a"]', promptId: 'implement', prompt: 'Started', state: 'started', hasError: 0 },
     { id: 'r2', kind: 'quick-start', request: '{"prompt":"p"}', harness: 'pi', options: null, repoIds: '[]', promptId: null, prompt: 'Failed', state: 'failed', hasError: 1 },
     { id: 'r3', kind: 'quick-start', request: '{"prompt":"p"}', harness: 'pi', options: null, repoIds: '[]', promptId: null, prompt: 'Interrupted', state: 'uncertain', hasError: 1 },
+    { id: 'r5', kind: 'new-session', request: '{}', harness: 'pi', options: null, repoIds: '[]', promptId: null, prompt: 'Unanswered', state: 'uncertain', hasError: 1 },
   ]);
   assert.equal(db.prepare("select count(*) as count from work_item_attachments where type = 'prompt-draft'").get()!.count, 0);
   assert.equal(db.prepare("select name from sqlite_master where name = 'work_launch_operations'").get(), undefined);
