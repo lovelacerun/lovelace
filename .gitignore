@@ -6,8 +6,6 @@ dist/
 packages/*/dist/
 packages/jira-platform-client/src/gen/
 packages/jira-platform-client/index.ts
-packages/jira-software-client/src/gen/
-packages/jira-software-client/index.ts
 
 # Local env / secrets
 .env

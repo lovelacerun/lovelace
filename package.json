@@ -16,8 +16,7 @@
   },
   "scripts": {
     "build": "pnpm build:packages",
-    "build:packages": "pnpm -r --filter !@lovelace/jira-software-client build",
-    "build:jira-software-client": "pnpm --filter @lovelace/jira-software-client build",
+    "build:packages": "pnpm -r build",
     "test": "pnpm -r --if-present test",
     "test:tui-pty": "python3 scripts/test-tui-pty.py",
     "tui": "pnpm --filter @lovelace/tui start",
