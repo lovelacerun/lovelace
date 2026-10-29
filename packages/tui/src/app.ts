@@ -26,6 +26,7 @@ import { renderDashboard } from './views/dashboard.js';
 import { renderSidebar } from './views/sidebar.js';
 import { renderWorkItem } from './views/work-item.js';
 import { renderJira } from './views/jira.js';
+import { renderReview } from './views/review.js';
 import type { Document } from './views/common.js';
 import { JiraStartModal } from './jira-start-modal.js';
 import { NewSessionModal } from './new-session-modal.js';
@@ -196,9 +197,10 @@ export class AppRoot implements Component {
   private renderHeader(cols: number): string {
     const view = this.state.view;
     const title = view === 'work-item' ? this.state.selectedWorkItemData?.workItem.title
-      : view === 'jira' ? this.state.selectedJira?.key : undefined;
+      : view === 'jira' ? this.state.selectedJira?.key
+      : view === 'review' && this.state.selectedReview ? `${this.state.selectedReview.repoFullName}#${this.state.selectedReview.number}` : undefined;
     const place = view === 'dashboard' ? 'Home' : safeText(title ? splitIssueKey(safeText(title)).key ?? title
-      : view === 'jira' ? 'Jira' : 'Work');
+      : view === 'jira' ? 'Jira' : view === 'review' ? 'Review' : 'Work');
     const mark = ' ' + accent + icons.app + reset + '  ' + (cols >= 50 ? bold + 'lovelace' + reset + faint + '  /  ' + reset : '');
     let right = connectionStatus(this.state);
     // The actual client address, so a stale port override is visible.
@@ -260,6 +262,7 @@ export class AppRoot implements Component {
     // state is surfaced in the help bar.
     if (this.state.view === 'work-item') return renderWorkItem(this.state, width);
     if (this.state.view === 'jira') return renderJira(this.state, width);
+    if (this.state.view === 'review') return renderReview(this.state, width);
     return renderDashboard(this.state, width);
   }
 
@@ -453,6 +456,7 @@ export class AppRoot implements Component {
       signal: this.lifetime.signal,
       refreshDashboard: () => this.dashboardPoller.refresh(),
       startJiraWork: () => this.openJiraStart(),
+      startReview: () => this.startReview(),
       refreshDetails: () => this.triggerDetailsRefresh(),
       submitLaunch: (prompt) => this.launchFromEditor(prompt),
       openSession: (metaId) => this.openSession(metaId),
@@ -474,6 +478,10 @@ export class AppRoot implements Component {
     }
     if (this.state.view === 'work-item') {
       this.openNewSession();
+      return;
+    }
+    if (this.state.view === 'review') {
+      if (!this.state.draft.pendingLaunch) void this.startReview();
       return;
     }
     if (this.state.view !== 'dashboard') return;
@@ -523,6 +531,36 @@ export class AppRoot implements Component {
     this.overlay = { modal, handle };
     this.editor.focused = false;
     void modal.load();
+  }
+
+  /**
+   * Reviews start without a dialog: the review template, the pull request's
+   * repository at its branch, and the agent chosen on Home.
+   */
+  private async startReview(): Promise<void> {
+    const review = this.state.selectedReview;
+    if (this.overlay || this.state.view !== 'review' || !review?.repoId || this.state.mutationInFlight) return;
+    if (this.state.draft.pendingLaunch) {
+      this.state.setError('Retry or discard (x) the unresolved launch before starting the review again.');
+      return;
+    }
+    const draftKey = this.state.draftKey;
+    this.state.setError(null);
+    this.state.setNotice('Rendering review prompt…');
+    try {
+      const rendered = await this.client.renderPrompt({
+        promptId: 'review', title: `${review.repoFullName}#${review.number}: ${review.title}`,
+        sources: [{ sourceType: 'change-request', provider: 'github', externalId: review.id, payload: review }],
+      }, { signal: this.lifetime.signal });
+      if (this.stopped || this.state.draftKey !== draftKey) return;
+      this.state.setDraft({ text: rendered.content, promptId: rendered.promptId, repoIds: [review.repoId] });
+      await this.launchFromEditor(rendered.content);
+    } catch (error) {
+      if (this.stopped || this.state.draftKey !== draftKey) return;
+      this.state.setNotice(null);
+      if (isOffline(error)) this.state.setOffline();
+      else this.state.setError(errorMessage(error, 'Rendering the review prompt failed'));
+    }
   }
 
   /** Another agent session on the selected work item, in its ready worktrees. */

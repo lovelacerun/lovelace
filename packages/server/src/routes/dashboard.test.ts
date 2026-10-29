@@ -299,6 +299,30 @@ test('Jira selections prepare isolated worktrees before a single idempotent agen
   assert.equal(starts().length, 1);
 });
 
+test('review quick-start checks out the pull request branch of its repository and hides the review', async (t) => {
+  const { app, providers, database, deps, starts } = await fixture(t);
+  const { calls, records } = repositoryFixture(deps);
+  providers.data.reviews = [{
+    id: 'PR_1', number: 7, title: 'Retry uploads', url: 'https://github.invalid/org/a/pull/7', repoFullName: 'org/a', project: 'org/a',
+    type: null, authorLogin: 'human', author: 'human', descriptionText: null, headRefName: 'feature/retry', baseRefName: 'main', updatedAt: '2026-01-01T10:00:00.000Z',
+  }];
+  await providers.github.refreshReviewRequests();
+  assert.deepEqual((await app.inject('/dashboard')).json<DashboardResponse>().pendingReviews.map(review => [review.id, review.repoId]), [['PR_1', records[0]!.id]]);
+  for (const payload of [{ reviewRequestId: 'missing', repoIds: [records[0]!.id] }, { reviewRequestId: 'PR_1', repoIds: [records[1]!.id] }, { reviewRequestId: 42 }]) {
+    assert.equal((await app.inject({ method: 'POST', url: '/work-items/quick-start', payload: { prompt: 'Review', ...payload } })).statusCode, 400, JSON.stringify(payload));
+  }
+  assert.equal(database.getWorkItemCount(), 0);
+
+  const response = await app.inject({ method: 'POST', url: '/work-items/quick-start', payload: { prompt: 'Review', reviewRequestId: 'PR_1', repoIds: records.map(repo => repo.id), promptId: 'review' } });
+  const { details, launch } = response.json<QuickStartResponse>();
+  assert.equal(launch.ok, true, launch.error ?? '');
+  assert.equal(details.workItem.title, 'org/a#7: Retry uploads');
+  assert.deepEqual(details.metas.filter(meta => meta.metaType === 'change-request').map(meta => meta.externalId), ['PR_1']);
+  assert.deepEqual(calls.map(call => [call.repository.id, call.mode, call.remoteBranch]).sort(), [['github/org/a', 'existing', 'feature/retry'], ['github/org/b', 'fresh', null]]);
+  assert.equal(starts().length, 1);
+  assert.equal((await app.inject('/dashboard')).json<DashboardResponse>().pendingReviews.length, 0);
+});
+
 test('partial workspace failure preserves the draft and retries only failed repositories on the same work', async (t) => {
   const { app, deps, starts, database } = await fixture(t);
   const { calls, records, setFailing } = repositoryFixture(deps);

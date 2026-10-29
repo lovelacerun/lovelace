@@ -37,6 +37,9 @@ workspaces, tabs or panes.
 Launch request IDs make lost replies safe to resend: a matching request joins
 or replays its operation, and an operation interrupted by a restart is reported
 uncertain instead of launching again. Exact drafts stay pending after failures.
+Quick-start accepts `reviewRequestId` from the cached review requests: the
+work item gets the pull request as its `change-request`, and the pull request's
+repository, which must be among `repoIds`, is checked out at its branch.
 Explicit `repoIds` are prepared with Coriol before launching; preparation
 failures preserve the work, exact prompt and template/repository selection.
 Retry on the same work item reuses ready worktrees and retries failed ones.

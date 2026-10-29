@@ -17,6 +17,7 @@ function dashboard(overrides: Partial<DashboardResponse> = {}): DashboardRespons
         sessionCount: 0, repositoryCount: 0, trackerIssueKeys: [], pullRequestRefs: [],
       },
     ],
+    pendingReviews: [],
     pendingJiraIssues: [
       { id: 'J-1', key: 'PROJ-100', title: 'Fix docs', url: 'https://x', status: 'open', issueType: 'Task', updatedAt: '' },
     ],

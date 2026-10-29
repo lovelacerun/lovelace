@@ -15,6 +15,8 @@ export interface ControllerDeps {
   refreshDashboard: () => void;
   /** Open the single Jira start-work overlay without navigating. */
   startJiraWork: () => void;
+  /** Start the selected review request with the review template. */
+  startReview: () => Promise<void>;
   /** Submit the current editor text as a launch request. */
   submitLaunch: (prompt: string) => Promise<void>;
   /** Focus a session's Herdr pane, or continue its ended conversation (meta id). */
@@ -109,6 +111,10 @@ export async function handleAction(state: AppState, action: Action, deps: Contro
 
     case 'jira-setup':
       deps.startJiraWork();
+      return;
+
+    case 'review-start':
+      await deps.startReview();
       return;
 
     case 'launch-retry': {
@@ -232,6 +238,7 @@ export async function submitLaunch(
     endpoint: target ? 'newSession' : 'quickStart',
     workItemId: target,
     jiraIssueId: !target && state.view === 'jira' ? state.selectedJira?.id : undefined,
+    reviewRequestId: !target && state.view === 'review' ? state.selectedReview?.id : undefined,
     prompt,
     requestId: (deps.newRequestId ?? randomUUID)(),
     repoIds: draft.repoIds ? [...draft.repoIds] : undefined,
@@ -244,8 +251,8 @@ export async function submitLaunch(
   setDraft({ pendingLaunch });
 
   try {
-    const { requestId, repoIds, promptId } = pendingLaunch;
-    const options = { signal: deps.signal, repoIds, promptId, wait: false };
+    const { requestId, repoIds, promptId, reviewRequestId } = pendingLaunch;
+    const options = { signal: deps.signal, repoIds, promptId, wait: false, reviewRequestId };
     const response = pendingLaunch.endpoint === 'newSession'
       ? await deps.client.newSession(pendingLaunch.workItemId!, pendingLaunch.prompt, pendingLaunch.agentId, pendingLaunch.toolOptions, requestId, options)
       : await deps.client.quickStart(pendingLaunch.prompt, pendingLaunch.jiraIssueId, pendingLaunch.agentId, pendingLaunch.toolOptions, requestId, options);
@@ -260,7 +267,7 @@ export async function submitLaunch(
     setNotice(null);
 
     // Durable acceptance hands ownership to the server. Free the originating
-    // Home/Jira draft so another task can start while this one provisions.
+    // Home/Jira/review draft so another task can start while this one provisions.
     if (response.operation?.status === 'pending' && ['accepted', 'preparing', 'starting'].includes(response.launch.phase ?? '')) {
       const currentText = state.drafts.get(draftKey)?.text ?? '';
       setDraft({

@@ -8,7 +8,7 @@ import { markToolLaunchDraftLaunched, saveToolLaunchDraft } from '../services/to
 import { launchSessions, openSession, SessionRequestError } from '../services/session-service.js';
 import { getWorkItemDetails, createActiveWorkItemFromMetas } from '../repositories/work-item-repository.js';
 import { getLaunchOperationResponse, LaunchRequestError, performLaunchOperation } from '../services/launch-operation-service.js';
-import { repositoryWorkspaces, UUID } from '../helpers.js';
+import { asRecord, metaSources, repositoryWorkspaces, UUID } from '../helpers.js';
 import { refreshTools as discoverTools } from '../tools/tool-loader.js';
 import type { RouteDeps } from './deps.js';
 import { attachRepositoriesToExistingWorkItem } from '../services/work-start-service.js';
@@ -29,7 +29,11 @@ export function registerDashboardRoutes(app: FastifyInstance, deps: RouteDeps) {
     if (input.repoIds?.length) {
       database.updateLaunchOperationPhase(requestId, 'preparing');
       const details = await attachRepositoriesToExistingWorkItem({ ...deps, logger: app.log }, workItemId,
-        input.repoIds.map((repoId, index) => ({ repoId, role: index === 0 ? 'primary' : 'secondary', workspaceMode: 'fresh' })));
+        input.repoIds.map((repoId, index) => {
+          // A repository with an attached pull request is checked out at its branch.
+          const review = reviewSourceFor(workItemId, repoId);
+          return { repoId, role: index === 0 ? 'primary' : 'secondary', workspaceMode: review ? 'change-request' : 'fresh', sourceExternalId: review?.externalId ?? null };
+        }));
       const failed = repositoryWorkspaces(details?.metas ?? [])
         .filter(({ payload }) => input.repoIds!.includes(payload.repoId) && payload.status !== 'ready');
       if (failed.length) throw new Error('Repository preparation failed. Retry on this work item to prepare the selected repositories again.');
@@ -42,6 +46,12 @@ export function registerDashboardRoutes(app: FastifyInstance, deps: RouteDeps) {
     if (!metas.length) return { ok: false, phase: 'failed', error: 'launch produced no sessions' };
     if (draft) markToolLaunchDraftLaunched(database, draft);
     return { ok: true, phase: 'started', error: null };
+  }
+
+  function reviewSourceFor(workItemId: string, repoId: string) {
+    const fullName = database.listRepos().find(repo => repo.id === repoId)?.fullName.toLowerCase();
+    return metaSources(database.listWorkItemMeta(workItemId)).find(source => source.sourceType === 'change-request'
+      && String(asRecord(source.payload).repoFullName ?? '').toLowerCase() === fullName);
   }
 
   function validateSelection(input: QuickStartRequest | NewSessionRequest): void {
@@ -66,10 +76,18 @@ export function registerDashboardRoutes(app: FastifyInstance, deps: RouteDeps) {
         prepare(id) {
           const issue = intent.jiraIssueId ? jira.peekAssignedIssues()?.value.find((entry) => entry.id === intent.jiraIssueId) : null;
           if (intent.jiraIssueId && !issue) throw new LaunchRequestError(400, 'jiraIssueId not found in cached Jira issues');
+          const review = intent.reviewRequestId ? github.peekReviewRequests()?.value.find((entry) => entry.id === intent.reviewRequestId) : null;
+          if (intent.reviewRequestId && !review) throw new LaunchRequestError(400, 'reviewRequestId not found in cached review requests');
           validateSelection(intent);
+          if (review && !database.listRepos().some(repo => intent.repoIds?.includes(repo.id) && repo.fullName.toLowerCase() === review.repoFullName.toLowerCase())) {
+            throw new LaunchRequestError(400, `Select ${review.repoFullName} to review its pull request`);
+          }
           const work = createActiveWorkItemFromMetas(database, {
-            title: issue ? `${issue.key}: ${issue.title}` : deriveTitleFromPrompt(intent.prompt),
-            metas: issue ? [{ metaType: 'tracker-item', provider: 'jira', externalId: issue.id, payload: issue }] : [],
+            title: issue ? `${issue.key}: ${issue.title}` : review ? `${review.repoFullName}#${review.number}: ${review.title}` : deriveTitleFromPrompt(intent.prompt),
+            metas: [
+              ...issue ? [{ metaType: 'tracker-item' as const, provider: 'jira', externalId: issue.id, payload: issue }] : [],
+              ...review ? [{ metaType: 'change-request' as const, provider: 'github', externalId: review.id, payload: review }] : [],
+            ],
           });
           const draft = saveToolLaunchDraft(database, work.id, launchInput, id);
           return { workItemId: work.id, draftMetaId: draft.id };
@@ -153,6 +171,10 @@ function parseQuickStartRequest(input: unknown): ParsedRequest<QuickStartRequest
   if (jiraIssueId === undefined && record.jiraIssueId !== undefined && record.jiraIssueId !== null) {
     return { ok: false, error: 'jiraIssueId must be a string' };
   }
+  const reviewRequestId = normalizeOptionalString(record.reviewRequestId);
+  if (reviewRequestId === undefined && record.reviewRequestId !== undefined && record.reviewRequestId !== null) {
+    return { ok: false, error: 'reviewRequestId must be a string' };
+  }
   const agentId = parseAgentIdField(record.agentId);
   if (agentId === 'invalid') return { ok: false, error: 'agentId must be pi, claude, or codex' };
   if (record.options !== undefined && !isToolLaunchOptionsById(record.options)) {
@@ -161,7 +183,7 @@ function parseQuickStartRequest(input: unknown): ParsedRequest<QuickStartRequest
   if (record.wait !== undefined && typeof record.wait !== 'boolean') return { ok: false, error: 'wait must be a boolean' };
   const selection = parseSelection(record);
   if (!selection.ok) return selection;
-  return { ok: true, value: { ...selection.value, wait: record.wait as boolean | undefined, requestId: record.requestId as string | undefined, prompt, jiraIssueId: jiraIssueId ?? null, agentId: agentId ?? undefined, options: record.options as QuickStartRequest['options'] } };
+  return { ok: true, value: { ...selection.value, wait: record.wait as boolean | undefined, requestId: record.requestId as string | undefined, prompt, jiraIssueId: jiraIssueId ?? null, reviewRequestId: reviewRequestId ?? null, agentId: agentId ?? undefined, options: record.options as QuickStartRequest['options'] } };
 }
 
 function parseNewSessionRequest(input: unknown): ParsedRequest<NewSessionRequest> | ParseError {

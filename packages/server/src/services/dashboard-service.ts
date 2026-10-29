@@ -4,6 +4,7 @@ import {
   type DashboardFreshness,
   type DashboardJiraIssue,
   type DashboardResponse,
+  type DashboardReview,
   type DashboardRecent,
   type JiraIssueSummary,
   type PullRequestMetaPayload,
@@ -16,6 +17,7 @@ import safeParse from '@nkzw/core/safeParse.js';
 import { latestLaunchPhase } from '../repositories/launch-operation-repository.js';
 import type { DatabaseState, LaunchOperation, WorkActivityRow } from '../database.js';
 import type { CachedGitHub, CachedJira } from '../cached-providers.js';
+import { pendingReviewRequests } from './review-request-service.js';
 
 interface DashboardDeps {
   database: DatabaseState;
@@ -39,12 +41,14 @@ export function buildDashboard(deps: DashboardDeps): DashboardResponse {
     .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 
   const pendingJiraIssues = buildPendingJiraIssues(deps.jira, deps.database, workItems, metasByWorkItemId);
+  const pendingReviews = buildPendingReviews(deps.database, deps.github);
   const recent = buildRecent(deps.database, workItems, metasByWorkItemId, launchesByWorkItemId, now);
   const freshness = buildFreshness(deps, deps.syncIntervalMs, now);
 
   return {
     activeWorkItems,
     pendingJiraIssues,
+    pendingReviews,
     recent,
     settings: deps.settings,
     freshness,
@@ -89,6 +93,22 @@ function buildPendingJiraIssues(
       issueType: issue.issueType,
       updatedAt: issue.updatedAt,
     }));
+}
+
+function buildPendingReviews(database: DatabaseState, github: DashboardDeps['github']): DashboardReview[] {
+  const repositories = database.listRepos();
+  return pendingReviewRequests(database, github).map((review): DashboardReview => ({
+    id: review.id,
+    number: review.number,
+    title: review.title,
+    url: review.url,
+    repoFullName: review.repoFullName,
+    repoId: repositories.find((repo) => repo.fullName.toLowerCase() === review.repoFullName.toLowerCase())?.id ?? null,
+    authorLogin: review.authorLogin,
+    headRefName: review.headRefName ?? null,
+    baseRefName: review.baseRefName ?? null,
+    updatedAt: review.updatedAt,
+  }));
 }
 
 function buildRecent(

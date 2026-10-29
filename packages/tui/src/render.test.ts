@@ -16,6 +16,7 @@ function makeDashboard(overrides: Partial<DashboardResponse> = {}): DashboardRes
         sessionCount: 1, repositoryCount: 1, trackerIssueKeys: [], pullRequestRefs: [],
       },
     ],
+    pendingReviews: [],
     pendingJiraIssues: [
       { id: 'J-1', key: 'PROJ-九', title: 'テスト Issue', url: 'https://x', status: 'open', issueType: 'Task', updatedAt: '' },
     ],

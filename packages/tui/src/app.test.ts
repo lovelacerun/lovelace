@@ -4,7 +4,7 @@ import { getOsc8LinkAtColumn, stripTerminalSequences, visibleWidth } from '@eare
 import type { Component, TuiAltScreen, TuiMouseEvent } from '@earendil-works/pi-tui';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import type { TestContext } from 'node:test';
-import { ApiError, LovelaceClient, type LaunchRequestOptions } from '@lovelace/client';
+import { ApiError, LovelaceClient, type QuickStartOptions } from '@lovelace/client';
 import {
   CODING_HARNESSES, type AvailableHarness, type DashboardResponse, type QuickStartResponse, type SessionOpenResponse,
   type WorkItemDetails, type WorkItemState,
@@ -67,7 +67,7 @@ class FakeTui {
 // -- FakeClient -----------------------------------------------------------
 
 interface OpenCall { workItemId: string; metaId: string }
-interface LaunchCall { endpoint: 'quickStart' | 'newSession'; workItemId?: string; jiraIssueId?: string; prompt: string; requestId?: string; repoIds?: string[]; promptId?: string }
+interface LaunchCall { endpoint: 'quickStart' | 'newSession'; workItemId?: string; jiraIssueId?: string; reviewRequestId?: string; prompt: string; requestId?: string; repoIds?: string[]; promptId?: string }
 
 class FakeClient {
   readonly serverUrl = 'http://127.0.0.1:4747';
@@ -92,8 +92,8 @@ class FakeClient {
     return next;
   }
   async setWorkItemState() { return {} as never; }
-  async quickStart(prompt: string, jiraIssueId?: string, _agentId?: unknown, _overrides?: unknown, requestId?: string, options?: LaunchRequestOptions): Promise<QuickStartResponse> {
-    this.launchCalls.push({ endpoint: 'quickStart', jiraIssueId, prompt, requestId, ...(options?.repoIds ? { repoIds: options.repoIds } : {}), ...(options?.promptId ? { promptId: options.promptId } : {}) });
+  async quickStart(prompt: string, jiraIssueId?: string, _agentId?: unknown, _overrides?: unknown, requestId?: string, options?: QuickStartOptions): Promise<QuickStartResponse> {
+    this.launchCalls.push({ endpoint: 'quickStart', jiraIssueId, prompt, requestId, ...(options?.reviewRequestId ? { reviewRequestId: options.reviewRequestId } : {}), ...(options?.repoIds ? { repoIds: options.repoIds } : {}), ...(options?.promptId ? { promptId: options.promptId } : {}) });
     const next = this.launchQueue.shift();
     if (!next) throw new Error('No queued launch response');
     if (next instanceof Error) throw next;
@@ -128,7 +128,7 @@ function fixtureTools(): AvailableHarness[] {
 function emptyDashboard(): DashboardResponse {
   return {
     activeWorkItems: [],
-    pendingJiraIssues: [],
+    pendingJiraIssues: [], pendingReviews: [],
     recent: { since: '', workItems: [], sessionCount: 0, completedCount: 0, activityCount: 0 },
     settings: { defaultAgent: 'pi', sidebarSide: 'right', repositoryTopics: [] },
     freshness: { jiraFetchedAt: null, githubFetchedAt: null, jiraStale: false, githubStale: false },
@@ -164,6 +164,37 @@ function withSession(id: string, state: WorkItemState = 'active'): WorkItemDetai
 const openSession = (root: AppRoot, metaId = 'm') => (root as unknown as { openSession: (id: string) => Promise<void> }).openSession(metaId);
 
 // -- Tests ----------------------------------------------------------------
+
+describe('AppRoot review list', () => {
+  it('lists reviews in the sidebar and starts one with the review template in its repository', async (t) => {
+    const { root, tui, client } = makeRoot();
+    const rendered: unknown[] = [];
+    client.renderPrompt = async input => { rendered.push(input); return { promptId: 'review', content: 'Review org/a#7\n' }; };
+    const review = {
+      id: 'PR_1', number: 7, title: 'Retry uploads', url: '', repoFullName: 'org/a', repoId: 'github:a',
+      authorLogin: 'human', headRefName: 'feature/retry', baseRefName: 'main', updatedAt: '',
+    };
+    asFake(client).dashboardResponse.pendingReviews = [review];
+    const done = root.start();
+    t.after(async () => { root.quit(); await done; });
+    root.state.applyDashboardResponse(asFake(client).dashboardResponse);
+    assert.match(stripTerminalSequences(root.render(120).join('\n')), /REVIEWS  1[\s\S]*a#7 Retry uploads/);
+    assert.match(stripTerminalSequences(root.render(120).join('\n')), /Reviews  1[\s\S]*Retry uploads/, 'Home lists reviews too');
+    root.state.navigate({ kind: 'review', id: review.id });
+    assert.match(stripTerminalSequences(root.render(120).join('\n')), /Start review/);
+    asFake(client).launchQueue.push({ details: detailsOf('created'), launch: { ok: true, error: null } });
+    tui.feedInput('\r');
+    await waitFor(() => asFake(client).launchCalls.length === 1 && !root.state.mutationInFlight);
+    assert.deepEqual(rendered, [{ promptId: 'review', title: 'org/a#7: Retry uploads',
+      sources: [{ sourceType: 'change-request', provider: 'github', externalId: 'PR_1', payload: review }] }]);
+    const launch = asFake(client).launchCalls[0]!;
+    assert.equal(launch.reviewRequestId, 'PR_1');
+    assert.deepEqual(launch.repoIds, ['github:a']);
+    assert.equal(launch.promptId, 'review');
+    assert.equal(launch.prompt, 'Review org/a#7\n');
+    assert.equal(root.state.view, 'work-item');
+  });
+});
 
 describe('AppRoot Jira start-work overlay', () => {
   it('keeps Jira details underneath one modal with repositories and an editable prompt together', async (t) => {

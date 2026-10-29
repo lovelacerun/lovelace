@@ -6,7 +6,7 @@ import { padRight, safeText, truncate } from '@lovelace/tui-components';
 import { clickable } from '../clickable.js';
 
 export type Action = { kind: 'navigate'; entry: NavigationEntry } | { kind: 'session'; metaId: string } |
-  { kind: 'jira-setup' } | { kind: 'launch-retry'; requestId?: string } | { kind: 'open-url'; url: string } |
+  { kind: 'jira-setup' } | { kind: 'review-start' } | { kind: 'launch-retry'; requestId?: string } | { kind: 'open-url'; url: string } |
   { kind: 'edit' } | { kind: 'state'; state: WorkItemState };
 
 export interface Document { lines: string[]; actions: Action[]; selectedRow: number }

@@ -8,6 +8,7 @@ import { keyedTitle, selectableRow } from './common.js';
 const SECTIONS = [
   { kind: 'work', title: 'Active work', empty: 'No active work' },
   { kind: 'jira', title: 'Pending Jira', empty: 'No pending issues' },
+  { kind: 'review', title: 'Reviews', empty: 'No pending reviews' },
 ] as const;
 
 /** Home, then one section per entry kind, rendered from `state.sidebarEntries`. */

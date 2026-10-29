@@ -23,6 +23,10 @@ export interface LaunchRequestOptions extends RequestOptions, LaunchSelection {
   /** false requests immediate acceptance; preparation/agent startup stay on the server. */
   wait?: boolean;
 }
+export interface QuickStartOptions extends LaunchRequestOptions {
+  /** Review request to attach; its repository must be among `repoIds`. */
+  reviewRequestId?: string;
+}
 export type NewSessionOptions = NewSessionRequest['options'];
 /** Herdr agent startup may take up to 30 seconds before a launch reply. */
 const LAUNCH_TIMEOUT_MS = 60_000;
@@ -136,9 +140,9 @@ export class LovelaceClient {
   setWorkItemState(id: string, state: WorkItemState, options?: RequestOptions): Promise<WorkItem> {
     return this.request(`/work-items/${encodeURIComponent(id)}/state`, { method: 'POST', body: JSON.stringify({ state }) }, options);
   }
-  quickStart(prompt: string, jiraIssueId?: string, agentId?: CodingHarnessId, overrides?: NewSessionOptions, requestId?: string, options?: LaunchRequestOptions): Promise<QuickStartResponse> {
+  quickStart(prompt: string, jiraIssueId?: string, agentId?: CodingHarnessId, overrides?: NewSessionOptions, requestId?: string, options?: QuickStartOptions): Promise<QuickStartResponse> {
     return this.request('/work-items/quick-start', {
-      method: 'POST', body: JSON.stringify({ prompt, jiraIssueId, agentId, options: overrides, requestId, repoIds: options?.repoIds, promptId: options?.promptId, wait: options?.wait }),
+      method: 'POST', body: JSON.stringify({ prompt, jiraIssueId, reviewRequestId: options?.reviewRequestId, agentId, options: overrides, requestId, repoIds: options?.repoIds, promptId: options?.promptId, wait: options?.wait }),
     }, launchOptions(options));
   }
   /** By default waits for Herdr startup; wait:false returns durable acceptance instead. */

@@ -49,6 +49,20 @@ export interface DashboardJiraIssue {
   updatedAt: string;
 }
 
+/** A pull request awaiting the user's review, with its catalog repository when known. */
+export interface DashboardReview {
+  id: string;
+  number: number;
+  title: string;
+  url: string;
+  repoFullName: string;
+  repoId: string | null;
+  authorLogin: string | null;
+  headRefName: string | null;
+  baseRefName: string | null;
+  updatedAt: string;
+}
+
 /** Recorded activity from the start of yesterday (server-local) until now. */
 export interface DashboardRecent {
   /** ISO start of yesterday. */
@@ -63,6 +77,7 @@ export interface DashboardRecent {
 export interface DashboardResponse {
   activeWorkItems: WorkItemSummary[];
   pendingJiraIssues: DashboardJiraIssue[];
+  pendingReviews: DashboardReview[];
   recent: DashboardRecent;
   settings: DashboardSettings;
   freshness: DashboardFreshness;
@@ -94,6 +109,8 @@ export interface QuickStartRequest extends LaunchSelection {
   requestId?: string;
   prompt: string;
   jiraIssueId?: string | null;
+  /** Review request to attach; its repository must be among `repoIds` and is checked out at the pull request's branch. */
+  reviewRequestId?: string | null;
   agentId?: CodingHarnessId;
   options?: ToolLaunchOptionsById;
 }

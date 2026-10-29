@@ -18,6 +18,9 @@ context so you don't have to.
   Assigned open issues show up as pending work.
 - **Pull request**: a change attached to a work item (currently GitHub), with
   review, build and merge status.
+- **Review request**: an open pull request awaiting your review (bots
+  excluded). Starting a review checks out its branch in a worktree and starts
+  an agent with the `review` template.
 - **Worktree**: a git worktree of a repository, prepared for one work item
   with dependencies installed. Lovelace keeps a seed clone per repository and
   reuses its `node_modules` when the lockfile matches.

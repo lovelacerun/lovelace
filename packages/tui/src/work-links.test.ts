@@ -7,7 +7,7 @@ import type { DashboardResponse, WorkItemDetails } from '@lovelace/core';
 import { AppRoot } from './app.js';
 
 const dashboard: DashboardResponse = {
-  activeWorkItems: [], pendingJiraIssues: [],
+  activeWorkItems: [], pendingJiraIssues: [], pendingReviews: [],
   recent: { since: '', workItems: [], sessionCount: 0, completedCount: 0, activityCount: 0 },
   settings: { defaultAgent: 'pi', sidebarSide: 'right', repositoryTopics: [] },
   freshness: { jiraFetchedAt: null, githubFetchedAt: null, jiraStale: false, githubStale: false },

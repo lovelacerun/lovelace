@@ -1,10 +1,10 @@
 import type {
-  AvailableHarness, CodingHarnessId, DashboardJiraIssue, ToolLaunchOptions, DashboardResponse, JiraIssueSummary, LaunchSelection, PromptTemplate, RepoRecord,
+  AvailableHarness, CodingHarnessId, DashboardJiraIssue, DashboardReview, ToolLaunchOptions, DashboardResponse, JiraIssueSummary, LaunchSelection, PromptTemplate, RepoRecord,
   ToolLaunchOptionsById,
   SidebarSide, WorkItemDetails, WorkItemState, WorkItemSummary,
 } from '@lovelace/core';
 
-type AppView = 'dashboard' | 'work-item' | 'jira';
+type AppView = 'dashboard' | 'work-item' | 'jira' | 'review';
 /** Home's agent, thinking and model fields below the quick-start editor, in Tab order. */
 export const LAUNCH_FOCUS = ['launch-agent', 'launch-thinking', 'launch-model'] as const;
 export type LaunchFocus = (typeof LAUNCH_FOCUS)[number];
@@ -14,7 +14,7 @@ export function isLaunchFocus(focus: FocusTarget): focus is LaunchFocus {
   return (LAUNCH_FOCUS as readonly string[]).includes(focus);
 }
 
-export interface NavigationEntry { kind: 'home' | 'work' | 'jira'; id: string }
+export interface NavigationEntry { kind: 'home' | 'work' | 'jira' | 'review'; id: string }
 type SidebarEntry = NavigationEntry & { label: string };
 
 /**
@@ -28,6 +28,7 @@ export interface PendingLaunch extends LaunchSelection {
   endpoint: 'quickStart' | 'newSession';
   workItemId?: string;
   jiraIssueId?: string;
+  reviewRequestId?: string;
   prompt: string;
   requestId: string;
   agentId?: CodingHarnessId;
@@ -78,6 +79,7 @@ export class AppState {
   selectedWorkItemData: WorkItemDetails | null = null;
   selectedJira: DashboardJiraIssue | null = null;
   jiraDetails: JiraIssueSummary | null = null;
+  selectedReview: DashboardReview | null = null;
 
   repositories: RepoRecord[] | null = null;
   promptTemplates: PromptTemplate[] | null = null;
@@ -133,18 +135,24 @@ export class AppState {
     return this.dashboardData?.pendingJiraIssues ?? [];
   }
 
-  /** Home, then active work, then pending Jira. Non-active local work is deliberately hidden. */
+  get pendingReviews(): DashboardReview[] {
+    return this.dashboardData?.pendingReviews ?? [];
+  }
+
+  /** Home, then active work, pending Jira and reviews. Non-active local work is deliberately hidden. */
   get sidebarEntries(): SidebarEntry[] {
     return [
       { kind: 'home', id: 'home', label: 'Home' },
       ...this.activeWorkItems.map(item => ({ kind: 'work' as const, id: item.id, label: item.title })),
       ...this.pendingJiraIssues.map(issue => ({ kind: 'jira' as const, id: issue.id, label: `${issue.key} ${issue.title}` })),
+      ...this.pendingReviews.map(review => ({ kind: 'review' as const, id: review.id, label: `${review.repoFullName.split('/').pop()}#${review.number} ${review.title}` })),
     ];
   }
 
   get draftKey(): string {
     if (this.view === 'work-item') return `work:${this.selectedWorkItemId ?? ''}`;
     if (this.view === 'jira') return `jira:${this.selectedJira?.id ?? ''}`;
+    if (this.view === 'review') return `review:${this.selectedReview?.id ?? ''}`;
     return 'home';
   }
 
@@ -270,6 +278,7 @@ export class AppState {
   // Navigation ---------------------------------------------------------------
 
   navigate(entry: NavigationEntry): void {
+    this.selectedReview = null;
     if (entry.kind === 'home') {
       this.view = 'dashboard';
       this.selectedWorkItemId = null;
@@ -282,6 +291,13 @@ export class AppState {
       this.selectedWorkItemData = null;
       this.selectedJira = null;
       this.jiraDetails = null;
+    } else if (entry.kind === 'review') {
+      this.view = 'review';
+      this.selectedReview = this.pendingReviews.find((review) => review.id === entry.id) ?? null;
+      this.selectedJira = null;
+      this.jiraDetails = null;
+      this.selectedWorkItemId = null;
+      this.selectedWorkItemData = null;
     } else {
       this.view = 'jira';
       this.selectedJira = this.pendingJiraIssues.find((issue) => issue.id === entry.id) ?? null;

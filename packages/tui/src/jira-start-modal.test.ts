@@ -34,7 +34,7 @@ function api(overrides: Partial<LovelaceClient> = {}): LovelaceClient {
 function fixture(client = api(), text = '', repositoryTopics = ['infra', 'examplecom']) {
   const state = new AppState({ onInvalidate() {} });
   state.applyDashboardResponse({
-    activeWorkItems: [], pendingJiraIssues: [issue],
+    activeWorkItems: [], pendingJiraIssues: [issue], pendingReviews: [],
     recent: { since: '', workItems: [], sessionCount: 0, completedCount: 0, activityCount: 0 },
     settings: { defaultAgent: 'pi', sidebarSide: 'right', repositoryTopics },
     freshness: { jiraFetchedAt: null, githubFetchedAt: null, jiraStale: false, githubStale: false },

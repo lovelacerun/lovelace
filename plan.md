@@ -6,14 +6,9 @@ In order:
 
 1. ~~Versioned schema migrations that upgrade existing databases on startup
    (`user_version`, backup before migrating, refuse newer databases).~~ Done.
-2. Removals:
-   - Pull request release checks. Revisit as a plugin.
-   - `jira-software-client` (unused).
-   - Review request grouping and link inference. Keep the review request list
-     with bots filtered out, and starting review work from it: the pull
-     request's branch checked out and installed, an agent reviewing in the
-     background. Add a review list to the TUI. The review prompt asks the
-     agent to attach the tracker issues it finds.
+2. ~~Removals: pull request release checks, `jira-software-client`, review
+   request grouping and link inference; a review list in the TUI that starts
+   review work in the pull request's branch.~~ Done.
 3. Typed attachments: a discriminated union instead of `metaType` +
    `payloadJson`, parsed once at the database boundary and sent typed over
    HTTP; real tables for sessions and worktrees; unique indexes.

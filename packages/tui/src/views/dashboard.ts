@@ -1,4 +1,4 @@
-import type { DashboardJiraIssue, WorkItemSummary } from '@lovelace/core';
+import type { DashboardJiraIssue, DashboardReview, WorkItemSummary } from '@lovelace/core';
 import type { AppState } from '../state.js';
 import { muted, faint, heading, icons, reset } from '../theme.js';
 import { columnWidths, columns, safeText } from '@lovelace/tui-components';
@@ -18,8 +18,11 @@ const workDetail = (item: WorkItemSummary): string => muted + meta([
 const jiraDetail = (issue: DashboardJiraIssue): string =>
   muted + meta([issue.status && safeText(issue.status), issue.issueType && safeText(issue.issueType)]) + reset;
 
+const reviewDetail = (review: DashboardReview): string =>
+  muted + meta([safeText(`${review.repoFullName}#${review.number}`), review.authorLogin && safeText(review.authorLogin)]) + reset;
+
 /**
- * Home: recorded work from yesterday and today beside pending Jira, two columns when
+ * Home: recorded work from yesterday and today beside pending Jira and reviews, two columns when
  * wide. Without the sidebar, active work leads so every item stays reachable.
  */
 export function renderDashboard(state: AppState, width: number): Document {
@@ -60,7 +63,7 @@ export function renderDashboard(state: AppState, width: number): Document {
     b.line();
   }
 
-  // Columns register left first, so ↑/↓ walks recent work, then Jira.
+  // Columns register left first, so ↑/↓ walks recent work, then Jira and reviews.
   const split = width >= SPLIT_MIN_WIDTH;
   const cell = split ? columnWidths(width)[0] : width;
   const offset = b.lines.length;
@@ -79,6 +82,15 @@ export function renderDashboard(state: AppState, width: number): Document {
     entry: { kind: 'navigate', entry: { kind: 'jira', id: issue.id } },
   }));
   if (loaded && !state.pendingJiraIssues.length) right.push(muted + '  Nothing waiting.' + reset);
+  // Reviews take room only when one is waiting; small screens keep their layout.
+  if (state.pendingReviews.length) {
+    right.push('');
+    section(right, 'Reviews', state.pendingReviews.length, 'Requested from you', icons.pr);
+    entries(right, state.pendingReviews, cell, split ? offset : offset + left.length + 1, review => ({
+      rows: [safeText(review.title), reviewDetail(review)],
+      entry: { kind: 'navigate', entry: { kind: 'review', id: review.id } },
+    }));
+  }
 
   for (const line of split ? columns(left, right, width) : [...left, '', ...right]) b.line(line);
   if (!compact) { b.line(); b.line(); }

@@ -38,7 +38,7 @@ class FakeClient extends LovelaceClient {
         trackerIssueKeys: [], pullRequestRefs: [], ...(operation.launch.phase === 'started' ? {} : { launchPhase: operation.launch.phase }) };
     });
     return {
-      activeWorkItems, pendingJiraIssues: issues.filter(issue => !this.linkedIssues.has(issue.id)),
+      activeWorkItems, pendingJiraIssues: issues.filter(issue => !this.linkedIssues.has(issue.id)), pendingReviews: [],
       recent: { since: '', workItems: activeWorkItems, sessionCount: 0, completedCount: 0, activityCount: 0 },
       settings: { defaultAgent: 'pi', sidebarSide: 'right', repositoryTopics: [] },
       freshness: { jiraFetchedAt: null, githubFetchedAt: null, jiraStale: false, githubStale: false },

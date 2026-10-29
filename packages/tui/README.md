@@ -77,7 +77,7 @@ worktrees. `Ctrl+S` starts; failures stay in the dialog.
 | `q` / Ctrl+C | Quit dashboard / quit anywhere |
 | `r` | Refresh dashboard and selected details |
 | `Tab` / `Shift+Tab` | Next/previous detail item, then sidebar; Home cycles content/sidebar/editor/agent/thinking/model |
-| `n` | Focus Home prompt, open Jira start-work overlay, or open a work item's new-session overlay |
+| `n` | Focus Home prompt, open Jira start-work overlay, start the selected review, or open a work item's new-session overlay |
 | `↑/↓` / `k/j` | Move selection outside editor |
 | `Enter` | Open selection (Jira/PR cards open the default browser), or launch from editor |
 | `Shift+Enter` / Ctrl+J | Insert newline |
@@ -125,6 +125,15 @@ of adding hit tests:
 
 Generic pi-tui components (split panes, cards, link cards and text helpers) live in [`@lovelace/tui-components`](../tui-components/README.md);
 this package keeps the palette and application glue.
+
+## Starting a review
+
+Pending review requests appear in the sidebar under **Reviews**, and on Home
+when any are waiting. A review page shows the pull request and **Start review**
+(`Enter` or `n`): the TUI renders the `review` template and starts the agent
+chosen on Home in the pull request's repository, checked out at its branch.
+There is no dialog; the launch is the same retryable quick-start as Jira work.
+Pull requests whose repository is not in the catalog cannot be started.
 
 ## Starting Jira work
 
