@@ -36,7 +36,7 @@ async function fixture(t: TestContext, fail = false, providers = fixtureProvider
     refreshTools: () => {},
     listModels: async tool => [{ id: `${tool.id}-model` }],
     workspaceManager: {} as RouteDeps['workspaceManager'],
-    github: providers.github, releaseChecker: {} as RouteDeps['releaseChecker'], jira: providers.jira,
+    github: providers.github, jira: providers.jira,
   };
   const app = buildServer(deps);
   t.after(async () => { await app.close(); database.db.close(); await rm(root, { recursive: true, force: true }); });

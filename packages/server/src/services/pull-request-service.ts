@@ -4,7 +4,6 @@ import type { DatabaseState } from '../database.js';
 import type { GitHubPullRequestStatus } from '@lovelace/github-client';
 import type { CachedGitHub } from '../cached-providers.js';
 import { addWorkItemMetas } from '../repositories/work-item-repository.js';
-import type { PullRequestReleaseChecker } from './pull-request-release-service.js';
 
 interface PullRequestRef {
   repoFullName: string;
@@ -38,20 +37,17 @@ export async function attachPullRequestToWorkItem(
   github: CachedGitHub,
   workItemId: string,
   ref: PullRequestRef,
-  releaseChecker: PullRequestReleaseChecker,
 ): Promise<WorkItemMeta | null> {
   if (!database.getWorkItem(workItemId)) return null;
   const status = await github.fetchPullRequestStatus(ref.repoFullName, ref.number);
   if (!status) throw new Error(`GitHub pull request not found: ${externalIdForPullRequest(ref)}`);
-  const releaseStatuses = await releaseChecker.check(status);
-  return upsertPullRequestMeta(database, workItemId, status, releaseStatuses);
+  return upsertPullRequestMeta(database, workItemId, status);
 }
 
 export async function refreshPullRequestsForWorkItem(
   database: DatabaseState,
   github: CachedGitHub,
   workItemId: string,
-  releaseChecker: PullRequestReleaseChecker,
 ): Promise<WorkItemMeta[] | null> {
   if (!database.getWorkItem(workItemId)) return null;
   const metas = database.listWorkItemMeta(workItemId).filter((meta) => meta.metaType === 'pull-request' && meta.provider === 'github');
@@ -61,8 +57,7 @@ export async function refreshPullRequestsForWorkItem(
     if (!payload) continue;
     const status = await github.refreshPullRequestStatus(payload.repoFullName, payload.number);
     if (!status) continue;
-    const releaseStatuses = await releaseChecker.check(status);
-    updated.push(upsertPullRequestMeta(database, workItemId, status, releaseStatuses, meta) ?? meta);
+    updated.push(upsertPullRequestMeta(database, workItemId, status, meta));
   }
   return updated;
 }
@@ -77,7 +72,6 @@ export function detachPullRequestFromWorkItem(database: DatabaseState, workItemI
 export async function refreshOpenPullRequests(
   database: DatabaseState,
   github: CachedGitHub,
-  releaseChecker: PullRequestReleaseChecker,
   logger: { warn: (obj: unknown, msg: string) => void },
 ) {
   const result = { attempted: 0, updated: 0, failed: 0 };
@@ -85,13 +79,12 @@ export async function refreshOpenPullRequests(
     const metas = database.listWorkItemMeta(workItem.id).filter((meta) => meta.metaType === 'pull-request' && meta.provider === 'github');
     for (const meta of metas) {
       const payload = parsePayload(meta);
-      if (!payload || payload.status === 'closed' || releaseTrackingComplete(payload, releaseChecker)) continue;
+      if (!payload || payload.status === 'closed' || payload.status === 'merged') continue;
       result.attempted += 1;
       try {
         const status = await github.refreshPullRequestStatus(payload.repoFullName, payload.number);
         if (status) {
-          const releaseStatuses = await releaseChecker.check(status);
-          upsertPullRequestMeta(database, workItem.id, status, releaseStatuses, meta);
+          upsertPullRequestMeta(database, workItem.id, status, meta);
           result.updated += 1;
         }
       } catch (error) {
@@ -107,7 +100,6 @@ function upsertPullRequestMeta(
   database: DatabaseState,
   workItemId: string,
   status: GitHubPullRequestStatus,
-  releaseStatuses: PullRequestMetaPayload['releaseStatuses'],
   existing?: WorkItemMeta,
 ): WorkItemMeta {
   const now = new Date().toISOString();
@@ -116,7 +108,6 @@ function upsertPullRequestMeta(
   const previousPayload = current ? parsePayload(current) : null;
   const payload: PullRequestMetaPayload = {
     ...status,
-    releaseStatuses,
     attachedAt: previousPayload?.attachedAt ?? now,
     lastSyncedAt: now,
   };
@@ -126,11 +117,6 @@ function upsertPullRequestMeta(
     return updated ?? current;
   }
   return addWorkItemMetas(database, workItemId, [{ metaType: 'pull-request', provider: 'github', externalId, payload }])[0]!;
-}
-
-function releaseTrackingComplete(payload: PullRequestMetaPayload, checker: PullRequestReleaseChecker): boolean {
-  return payload.status === 'merged'
-    && checker.isComplete(payload.repoFullName, payload.releaseStatuses);
 }
 
 function externalIdForPullRequest(ref: PullRequestRef): string {

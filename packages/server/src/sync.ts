@@ -1,7 +1,6 @@
 import type { CachedGitHub, CachedJira } from './cached-providers.js';
 import type { DatabaseState } from './database.js';
 import { describeActivityError, emitActivity } from './services/activity-bus.js';
-import type { PullRequestReleaseChecker } from './services/pull-request-release-service.js';
 import { refreshOpenPullRequests } from './services/pull-request-service.js';
 
 type SyncLogger = Pick<Console, 'info' | 'error' | 'warn'>;
@@ -44,10 +43,9 @@ async function runSync(logger: SyncLogger, job: SyncJob): Promise<void> {
 export async function refreshGitHubReviews(deps: {
   github: CachedGitHub;
   database: DatabaseState;
-  releaseChecker: PullRequestReleaseChecker;
   logger: SyncLogger;
 }) {
-  const { github, database, releaseChecker, logger } = deps;
+  const { github, database, logger } = deps;
   await runSync(logger, {
     type: 'sync.github.reviews',
     provider: 'GitHub',
@@ -58,11 +56,11 @@ export async function refreshGitHubReviews(deps: {
     data: {
       provider: 'GitHub',
       resource: 'review requests and tracked pull requests',
-      filters: ['open pull requests', 'review requested from current user', 'attached PRs awaiting final release'],
+      filters: ['open pull requests', 'review requested from current user', 'attached open pull requests'],
     },
     async run() {
       const reviews = await github.refreshReviewRequests();
-      const trackedPullRequests = await refreshOpenPullRequests(database, github, releaseChecker, logger);
+      const trackedPullRequests = await refreshOpenPullRequests(database, github, logger);
       const partial = trackedPullRequests.failed > 0;
       return {
         partial,

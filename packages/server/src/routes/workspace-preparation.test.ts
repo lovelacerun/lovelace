@@ -45,7 +45,7 @@ async function fixture(t: TestContext) {
   } as unknown as RouteDeps['workspaceManager'];
   const app = buildServer({
     config, database, tools: [], listModels: async () => [], cache: providers.cache, github: providers.github, jira: providers.jira,
-    releaseChecker: {} as RouteDeps['releaseChecker'], workspaceManager, herdr,
+    workspaceManager, herdr,
   });
   const url = `/work-items/${work.id}/repositories`;
   const submit = (repoIds: string[], wait = false) => app.inject({

@@ -4,7 +4,6 @@ import type { LovelaceConfig } from '@lovelace/core';
 import type { CachedGitHub, CachedJira, ModelLister } from '../cached-providers.js';
 import type { DatabaseState } from '../database.js';
 import type { HerdrClient } from '../herdr/herdr-client.js';
-import type { PullRequestReleaseChecker } from '../services/pull-request-release-service.js';
 import type { LoadedTool } from '../tools/tool-loader.js';
 
 export interface RouteDeps {
@@ -20,6 +19,5 @@ export interface RouteDeps {
   /** Exposed for diagnostics only; services use the cached provider accessors. */
   cache: CacheStore;
   github: CachedGitHub;
-  releaseChecker: PullRequestReleaseChecker;
   jira: CachedJira;
 }

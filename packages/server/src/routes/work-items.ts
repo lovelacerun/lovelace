@@ -21,7 +21,7 @@ import type { RouteDeps } from './deps.js';
 import { isNonEmptyString } from '../helpers.js';
 
 export function registerWorkItemRoutes(app: FastifyInstance, deps: RouteDeps) {
-  const { database, github, releaseChecker, jira, workspaceManager, herdr } = deps;
+  const { database, github, jira, workspaceManager, herdr } = deps;
   const workStartDeps = { database, github, logger: app.log, workspaceManager };
 
   /** Runs a work-item change and relabels its Herdr workspace in the background when the title changed. */
@@ -104,7 +104,7 @@ export function registerWorkItemRoutes(app: FastifyInstance, deps: RouteDeps) {
       return { ok: false, error: 'body must include a GitHub pull request url or repoFullName and number' };
     }
     try {
-      const meta = await attachPullRequestToWorkItem(database, github, params.id, ref, releaseChecker);
+      const meta = await attachPullRequestToWorkItem(database, github, params.id, ref);
       if (!meta) {
         reply.code(404);
         return { ok: false, error: 'work item not found' };
@@ -130,7 +130,7 @@ export function registerWorkItemRoutes(app: FastifyInstance, deps: RouteDeps) {
   app.post('/work-items/:id/pull-requests/refresh', async (request, reply) => {
     const params = request.params as { id: string };
     try {
-      const metas = await refreshPullRequestsForWorkItem(database, github, params.id, releaseChecker);
+      const metas = await refreshPullRequestsForWorkItem(database, github, params.id);
       if (!metas) {
         reply.code(404);
         return { ok: false, error: 'work item not found' };

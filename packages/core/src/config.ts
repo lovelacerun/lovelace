@@ -16,7 +16,6 @@ interface ConfigFileShape {
   defaultAgent?: string;
   herdr?: LovelaceConfig['herdr'];
   tui?: { sidebarSide?: string; icons?: string; theme?: string; colors?: unknown };
-  pullRequestReleases?: LovelaceConfig['pullRequestReleases'];
   github?: LovelaceConfig['github'];
   jira?: LovelaceConfig['jira'];
 }
@@ -47,7 +46,6 @@ export function loadConfig(): LovelaceConfig {
       theme: parseThemeMode(process.env.LOVELACE_TUI_THEME) ?? parseThemeMode(fileConfig.tui?.theme) ?? 'dark',
       colors: parseTuiColors(fileConfig.tui?.colors),
     },
-    pullRequestReleases: fileConfig.pullRequestReleases,
     github: {
       token: process.env.GITHUB_TOKEN ?? fileConfig.github?.token,
       org: process.env.GITHUB_ORG ?? fileConfig.github?.org,

@@ -22,17 +22,6 @@ type WorkItemMetaType = 'tracker-item' | 'change-request' | 'session' | 'reposit
 
 export type { GitHubReviewRequest, JiraIssueSummary, RepoRecord };
 
-export interface PullRequestReleaseStatus {
-  environment: string;
-  released: boolean | null;
-  checkedAt: string;
-  releasedAt: string | null;
-  revision: string | null;
-  url: string | null;
-  source: string;
-  description: string | null;
-}
-
 export interface PullRequestMetaPayload {
   repoFullName: string;
   number: number;
@@ -44,8 +33,6 @@ export interface PullRequestMetaPayload {
   status: PullRequestStatus;
   reviewDecision: ReviewDecision;
   buildStatus: PullRequestBuildStatus | null;
-  mergeCommitSha: string | null;
-  releaseStatuses: PullRequestReleaseStatus[];
   attachedAt: string;
   lastSyncedAt: string;
 }
@@ -82,16 +69,6 @@ interface JiraConfig {
   apiToken?: string;
 }
 
-export interface PullRequestReleaseConfig {
-  /** Environment names expected from release-check scripts. */
-  environments?: string[];
-  /** Default executable and optional arguments for configured repositories. */
-  script?: string | string[];
-  /** Exact repository full name to executable override and optional arguments. */
-  scripts?: Record<string, string | string[]>;
-  scriptTimeoutMs?: number;
-}
-
 export type TuiThemeMode = 'dark' | 'light';
 
 export interface LovelaceConfig {
@@ -112,7 +89,6 @@ export interface LovelaceConfig {
     theme?: TuiThemeMode;
     colors?: Partial<Record<TuiThemeMode, Record<string, string>>>;
   };
-  pullRequestReleases?: PullRequestReleaseConfig;
   github?: GitHubConfig;
   jira?: JiraConfig;
   /** Set by the process that starts the server, never read from the file. */

@@ -12,7 +12,6 @@ import { createHerdrClient, herdrSocketPath } from './herdr/herdr-client.js';
 import { watchHerdrEvents } from './herdr/herdr-events.js';
 import { createLogger } from './logger.js';
 import { resolveProviderSecrets } from './secrets.js';
-import { createPullRequestReleaseChecker } from './services/pull-request-release-service.js';
 import { startSessionSync } from './services/session-sync.js';
 import { refreshAttachedTrackerIssues } from './services/tracker-item-service.js';
 import { refreshGitHubReviews, refreshJiraAssignedIssues, refreshJiraProjectCatalog, refreshRepoCache } from './sync.js';
@@ -47,15 +46,8 @@ export async function startServer(options: StartServerOptions = {}): Promise<voi
   const jira = createCachedJira(cache, createJiraClient(config));
   const tools = loadTools(logger);
   const workspaceManager = new WorkspaceManager({ root: config.lovelaceDir, logger });
-  const releaseChecker = createPullRequestReleaseChecker({
-    config: config.pullRequestReleases,
-    lovelaceDir: config.lovelaceDir,
-    database,
-    workspaceManager,
-    logger,
-  });
   const herdr = createHerdrClient(config.herdr);
-  const app = buildServer({ config, tools, listModels: createCachedModels(cache), workspaceManager, herdr, database, cache, github, releaseChecker, jira }, logger);
+  const app = buildServer({ config, tools, listModels: createCachedModels(cache), workspaceManager, herdr, database, cache, github, jira }, logger);
   const shutdown = () => {
     void app.close().then(() => process.exit(0), () => process.exit(1));
   };
@@ -64,7 +56,7 @@ export async function startServer(options: StartServerOptions = {}): Promise<voi
 
   const refreshRepos = () => void refreshRepoCache({ github, database, logger })
     .catch((error) => logger.error({ err: error }, 'Repository catalog sync failed'));
-  const refreshGitHub = () => void refreshGitHubReviews({ github, database, releaseChecker, logger }).catch(() => undefined);
+  const refreshGitHub = () => void refreshGitHubReviews({ github, database, logger }).catch(() => undefined);
   const refreshJira = () => {
     void refreshJiraAssignedIssues({ jira, logger })
       .catch(() => undefined)

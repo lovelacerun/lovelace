@@ -94,12 +94,11 @@ test('PR branch/status operations retain merge, approval and build metadata; not
   let missing = false;
   const github = createGitHubClient({ ...credentials, octokit: transport(async () => {
     if (missing) throw { errors: [{ type: 'NOT_FOUND' }] };
-    return { repository: { pullRequest: { ...pr(1, 'human'), state: 'MERGED', mergeCommit: { oid: 'merge-sha' } } } };
+    return { repository: { pullRequest: { ...pr(1, 'human'), state: 'MERGED' } } };
   }, async () => ({ data: { head: { ref: 'feature' }, base: { ref: 'main' }, draft: true } })) });
   assert.deepEqual(await github.fetchPullRequestDetails('org/repo', 1), { repoFullName: 'org/repo', number: 1, headRefName: 'feature', baseRefName: 'main', isDraft: true });
   const status = await github.fetchPullRequestStatus('org/repo', 1);
   assert.equal(status?.status, 'merged');
-  assert.equal(status?.mergeCommitSha, 'merge-sha');
   assert.equal(status?.buildStatus, 'success');
   missing = true;
   assert.equal(await github.fetchPullRequestStatus('org/repo', 1), null);

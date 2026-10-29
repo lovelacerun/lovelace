@@ -30,13 +30,6 @@
     "siteUrl": "https://your-company.atlassian.net",
     "email": "you@example.com"
     // Or: "apiToken": "op://Private/Lovelace Jira/credential"
-  },
-
-  // Optional user-owned release knowledge for attached PRs.
-  "pullRequestReleases": {
-    "environments": ["stage", "prod"],
-    "scriptTimeoutMs": 10000,
-    "script": "./release-checks/git-tags.mjs"
   }
 
   // Agent executables (pi/claude/codex) are auto-detected by the server.

@@ -160,7 +160,6 @@ async function fetchPullRequestStatusInternal(octokit: GitHubTransport, repoFull
       status: derivePullRequestStatus({ state: pullRequest.state, isDraft: pullRequest.isDraft, reviewDecision }),
       reviewDecision,
       buildStatus,
-      mergeCommitSha: pullRequest.mergeCommit?.oid ?? null,
     };
   } catch (error) {
     if (isGraphQLNotFoundError(error)) return null;
@@ -248,7 +247,6 @@ const GITHUB_PULL_REQUEST_STATUS_QUERY = `
         headRefName
         baseRefName
         author { login }
-        mergeCommit { oid }
         commits(last: 1) {
           nodes { commit { statusCheckRollup { state } } }
         }
@@ -322,7 +320,6 @@ interface GitHubPullRequestStatusResponse {
       headRefName: string | null;
       baseRefName: string | null;
       author: { login?: string | null } | null;
-      mergeCommit: { oid: string } | null;
       commits: { nodes: Array<{ commit: { statusCheckRollup: { state: string } | null } }> };
     } | null;
   } | null;

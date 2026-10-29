@@ -51,7 +51,6 @@ export interface GitHubPullRequestStatus extends Omit<GitHubPullRequestDetails, 
   status: PullRequestStatus;
   reviewDecision: ReviewDecision;
   buildStatus: PullRequestBuildStatus | null;
-  mergeCommitSha: string | null;
 }
 
 export interface GitHubReviewBuckets {

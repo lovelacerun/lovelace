@@ -4,12 +4,12 @@ import { buildVisiblePullRequestGroups } from '../services/inbox-query-service.j
 import { refreshGitHubReviews, refreshJiraAssignedIssues } from '../sync.js';
 
 export function registerProviderRoutes(app: FastifyInstance, deps: RouteDeps) {
-  const { database, github, releaseChecker, jira } = deps;
+  const { database, github, jira } = deps;
 
   app.get('/github/reviews', async () => buildVisiblePullRequestGroups(database, github));
 
   app.post('/github/reviews/refresh', async () => {
-    await refreshGitHubReviews({ github, database, releaseChecker, logger: app.log });
+    await refreshGitHubReviews({ github, database, logger: app.log });
     return buildVisiblePullRequestGroups(database, github);
   });
 
