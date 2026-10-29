@@ -8,6 +8,7 @@ IO, so the fixture only records which session routes the TUI calls.
 import fcntl
 import json
 import os
+import re
 from pathlib import Path
 import pty
 import select
@@ -33,8 +34,9 @@ CLI = str(REPO / "packages/cli/dist/index.js")
 assert Path(CLI).exists(), "Run pnpm build first"
 NOW = datetime.now(timezone.utc).isoformat()
 WORK_ID, NEW_ID, JIRA_WORK_ID = str(uuid.uuid4()), str(uuid.uuid4()), str(uuid.uuid4())
-ISSUE = dict(id="42", key="PROJ-42", title="Fixture Jira work", url="https://jira.invalid/42",
-             status="To Do", issueType="Task", updatedAt=NOW, descriptionText="Full Jira description")
+ISSUE = dict(id="42", key="PROJ-42", title="Fixture Jira work", url="https://jira.invalid/42", project="PROJ",
+             status="To Do", done=False, issueType="Task", author=None, updatedAt=NOW,
+             description="Full Jira description")
 REPOSITORIES = [dict(id=f"github:{i}", provider="github", externalId=str(i), name=name,
                     fullName=f"org/{name}", cloneUrl=f"https://github.invalid/org/{name}.git",
                     defaultBranch="main", isArchived=False, topics=[topic], lastSyncedAt=NOW)
@@ -56,7 +58,7 @@ def work(work_id):
 
 def summary(work_id):
     return dict(work(work_id), sessionCount=1, repositoryCount=0,
-                trackerIssueKeys=[], pullRequestRefs=[])
+                trackerIssueKeys=[], changeRequestRefs=[])
 
 
 def details(work_id):
@@ -108,17 +110,17 @@ class Handler(BaseHTTPRequestHandler):
             active = [summary(WORK_ID)]
             if created:
                 active.insert(0, summary(NEW_ID))
-            return self.data(dict(activeWorkItems=active, pendingJiraIssues=[ISSUE],
+            return self.data(dict(activeWorkItems=active, pendingIssues=[ISSUE], pendingReviews=[],
                 recent=dict(since="2026-10-06T00:00:00.000Z", workItems=[], sessionCount=0,
                                completedCount=0, cancelledCount=0, activityCount=0),
-                settings=dict(defaultAgent="pi", sidebarSide="right", repositoryTopics=["infra", "examplecom"]),
-                freshness=dict(jiraFetchedAt=NOW, githubFetchedAt=NOW,
-                               jiraStale=False, githubStale=False)))
+                settings=dict(defaultAgent="pi", repositoryTopics=["infra", "examplecom"]),
+                freshness=dict(trackerFetchedAt=NOW, codeHostFetchedAt=NOW,
+                               trackerStale=False, codeHostStale=False)))
         if procedure == "workItems.list":
             return self.data([work(WORK_ID)] + ([work(NEW_ID)] if created else []))
         if procedure == "workItems.get":
             return self.data(details(data["id"]))
-        if procedure == "jira.issues":
+        if procedure == "tracker.issues":
             return self.data([ISSUE])
         if procedure == "repositories.list":
             return self.data(REPOSITORIES)
@@ -141,9 +143,9 @@ class Handler(BaseHTTPRequestHandler):
             return self.data(dict(action="continued", details=details(body["workItemId"])))
         if procedure == "prompts.render":
             assert body["promptId"] == "refine"
-            assert body["sources"][0]["payload"]["descriptionText"] == ISSUE["descriptionText"]
+            assert body["sources"][0]["payload"]["description"] == ISSUE["description"]
             return self.data(dict(promptId="refine", content=JIRA_PROMPT))
-        if procedure == "launches.quickStart" and body.get("jiraIssueId"):
+        if procedure == "launches.quickStart" and body.get("trackerIssueId"):
             uuid.UUID(body["requestId"])
             jira_launch = body
             return self.data(dict(details=details(JIRA_WORK_ID), launch=launch(body, JIRA_WORK_ID)))
@@ -190,6 +192,11 @@ def until(predicate, message, timeout=7):
     raise AssertionError(message + "\nTerminal tail: " + output[-5000:].decode(errors="replace"))
 
 
+def plain():
+    """Terminal output without colours, so styled spans read as written."""
+    return re.sub(rb"\x1b\[[0-9;]*m", b"", output)
+
+
 def send(data):
     os.write(master, data)
     pump(0.2)
@@ -207,11 +214,12 @@ with tempfile.TemporaryDirectory(prefix="lovelace-ui-pty-") as temporary:
         if key.startswith("HERDR_") or key in ("TMUX", "TMUX_PANE", "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY", "BASH_ENV", "ENV"):
             del env[key]
     env.update(HOME=temporary, ZDOTDIR=temporary, SHELL="/bin/sh",
-               LOVELACE_ROOT=temporary, LOVELACE_CONFIG=os.path.join(temporary, "config.jsonc"), TERM="xterm-256color")
+               LOVELACE_CONFIG=os.path.join(temporary, "config.jsonc"), TERM="xterm-256color")
     try:
         server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
         threading.Thread(target=server.serve_forever, daemon=True).start()
-        env.update(LOVELACE_PORT=str(server.server_port), LOVELACE_HOST="127.0.0.1")
+        with open(env["LOVELACE_CONFIG"], "w") as config:
+            json.dump({"domainRoot": temporary, "port": server.server_port, "tui": {"icons": "unicode"}}, config)
         no_args = subprocess.run([NODE, CLI], env=env, capture_output=True, text=True, timeout=4)
         assert no_args.returncode == 0 and "lovelace <command>" in no_args.stdout, no_args
         assert requests == [], "No-argument CLI performed an HTTP request"
@@ -225,18 +233,18 @@ with tempfile.TemporaryDirectory(prefix="lovelace-ui-pty-") as temporary:
               "Explicit TUI did not render dashboard/sidebar")
         for cols, rows in [(80, 24), (50, 12), (120, 32)]:
             resize(cols, rows)
-        # SGR mouse, 1-based: drag the divider (col 92 at 120 cols) left, then
+        # SGR mouse, 1-based: drag the divider (col 86 at 120 cols) left, then
         # click sidebar rows only reachable at the resized position.
         mouse = lambda button, x, y, final=b"M": send(b"\x1b[<%d;%d;%d" % (button, x, y) + final)
-        mouse(0, 92, 10)
+        mouse(0, 86, 10)
         mouse(32, 60, 10)
         mouse(0, 60, 10, b"m")
-        mouse(0, 70, 5)
-        mouse(0, 70, 5, b"m")
+        mouse(0, 70, 7)
+        mouse(0, 70, 7, b"m")
         until(lambda: called("workItems.get", WORK_ID),
               "Clicking a resized sidebar row did not load details")
-        mouse(0, 70, 2)
-        mouse(0, 70, 2, b"m")
+        mouse(0, 70, 3)
+        mouse(0, 70, 3, b"m")
         for _ in range(2):  # double-click restores the responsive width
             mouse(0, 60, 10)
             mouse(0, 60, 10, b"m")
@@ -256,7 +264,7 @@ with tempfile.TemporaryDirectory(prefix="lovelace-ui-pty-") as temporary:
         until(lambda: b"Start work" in output, "Jira details did not offer setup")
         send(b"\r")
         until(lambda: called("prompts.list"), "Prompt catalog not requested")
-        until(lambda: b"[ ] sync" in output and b"editable preview" in output,
+        until(lambda: b"[ ] sync" in plain() and b"editable preview" in output,
               "Single repository/prompt overlay not rendered")
         send(b"\x1b")
         send(b"\r")
@@ -276,8 +284,10 @@ with tempfile.TemporaryDirectory(prefix="lovelace-ui-pty-") as temporary:
         for cols, rows in [(50, 12), (80, 24), (120, 32)]:
             resize(cols, rows)
         send(b"\t")  # template selector, in the same modal
-        send(b"\x1b[C")  # manual prompt
-        send(b"\x1b[C")  # refine template
+        for key in (b"\r", b"\x1b[A", b"\r"):  # manual prompt
+            send(key)
+        for key in (b"\r", b"\x1b[B", b"\r"):  # refine template
+            send(key)
         until(lambda: sum(name == "prompts.render" for _, name, _ in requests) >= 2,
               "Template selector did not render a preview")
         send(b"\t")  # large prompt editor
