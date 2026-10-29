@@ -1,13 +1,30 @@
 # @lovelace/client
 
-Typed HTTP access to the local Lovelace server. No provider calls and no
-automatic mutation retries. Launch identity semantics:
+Typed tRPC access to the local Lovelace server. No provider calls, no
+automatic mutation retries and no batching. Launch identity semantics:
 [architecture](../../docs/architecture.md#launching).
 
-Methods accept `{ signal, timeoutMs }`; the default 15-second deadline covers
-fetch **and JSON body consumption**. Caller cancellation preserves its reason;
-an expired deadline rejects with `TimeoutError`. Transport/read failures use
-`ApiError` with status 0, while HTTP rejections retain their status.
+`createLovelaceClient(serverUrl, fetch?)` returns a `TRPCClient` for the
+server's `AppRouter`; every procedure's input and output is inferred from the
+router, so there are no hand-written methods:
+
+```ts
+const client = createLovelaceClient('http://127.0.0.1:27421');
+const details = await client.workItems.get.query({ id });
+await client.launches.quickStart.mutate({ prompt, requestId, wait: false }, { signal });
+```
+
+Calls accept `{ signal, context: { timeoutMs } }`. The default 15-second
+deadline covers fetch **and response body consumption**; `launches.quickStart`,
+`launches.newSession`, `sessions.open` and `repositories.sync` default to 60
+seconds unless they pass `wait: false`, because the server answers once Herdr
+reports the agent ready.
+
+Every failure is a `TRPCClientError`. `errorStatus(error)` is the HTTP status
+of a server rejection and 0 otherwise; `isUnreachable` covers transport
+failures and expired deadlines, `isAborted` caller cancellation and
+`isTimeout` expired deadlines. Caller cancellation and deadlines keep their
+reason as the error's `cause`. Transport errors never include URLs or payloads.
 
 Injected fetch implementations are deadline-bounded even if they ignore abort.
 They must still honor `AbortSignal` to release their own sockets/body resources;
@@ -18,36 +35,25 @@ pnpm --filter @lovelace/client build
 pnpm --filter @lovelace/client test
 ```
 
-`serverUrl` exposes the actual configured address for client status displays.
-`quickStart`, `newSession` and `openSession` wait up to 60 seconds by default,
-because the server answers once Herdr reports the agent ready. The client has
-no terminal dependency: the server drives Herdr.
+`launches.quickStart`/`launches.newSession` with `wait: false` return durable
+acceptance immediately; the server owns completion and `launch.state` tells
+callers to poll. `launches.get` reads a launch by request ID without starting
+an agent; `launches.retry` runs a failed launch again with its saved prompt
+and selections. The server persists the exact prompt and selections before
+preparation; the same request UUID must retain the same selection. `wait` is
+not part of the request identity.
 
-`quickStart`/`newSession` accept `{wait:false}` in their final options to return
-202 acceptance immediately, using the ordinary 15-second request deadline.
-No client-side background launch is needed: the server owns completion.
-`getLaunch(requestId)` reads that launch without starting an agent;
-`retryLaunch(requestId)` runs a failed launch again with its saved prompt and
-selections. `getWorkItem` includes the work item's launches. `wait` is not
-part of the request identity.
+`@lovelace/client/testing` provides `fakeClient(handlers)`, a client whose
+calls run handlers keyed by procedure path (`'workItems.get'`) with inputs and
+outputs typed from the router, and `serverError(status, message)` for server
+rejections; any other thrown error behaves like an unreachable server. Tests
+use injected transports or fakes; no providers or real agents are contacted.
 
-`getRepositories` and `getPromptTemplates` read server-owned launch catalogs;
-`syncRepositories` explicitly refreshes the catalog through the local server;
-`renderPrompt` renders a template before user editing. `quickStart` and
-`newSession` accept `repoIds`/`promptId` alongside transport settings in their
-final options argument. The server persists the exact prompt and selections
-before preparation; the same request UUID must retain the same selection.
-
-`requestJson` supports additional local server routes, rejecting provider URLs.
-Jira/GitHub SDK access stays on the server.
-
-Tests use injected transports; no providers or real agents are contacted.
-
-`prepareRepositories(id, repositories, options)` submits once with `wait:false`
-and polls workspace metadata until each selected workspace is ready or failed.
-Every HTTP request keeps the ordinary deadline; preparation has no overall
-deadline. `signal` stops waiting, not server preparation. `onProgress` reports
-workspace state and `pollIntervalMs` defaults to 1000. Partial failures remain
-in returned details. A lost reply or interrupted wait raises
-`WorkspacePreparationWaitError` with last-observed state and an inspection
-command; no mutation is automatically resubmitted.
+`prepareRepositories(client, id, repositories, options)` submits once with
+`wait: false` and polls workspace metadata until each selected workspace is
+ready or failed. Every HTTP request keeps the ordinary deadline; preparation
+has no overall deadline. `signal` stops waiting, not server preparation.
+`onProgress` reports workspace state and `pollIntervalMs` defaults to 1000.
+Partial failures remain in returned details. A lost reply or interrupted wait
+raises `WorkspacePreparationWaitError` with last-observed state and an
+inspection command; no mutation is automatically resubmitted.

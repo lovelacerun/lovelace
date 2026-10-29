@@ -1,22 +1,21 @@
-import type { FastifyInstance } from 'fastify';
-import type { RouteDeps } from './deps.js';
 import { pendingReviewRequests } from '../services/review-request-service.js';
 import { refreshGitHubReviews, refreshJiraAssignedIssues } from '../sync.js';
+import { procedure, router } from '../trpc.js';
 
-export function registerProviderRoutes(app: FastifyInstance, deps: RouteDeps) {
-  const { database, github, jira } = deps;
+export const githubRouter = router({
+  reviewRequests: procedure.query(({ ctx }) => pendingReviewRequests(ctx.database, ctx.github)),
 
-  app.get('/github/reviews', async () => pendingReviewRequests(database, github));
-
-  app.post('/github/reviews/refresh', async () => {
-    await refreshGitHubReviews({ github, database, logger: app.log });
+  refreshReviewRequests: procedure.mutation(async ({ ctx: { github, database, logger } }) => {
+    await refreshGitHubReviews({ github, database, logger });
     return pendingReviewRequests(database, github);
-  });
+  }),
+});
 
-  app.get('/jira/issues', async () => jira.peekAssignedIssues()?.value ?? []);
+export const jiraRouter = router({
+  issues: procedure.query(({ ctx }) => ctx.jira.peekAssignedIssues()?.value ?? []),
 
-  app.post('/jira/issues/refresh', async () => {
-    await refreshJiraAssignedIssues({ jira, logger: app.log });
+  refreshIssues: procedure.mutation(async ({ ctx: { jira, logger } }) => {
+    await refreshJiraAssignedIssues({ jira, logger });
     return jira.peekAssignedIssues()?.value ?? [];
-  });
-}
+  }),
+});

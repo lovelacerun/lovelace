@@ -29,6 +29,15 @@ Clients never call providers, Coriol or Herdr. This keeps credentials, cache
 and durable state in one process, lets agents use the same API as the TUI,
 and leaves room for other clients later.
 
+## tRPC between clients and the server
+
+Hand-written client methods and response types drifted from the routes and
+let tests fake the client through unchecked casts. A tRPC router gives every
+procedure zod-validated input and inferred output, and test fakes are typed
+per procedure. `fate` was considered but is a React data layer; the TUI is
+not React and only the server caches. The server keeps a plain `GET /status`
+so a newer CLI can find and restart an older server.
+
 ## A small cache package over `lru-cache`
 
 Freshness, refresh coalescing, last-good retention and persistence were

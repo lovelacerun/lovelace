@@ -110,7 +110,7 @@ export class JiraStartModal implements Component {
     const { client, state } = this.options;
     const signal = this.lifetime.signal;
     const [templates, repositories, issues, tools] = await Promise.allSettled([
-      client.getPromptTemplates({ signal }), client.getRepositories({ signal }), client.getJiraIssues({ signal }), client.getTools({ signal }),
+      client.prompts.list.query(undefined, { signal }), client.repositories.list.query(undefined, { signal }), client.jira.issues.query(undefined, { signal }), client.tools.list.query(undefined, { signal }),
     ]);
     if (!this.active) return;
     let loadError: string | null = null;
@@ -145,7 +145,7 @@ export class JiraStartModal implements Component {
     this.error = null;
     this.changed();
     try {
-      const rendered = await this.options.client.renderPrompt({
+      const rendered = await this.options.client.prompts.render.mutate({
         promptId, title: `${this.issue.key}: ${this.issue.title}`,
         sources: [{ sourceType: 'tracker-item', provider: 'jira', externalId: this.issue.id, payload: this.issue }],
       }, { signal: this.lifetime.signal });
@@ -214,7 +214,7 @@ export class JiraStartModal implements Component {
     this.error = null;
     this.changed();
     try {
-      const result = await this.options.client.syncRepositories({ signal: this.lifetime.signal });
+      const result = await this.options.client.repositories.sync.mutate(undefined, { signal: this.lifetime.signal });
       if (!this.active) return;
       this.options.state.repositories = this.repositories = result.repos;
       this.selectedIndex = 0;

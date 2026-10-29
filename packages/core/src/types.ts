@@ -108,7 +108,7 @@ export interface WorkItem {
   completedAt: string | null;
 }
 
-interface AttachmentOfType<Type extends string, Payload> {
+export interface AttachmentOfType<Type extends string, Payload> {
   id: string;
   workItemId: string;
   type: Type;
@@ -118,7 +118,7 @@ interface AttachmentOfType<Type extends string, Payload> {
 }
 
 /** Upstream records, identified by their provider's ID. */
-interface LinkAttachment<Type extends string, Payload> extends AttachmentOfType<Type, Payload> {
+export interface LinkAttachment<Type extends string, Payload> extends AttachmentOfType<Type, Payload> {
   provider: string;
   externalId: string;
 }
@@ -279,5 +279,5 @@ export interface AgentSession {
   cwd: string | null;
   status: 'running' | 'ended';
   agentState: AgentSessionState;
-  metadata: unknown;
+  metadata?: unknown;
 }

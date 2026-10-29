@@ -31,7 +31,8 @@ attaches the tarball to a GitHub release. Then update the formula in
 
 - **The server owns all side effects.** Only `server` calls Jira, GitHub,
   Herdr and Coriol. `tui` and `cli` go through `client` and never import
-  provider clients.
+  provider clients. `client` imports only the `AppRouter` type from
+  `server`; new procedures need no client code.
 - **Standalone packages stay standalone.** `coriol`, `cache`, `secrets`,
   `jira-client`, `github-client`, `model-catalog`, `tui-components` and
   `adf-converter` import no Lovelace types, configuration, database or

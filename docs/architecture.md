@@ -9,7 +9,7 @@ each package; this page connects them.
 ```text
  lovelace tui ──┐                       ┌── Jira, GitHub (HTTP)
  lovelace work …┼─ @lovelace/client ──► server ──┼── Coriol (git, npm)
- (agents)       ┘   HTTP on 127.0.0.1   │  SQLite └── herdr CLI + socket events
+ (agents)       ┘   tRPC on 127.0.0.1   │  SQLite └── herdr CLI + socket events
 ```
 
 - **server** (`packages/server`) is the only process with side effects. It
@@ -22,7 +22,7 @@ each package; this page connects them.
   it through the `herdr` CLI and follows its socket events.
 - **Agents** are ordinary clients: their prompt tells them to run
   `lovelace agent-guide`, and `lovelace work …` resolves their work item
-  from the working directory (`GET /work-items/current?path=`).
+  from the working directory (`workItems.current`).
 
 The server is a trusted, single-user loopback service, not a security
 boundary.
@@ -80,7 +80,7 @@ only by an explicit `lovelace cleanup`.
 
 ## Launching
 
-A launch (`POST /work-items/quick-start` or `/work-items/:id/new-session`)
+A launch (`launches.quickStart` or `launches.newSession`)
 carries a client-generated request ID.
 
 1. The server records the work item (quick start) and a `launches` row with
@@ -99,7 +99,7 @@ carries a client-generated request ID.
 Repeating a request ID joins or reads that launch instead of launching again.
 Each row records the boot ID of the server that ran it; on startup, launches
 still in progress under an earlier boot become `uncertain` and are never
-replayed. `POST /launches/:id/retry` runs a `failed` launch again in place
+replayed. `launches.retry` runs a `failed` launch again in place
 with its saved prompt and selections. The TUI keeps only the prompt,
 selections and the request ID of a request that got no answer; before
 resending it, it looks the ID up and takes the recorded launch if there is
@@ -117,7 +117,7 @@ when its pane is gone or runs something else.
 An agent that opens blocked (e.g. a folder trust dialog) still counts as
 started; its prompt is submitted once Herdr reports it idle.
 
-**Open** (`POST /work-items/:id/sessions/:sessionId/open`) focuses a running
+**Open** (`sessions.open`) focuses a running
 session's tab. For an ended session it resumes the exact recorded
 conversation (`claude --resume <id>`, `codex resume <id>`,
 `pi --session <file>`) in the pane it left, or a new tab. Without a recorded

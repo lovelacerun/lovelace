@@ -22,6 +22,7 @@ import time
 import uuid
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import parse_qs, urlparse
 
 REPO = Path(__file__).resolve().parents[1]
 NODE = shutil.which("node")
@@ -65,7 +66,7 @@ def details(work_id):
                    terminalRef=dict(workspaceId="w1", paneId="w1:p1"), metadata={})
     session = dict(id="fixture-session", workItemId=work_id, type="session", payload=payload,
                    createdAt=NOW, updatedAt=NOW)
-    return dict(workItem=work(work_id), attachments=[session])
+    return dict(workItem=work(work_id), attachments=[session], launches=[])
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -80,59 +81,90 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
+    def trpc_call(self, method, body):
+        """Records a tRPC call as (method, procedure, input); queries carry input in the URL."""
+        url = urlparse(self.path)
+        if not url.path.startswith("/trpc/"):
+            return None, None
+        raw = parse_qs(url.query).get("input", [None])[0] if method == "GET" else body
+        data = json.loads(raw) if isinstance(raw, str) else raw
+        procedure = url.path[len("/trpc/"):]
+        requests.append((method, procedure, data))
+        return procedure, data
+
+    def data(self, value):
+        return self.reply(dict(result=dict(data=value)))
+
+    def error(self, status, message):
+        code = {400: "BAD_REQUEST", 404: "NOT_FOUND"}[status]
+        return self.reply(dict(error=dict(message=message, code=-32600, data=dict(code=code, httpStatus=status))), status)
+
     def do_GET(self):
-        requests.append(("GET", self.path, None))
-        if self.path == "/dashboard":
+        if self.path == "/status":
+            requests.append(("GET", "/status", None))
+            return self.reply(dict(ok=True, version=None, pid=None))
+        procedure, data = self.trpc_call("GET", None)
+        if procedure == "dashboard.get":
             active = [summary(WORK_ID)]
             if created:
                 active.insert(0, summary(NEW_ID))
-            return self.reply(dict(activeWorkItems=active, pendingJiraIssues=[ISSUE],
+            return self.data(dict(activeWorkItems=active, pendingJiraIssues=[ISSUE],
                 recent=dict(since="2026-10-06T00:00:00.000Z", workItems=[], sessionCount=0,
                                completedCount=0, cancelledCount=0, activityCount=0),
                 settings=dict(defaultAgent="pi", sidebarSide="right", repositoryTopics=["infra", "examplecom"]),
                 freshness=dict(jiraFetchedAt=NOW, githubFetchedAt=NOW,
                                jiraStale=False, githubStale=False)))
-        if self.path == "/work-items":
-            return self.reply([work(WORK_ID)] + ([work(NEW_ID)] if created else []))
-        if self.path.startswith("/work-items/"):
-            return self.reply(details(self.path.split("/")[2]))
-        if self.path == "/jira/issues":
-            return self.reply([ISSUE])
-        if self.path == "/repos":
-            return self.reply(REPOSITORIES)
-        if self.path == "/prompts":
-            return self.reply([dict(id="refine", title="Refine", content="Refine {{title}}",
+        if procedure == "workItems.list":
+            return self.data([work(WORK_ID)] + ([work(NEW_ID)] if created else []))
+        if procedure == "workItems.get":
+            return self.data(details(data["id"]))
+        if procedure == "jira.issues":
+            return self.data([ISSUE])
+        if procedure == "repositories.list":
+            return self.data(REPOSITORIES)
+        if procedure == "prompts.list":
+            return self.data([dict(id="refine", title="Refine", content="Refine {{title}}",
                                    builtIn=True, overridden=False)])
-        if self.path == "/status":
-            return self.reply(dict(ok=True, repoCount=0, workItemCount=1, lastRepoSyncAt=NOW))
-        return self.reply(dict(error="Unknown fixture endpoint"), 404)
+        if procedure == "tools.list":
+            return self.data([dict(id="pi", title="Pi", thinkingLevels=[], executablePath="/fixture/pi",
+                                   defaultSelected=True, models=[])])
+        if procedure == "system.status":
+            return self.data(dict(ok=True, repoCount=0, workItemCount=1, lastRepoSyncAt=NOW))
+        return self.error(404, "Unknown fixture procedure " + str(procedure))
 
     def do_POST(self):
         global created, received_prompt, jira_launch
         length = int(self.headers.get("Content-Length") or 0)
-        body = json.loads(self.rfile.read(length)) if length else None
-        requests.append(("POST", self.path, body))
-        work_id = self.path.split("/")[2]
-        if self.path.endswith("/open"):
-            opened.append(work_id)
-            return self.reply(dict(action="continued", details=details(work_id)))
-        if self.path == "/prompts/render":
+        procedure, body = self.trpc_call("POST", self.rfile.read(length).decode() if length else None)
+        if procedure == "sessions.open":
+            opened.append(body["workItemId"])
+            return self.data(dict(action="continued", details=details(body["workItemId"])))
+        if procedure == "prompts.render":
             assert body["promptId"] == "refine"
             assert body["sources"][0]["payload"]["descriptionText"] == ISSUE["descriptionText"]
-            return self.reply(dict(promptId="refine", content=JIRA_PROMPT))
-        if self.path == "/work-items/quick-start" and body.get("jiraIssueId"):
+            return self.data(dict(promptId="refine", content=JIRA_PROMPT))
+        if procedure == "launches.quickStart" and body.get("jiraIssueId"):
             uuid.UUID(body["requestId"])
             jira_launch = body
-            return self.reply(dict(details=details(JIRA_WORK_ID), launch=dict(ok=True, error=None, phase="started"),
-                                   operation=dict(requestId=body["requestId"], status="completed")))
-        if self.path == "/work-items/quick-start":
+            return self.data(dict(details=details(JIRA_WORK_ID), launch=launch(body, JIRA_WORK_ID)))
+        if procedure == "launches.quickStart":
             received_prompt = body["prompt"]
             uuid.UUID(body["requestId"])
             assert not body.get("repoIds")
             created = True
-            return self.reply(dict(details=details(NEW_ID), launch=dict(ok=True, error=None, phase="started"),
-                                   operation=dict(requestId=body["requestId"], status="completed")))
-        return self.reply(dict(error="Unexpected fixture mutation"), 400)
+            return self.data(dict(details=details(NEW_ID), launch=launch(body, NEW_ID)))
+        return self.error(400, "Unexpected fixture mutation")
+
+
+def launch(body, work_id):
+    return dict(id=body["requestId"], workItemId=work_id, state="started", error=None, prompt=body["prompt"],
+                harness=body.get("agentId") or "pi", repoIds=body.get("repoIds") or [], promptId=body.get("promptId"),
+                createdAt=NOW, updatedAt=NOW)
+
+
+def called(procedure, work_id=None):
+    return any(name == procedure and (work_id is None or (data or {}).get("id") == work_id)
+               for _, name, data in requests)
 
 
 def pump(seconds=0.1):
@@ -201,7 +233,7 @@ with tempfile.TemporaryDirectory(prefix="lovelace-ui-pty-") as temporary:
         mouse(0, 60, 10, b"m")
         mouse(0, 70, 5)
         mouse(0, 70, 5, b"m")
-        until(lambda: any(path == "/work-items/" + WORK_ID for _, path, _ in requests),
+        until(lambda: called("workItems.get", WORK_ID),
               "Clicking a resized sidebar row did not load details")
         mouse(0, 70, 2)
         mouse(0, 70, 2, b"m")
@@ -212,7 +244,7 @@ with tempfile.TemporaryDirectory(prefix="lovelace-ui-pty-") as temporary:
         send(b"\t")
         send(b"\x1b[B")
         send(b"\r")
-        until(lambda: any(path == "/work-items/" + WORK_ID for _, path, _ in requests),
+        until(lambda: called("workItems.get", WORK_ID),
               "Sidebar did not load details")
         until(lambda: b"Fixture agent session" in output, "Sessions were not rendered")
         send(b"\r")
@@ -223,12 +255,12 @@ with tempfile.TemporaryDirectory(prefix="lovelace-ui-pty-") as temporary:
         send(b"\r")
         until(lambda: b"Start work" in output, "Jira details did not offer setup")
         send(b"\r")
-        until(lambda: any(path == "/prompts" for _, path, _ in requests), "Prompt catalog not requested")
+        until(lambda: called("prompts.list"), "Prompt catalog not requested")
         until(lambda: b"[ ] sync" in output and b"editable preview" in output,
               "Single repository/prompt overlay not rendered")
         send(b"\x1b")
         send(b"\r")
-        until(lambda: sum(path == "/prompts" for _, path, _ in requests) == 2,
+        until(lambda: sum(name == "prompts.list" for _, name, _ in requests) == 2,
               "Cancel did not preserve the underlying Jira page")
         send(b"\x01")  # Select all matching repositories
         send(b"\x15")  # Unselect all, including selections hidden by filters
@@ -246,7 +278,7 @@ with tempfile.TemporaryDirectory(prefix="lovelace-ui-pty-") as temporary:
         send(b"\t")  # template selector, in the same modal
         send(b"\x1b[C")  # manual prompt
         send(b"\x1b[C")  # refine template
-        until(lambda: sum(path == "/prompts/render" for _, path, _ in requests) >= 2,
+        until(lambda: sum(name == "prompts.render" for _, name, _ in requests) >= 2,
               "Template selector did not render a preview")
         send(b"\t")  # large prompt editor
         send(b"\x1b[1;5F")
@@ -259,13 +291,13 @@ with tempfile.TemporaryDirectory(prefix="lovelace-ui-pty-") as temporary:
         assert jira_launch["repoIds"] == ["github:1", "github:2"], jira_launch
         assert jira_launch["promptId"] == "refine", jira_launch
         assert jira_launch["prompt"] == JIRA_PROMPT + "Edited final prompt.\n  Preserve this newline.", jira_launch
-        until(lambda: any(path == "/work-items/" + JIRA_WORK_ID for _, path, _ in requests),
+        until(lambda: called("workItems.get", JIRA_WORK_ID),
               "Jira launch did not navigate to saved work")
         send(b"\x1b")
         send(b"n")
         send(b"\x1b[200~" + PROMPT.encode() + b"\x1b[201~")
         send(b"\r")
-        until(lambda: any(path == "/work-items/" + NEW_ID for _, path, _ in requests),
+        until(lambda: called("workItems.get", NEW_ID),
               "Successful launch did not navigate to saved work")
         assert received_prompt == PROMPT, repr(received_prompt)
         assert opened == [WORK_ID], "Quick-start opened its session"

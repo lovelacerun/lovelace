@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { ApiError, type LovelaceClient } from '@lovelace/client';
-import type { DashboardJiraIssue, RepoRecord } from '@lovelace/core';
+import type { LovelaceClient } from '@lovelace/client';
+import { fakeClient, serverError, type FakeHandlers } from '@lovelace/client/testing';
+import type { DashboardJiraIssue, JiraIssueSummary, Launch, LaunchResponse, RepoRecord, WorkItem } from '@lovelace/core';
 import { AppState } from './state.js';
 import { filterRepositories } from './jira-start.js';
 import { submitLaunch } from './controller.js';
@@ -19,15 +20,15 @@ function stateForIssue() {
   state.selectedJira = issue;
   return state;
 }
-function client(overrides: Partial<LovelaceClient> = {}): LovelaceClient {
-  return {
-    getRepositories: async () => repositories,
-    getPromptTemplates: async () => templates,
-    getJiraIssues: async () => [{ ...issue, descriptionText: 'Full description' }],
-    renderPrompt: async () => ({ promptId: 'refine', content: 'Rendered prompt' }),
-    getLaunch: async () => { throw new ApiError(404, 'launch not found'); },
+function client(overrides: FakeHandlers = {}): LovelaceClient {
+  return fakeClient({
+    'repositories.list': async () => repositories,
+    'prompts.list': async () => templates,
+    'jira.issues': async () => [{ ...issue, project: 'PROJ', statusCategory: 'new', type: 'Task', author: null, descriptionText: 'Full description' } satisfies JiraIssueSummary],
+    'prompts.render': async () => ({ promptId: 'refine', content: 'Rendered prompt' }),
+    'launches.get': async () => { throw serverError(404, 'launch not found'); },
     ...overrides,
-  } as unknown as LovelaceClient;
+  });
 }
 
 test('repository name/topic filters combine and never exclude topic-free or archived repositories by default', () => {
@@ -50,10 +51,12 @@ test('a lost reply resends the Jira request with its repositories and template; 
   const calls: unknown[] = [];
   let attempt = 0;
   const api = client({
-    quickStart: async (prompt, jiraIssueId, _agent, _overrides, requestId, options) => {
-      calls.push({ prompt, jiraIssueId, requestId, repoIds: options?.repoIds, promptId: options?.promptId });
-      if (++attempt === 1) throw new ApiError(0, 'lost reply');
-      return { details: { workItem: { id: 'work' }, attachments: [], launches: [] }, launch: { state: 'failed', error: 'install failed' } } as never;
+    'launches.quickStart': async ({ prompt, jiraIssueId, requestId, repoIds, promptId }) => {
+      calls.push({ prompt, jiraIssueId, requestId, repoIds, promptId });
+      if (++attempt === 1) throw new Error('lost reply');
+      const launch: Launch = { id: requestId!, workItemId: 'work', state: 'failed', error: 'install failed', harness: 'pi', repoIds: repoIds ?? [], promptId: promptId ?? null, prompt, createdAt: '', updatedAt: '' };
+      const workItem: WorkItem = { id: 'work', title: 'Fix sync', state: 'active', notes: null, createdAt: '', updatedAt: '', startedAt: null, completedAt: null };
+      return { details: { workItem, attachments: [], launches: [launch] }, launch } satisfies LaunchResponse;
     },
   });
   const deps = { client: api, refreshDashboard() {}, newRequestId: () => String(attempt) };

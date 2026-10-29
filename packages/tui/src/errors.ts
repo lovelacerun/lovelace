@@ -1,8 +1,10 @@
-import { ApiError } from '@lovelace/client';
+import { isUnreachable } from '@lovelace/client';
+
+export { errorStatus, isAborted } from '@lovelace/client';
 
 /** The server was unreachable or did not answer in time. */
 export function isOffline(error: unknown): boolean {
-  return (error instanceof ApiError && error.status === 0) || (error instanceof Error && error.name === 'TimeoutError');
+  return isUnreachable(error);
 }
 
 export function errorMessage(error: unknown, fallback: string): string {

@@ -1,15 +1,12 @@
-import type { FastifyInstance } from 'fastify';
-import type { RouteDeps } from './deps.js';
 import { refreshRepoCache } from '../sync.js';
+import { procedure, router } from '../trpc.js';
 
-export function registerRepoRoutes(app: FastifyInstance, deps: RouteDeps) {
-  const { database, github } = deps;
+export const repositoriesRouter = router({
+  list: procedure.query(({ ctx }) => ctx.database.listRepos()),
 
-  app.get('/repos', async () => database.listRepos());
-
-  app.post('/repos/sync', async () => {
-    await refreshRepoCache({ github, database, logger: app.log });
+  sync: procedure.mutation(async ({ ctx: { github, database, logger } }) => {
+    await refreshRepoCache({ github, database, logger });
     const repos = database.listRepos();
-    return { ok: true, repoCount: repos.length, repos };
-  });
-}
+    return { ok: true as const, repoCount: repos.length, repos };
+  }),
+});

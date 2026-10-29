@@ -46,30 +46,30 @@ work item gets the pull request as its `change-request`, and the pull request's
 repository, which must be among `repoIds`, is checked out at its branch.
 Explicit `repoIds` are prepared with Coriol before launching; preparation
 failures preserve the work, exact prompt and template/repository selection.
-`POST /launches/:id/retry` runs a `failed` launch again in place: ready
+`launches.retry` runs a `failed` launch again in place: ready
 worktrees are reused and failed ones prepared again.
 The GitHub catalog includes authenticated repositories across organizations.
 
-Quick-start/new-session optionally accept `wait:false`: return 202 durable
+Quick-start/new-session optionally accept `wait:false`: return durable
 acceptance, then finish repository preparation and Herdr startup in the
 background. Work details include their launches and the dashboard the latest
-launch state. `GET /launches/:id` reads a launch without launching it.
+launch state. `launches.get` reads a launch without launching it.
 Independent work items run concurrently; pane allocation alone is serialized
 per item to keep one Herdr workspace with distinct tabs.
 
 Worktrees are persisted as `pending` before preparation starts. Coriol
 events expose `preparing` and the latest phase; each ready/failed result is
 saved independently. Overlapping requests coalesce per work item/repository
-(and review source). `POST /work-items/:id/repositories` retains its synchronous
-details response by default; `wait:false` returns 202 with recorded details for
-polling via `GET /work-items/:id`. Disconnects never cancel preparation.
+(and review source). `workItems.addRepositories` retains its synchronous
+details response by default; `wait:false` returns recorded details for
+polling via `workItems.get`. Disconnects never cancel preparation.
 Orphaned pending/preparing records become retryable failures on server startup;
 worktrees and dependency caches are kept. Cleanup skips active preparations.
 
 ## Provider cache
 
 `src/cached-providers.ts` wraps the plain GitHub/Jira clients with
-`@lovelace/cache`; services and routes use only these accessors.
+`@lovelace/cache`; services and procedures use only these accessors.
 
 - Lists (`jira.assigned`, `jira.projects`, `github.reviewRequests`) persist to
   the `cache_snapshots` table and load on startup, so the dashboard renders

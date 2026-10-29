@@ -10,6 +10,10 @@
     ".": {
       "import": "./dist/index.js",
       "types": "./dist/index.d.ts"
+    },
+    "./testing": {
+      "import": "./dist/testing.js",
+      "types": "./dist/testing.d.ts"
     }
   },
   "scripts": {
@@ -17,7 +21,10 @@
     "test": "tsx --test \"src/**/*.test.ts\""
   },
   "dependencies": {
-    "@lovelace/core": "workspace:*"
+    "@lovelace/core": "workspace:*",
+    "@lovelace/server": "workspace:*",
+    "@trpc/client": "11.19.0",
+    "@trpc/server": "11.19.0"
   },
   "devDependencies": {
     "@types/node": "22.19.15",

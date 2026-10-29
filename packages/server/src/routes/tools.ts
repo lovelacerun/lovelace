@@ -1,11 +1,11 @@
-import type { FastifyInstance } from 'fastify';
 import { refreshTools as discoverTools } from '../tools/tool-loader.js';
-import type { RouteDeps } from './deps.js';
+import { procedure, router } from '../trpc.js';
 
-export function registerToolRoutes(app: FastifyInstance, deps: RouteDeps) {
-  app.get('/tools', async () => {
-    (deps.refreshTools ?? discoverTools)(deps.tools);
+export const toolsRouter = router({
+  /** Coding harnesses detected on the server, re-detected on every call. */
+  list: procedure.query(({ ctx }) => {
+    (ctx.refreshTools ?? discoverTools)(ctx.tools);
     // A harness whose catalog cannot be listed still launches; its model is then typed.
-    return Promise.all(deps.tools.map(async tool => ({ ...tool, models: await deps.listModels(tool).catch(() => []) })));
-  });
-}
+    return Promise.all(ctx.tools.map(async tool => ({ ...tool, models: await ctx.listModels(tool).catch(() => []) })));
+  }),
+});

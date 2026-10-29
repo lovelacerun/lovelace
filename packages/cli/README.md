@@ -23,7 +23,7 @@ lovelace work-items open <id> <session-id>
 Launch requires exactly one of `--prompt`/`--prompt-file` (optional `--model`,
 `--thinking`), preserves prompt whitespace and asks the server to start the
 session in the work item's Herdr workspace through the durable
-`POST /work-items/:id/new-session` endpoint. It never focuses the new tab.
+`launches.newSession` procedure. It never focuses the new tab.
 Inspect existing work/sessions after an uncertain reply instead of blindly
 repeating a launch.
 
@@ -37,7 +37,7 @@ state and does not launch.
 lovelace work-items update <id> [--title <text>] [--notes <text> | --notes-file <path> | --clear-notes]
 ```
 
-`update` edits the local title and notes through `PATCH /work-items/:id`;
+`update` edits the local title and notes through `workItems.update`;
 omitted fields keep their current values.
 
 Workspace creation (`work-items add-worktree <id> <repo> [--branch <name>] [--base <branch>]`)

@@ -4,6 +4,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { WorkItemDetails } from '@lovelace/core';
+import { fakeClient } from '@lovelace/client/testing';
 import { launchTools, openTool, type AgentCommandDeps } from './launch-tools.js';
 
 let root: string; const originalConfig = process.env.LOVELACE_CONFIG;
@@ -15,15 +16,15 @@ const details: WorkItemDetails = { workItem: { id: 'work', title: 'Fixture', sta
 function fixture() {
   const events: unknown[][] = [];
   const deps: AgentCommandDeps = {
-    client: {
-      newSession: async (id, prompt, agentId, options, requestId, ...rest) => {
-        events.push(['newSession', { id, prompt, agentId, options, requestId }, rest]);
+    client: fakeClient({
+      'launches.newSession': async (input, signal) => {
+        events.push(['newSession', input, signal]);
         return {
-          details, launch: { id: 'fixed-request-id', workItemId: id, state: 'started', error: null, harness: 'pi', repoIds: [], promptId: null, prompt, createdAt: '', updatedAt: '' },
+          details, launch: { id: 'fixed-request-id', workItemId: input.workItemId, state: 'started', error: null, harness: 'pi', repoIds: [], promptId: null, prompt: input.prompt, createdAt: '', updatedAt: '' },
         };
       },
-      openSession: async (id, sessionId) => { events.push(['open', id, sessionId]); return { action: 'focused', details }; },
-    },
+      'sessions.open': async ({ workItemId, sessionId }) => { events.push(['open', workItemId, sessionId]); return { action: 'focused', details }; },
+    }),
     uuid: () => 'fixed-request-id',
     readPrompt: async path => { events.push(['readPrompt', path]); return filePrompt; },
   };
@@ -35,15 +36,15 @@ test('explicit CLI launch asks the server to start the session with exact prompt
   const result = await launchTools(['work', 'pi', '--prompt-file', '/fixture/prompt.txt', '--model', 'chosen', '--thinking', 'high'], f.deps);
   assert.deepEqual(f.events.map(event => event[0]), ['readPrompt', 'newSession']);
   assert.equal(f.events[0]![1], '/fixture/prompt.txt');
-  assert.deepEqual(f.events[1]![1], { id: 'work', prompt: filePrompt, agentId: 'pi', options: { pi: { model: 'chosen', thinkingLevel: 'high' } }, requestId: 'fixed-request-id' });
-  assert.deepEqual(f.events[1]![2], [], 'no request options for a fresh launch');
+  assert.deepEqual(f.events[1]![1], { workItemId: 'work', prompt: filePrompt, agentId: 'pi', options: { pi: { model: 'chosen', thinkingLevel: 'high' } }, requestId: 'fixed-request-id' });
+  assert.equal(f.events[1]![2], undefined, 'no request options for a fresh launch');
   assert.equal((result as { launch: { state: string } }).launch.state, 'started');
 });
 
 test('CLI prompt argv whitespace stays exact and exactly one prompt source is required noninteractively', async () => {
   const f = fixture(); const prompt = '  exact\n\n ';
   await launchTools(['work', 'codex', '--prompt', prompt], f.deps);
-  assert.deepEqual(f.events[0]![1], { id: 'work', prompt, agentId: 'codex', options: { codex: {} }, requestId: 'fixed-request-id' });
+  assert.deepEqual(f.events[0]![1], { workItemId: 'work', prompt, agentId: 'codex', options: { codex: {} }, requestId: 'fixed-request-id' });
   f.events.length = 0;
   await assert.rejects(launchTools(['work', 'pi', '--prompt', 'x', '--prompt-file', 'x'], f.deps), /Usage: .*\(--prompt <text> \| --prompt-file <path>\)/);
   await assert.rejects(launchTools(['work', 'pi'], f.deps), /Usage: .*\(--prompt <text> \| --prompt-file <path>\)/);

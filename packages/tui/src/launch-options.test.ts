@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { stripTerminalSequences } from '@earendil-works/pi-tui';
-import type { LovelaceClient } from '@lovelace/client';
-import { CODING_HARNESSES, type AvailableHarness, type DashboardResponse, type ToolLaunchOptionsById } from '@lovelace/core';
+import { fakeClient } from '@lovelace/client/testing';
+import { CODING_HARNESSES, type AvailableHarness, type DashboardResponse, type Launch, type LaunchResponse, type ToolLaunchOptionsById, type WorkItem } from '@lovelace/core';
 import { AppState } from './state.js';
 import { LaunchOptionsRow, type LaunchField } from './launch-options.js';
 import { submitLaunch } from './controller.js';
@@ -98,12 +98,14 @@ test('launches send the chosen harness and overrides, and the choice outlives th
   new LaunchOptionsRow(state).openLink('launch:agent:pick:1');
   state.setLaunchOverrides({ thinkingLevel: 'high' });
   const calls: Array<{ agentId?: string; overrides?: ToolLaunchOptionsById }> = [];
-  const client = {
-    quickStart: async (_prompt: string, _jira?: string, agentId?: string, overrides?: ToolLaunchOptionsById) => {
-      calls.push({ agentId, overrides });
-      return { details: { workItem: { id: 'work' }, attachments: [] }, launch: { ok: true, error: null } };
+  const client = fakeClient({
+    'launches.quickStart': async ({ agentId, options, requestId, prompt }) => {
+      calls.push({ agentId, overrides: options });
+      const launch: Launch = { id: requestId!, workItemId: 'work', state: 'accepted', error: null, harness: agentId ?? 'pi', repoIds: [], promptId: null, prompt, createdAt: '', updatedAt: '' };
+      const workItem: WorkItem = { id: 'work', title: 'Work', state: 'active', notes: null, createdAt: '', updatedAt: '', startedAt: null, completedAt: null };
+      return { details: { workItem, attachments: [], launches: [launch] }, launch } satisfies LaunchResponse;
     },
-  } as unknown as LovelaceClient;
+  });
   await submitLaunch(state, { client, refreshDashboard() {}, newRequestId: () => 'id-1' }, 'Do it');
   state.navigateToDashboard();
   await submitLaunch(state, { client, refreshDashboard() {}, newRequestId: () => 'id-2' }, 'Again');

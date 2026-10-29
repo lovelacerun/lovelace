@@ -1,11 +1,10 @@
 import { randomUUID } from 'node:crypto';
 import type { LovelaceClient } from '@lovelace/client';
-import { ApiError } from '@lovelace/client';
 import type { LaunchResponse, WorkItemState } from '@lovelace/core';
 import { isLaunchFocus, type AppState } from './state.js';
 import type { Action } from './views/common.js';
 import type { KeyIntent } from './keymap.js';
-import { errorMessage, isOffline } from './errors.js';
+import { errorMessage, errorStatus, isAborted, isOffline } from './errors.js';
 
 export interface ControllerDeps {
   client: LovelaceClient;
@@ -153,7 +152,7 @@ async function changeWorkItemState(state: AppState, deps: ControllerDeps, target
   state.mutationInFlight = true;
   state.setNotice(`Updating state → ${target}…`);
   try {
-    await deps.client.setWorkItemState(workItemId, target, { signal: deps.signal });
+    await deps.client.workItems.setState.mutate({ id: workItemId, state: target }, { signal: deps.signal });
     if (deps.signal?.aborted) return;
     state.setNotice(null);
     deps.refreshDetails();
@@ -174,7 +173,7 @@ async function retryLaunch(state: AppState, deps: ControllerDeps, launchId: stri
   state.mutationInFlight = true;
   state.setError(null);
   try {
-    const response = await deps.client.retryLaunch(launchId, { signal: deps.signal });
+    const response = await deps.client.launches.retry.mutate({ id: launchId }, { signal: deps.signal });
     if (deps.signal?.aborted) return;
     if (state.selectedWorkItemId === response.details.workItem.id) state.setWorkItemData(response.details);
     deps.refreshDashboard();
@@ -226,14 +225,19 @@ export async function submitLaunch(
 
   try {
     const workItemId = state.view === 'work-item' ? state.selectedWorkItemId ?? undefined : undefined;
-    const options = {
-      signal: deps.signal, repoIds: draft.repoIds, promptId: draft.promptId, wait: false,
-      reviewRequestId: state.view === 'review' ? state.selectedReview?.id : undefined,
+    const launch = {
+      prompt, agentId: state.launchAgent, options: state.launchToolOptions, requestId,
+      repoIds: draft.repoIds, promptId: draft.promptId, wait: false,
     };
+    const request = { signal: deps.signal };
     // A resent request the server already recorded is answered by its launch, whatever the draft says now.
     const response = (resend ? await recordedLaunch(deps.client, requestId, deps.signal) : null) ?? (workItemId
-      ? await deps.client.newSession(workItemId, prompt, state.launchAgent, state.launchToolOptions, requestId, options)
-      : await deps.client.quickStart(prompt, state.view === 'jira' ? state.selectedJira?.id : undefined, state.launchAgent, state.launchToolOptions, requestId, options));
+      ? await deps.client.launches.newSession.mutate({ workItemId, ...launch }, request)
+      : await deps.client.launches.quickStart.mutate({
+        ...launch,
+        jiraIssueId: state.view === 'jira' ? state.selectedJira?.id : undefined,
+        reviewRequestId: state.view === 'review' ? state.selectedReview?.id : undefined,
+      }, request));
     deps.signal?.throwIfAborted();
     const currentText = state.drafts.get(draftKey)?.text ?? '';
     setDraft({ text: currentText === prompt ? '' : currentText, repoIds: undefined, promptId: undefined, requestId: undefined });
@@ -245,10 +249,10 @@ export async function submitLaunch(
     }
   } catch (error) {
     setNotice(null);
-    if (isOffline(error) || (error instanceof Error && error.name === 'AbortError')) {
+    if (isOffline(error) || isAborted(error)) {
       setError('No reply from the server — reconnect and press Enter to resend; it never launches twice.');
-    } else if (error instanceof ApiError && error.status >= 500) {
-      setError(`${error.message || 'Server error'} — press Enter to resend; it never launches twice.`);
+    } else if (errorStatus(error) >= 500) {
+      setError(`${errorMessage(error, 'Server error') || 'Server error'} — press Enter to resend; it never launches twice.`);
     } else {
       // A rejection of a resend cannot abandon the launch it might have started.
       if (!resend) setDraft({ requestId: undefined });
@@ -262,9 +266,9 @@ export async function submitLaunch(
 
 async function recordedLaunch(client: ControllerDeps['client'], requestId: string, signal?: AbortSignal): Promise<LaunchResponse | null> {
   try {
-    return await client.getLaunch(requestId, { signal });
+    return await client.launches.get.query({ id: requestId }, { signal });
   } catch (error) {
-    if (error instanceof ApiError && error.status === 404) return null;
+    if (errorStatus(error) === 404) return null;
     throw error;
   }
 }

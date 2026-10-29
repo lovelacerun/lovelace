@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { it } from 'node:test';
 import { stripTerminalSequences } from '@earendil-works/pi-tui';
 import type { TuiAltScreen } from '@earendil-works/pi-tui';
-import type { LovelaceClient } from '@lovelace/client';
+import { fakeClient } from '@lovelace/client/testing';
 import type { DashboardResponse, WorkItemAttachment, WorkItemDetails } from '@lovelace/core';
 import { AppRoot } from './app.js';
 
@@ -34,9 +34,9 @@ for (const columns of [50, 80, 120]) {
       terminal: { columns, rows: 24 }, requestRender() {}, start() {}, stop() {}, setFocus() {},
       addInputListener(listener: (data: string) => unknown) { input = listener; return () => { input = () => {}; }; },
     } as unknown as TuiAltScreen;
-    const client = { serverUrl: 'http://localhost:4747', getDashboard: async () => dashboard, getWorkItem: async () => details } as unknown as LovelaceClient;
+    const client = fakeClient({ 'dashboard.get': async () => dashboard, 'workItems.get': async () => details });
     let fail = false;
-    const root = new AppRoot({ tui, client, openUrl: async url => {
+    const root = new AppRoot({ tui, client, serverUrl: 'http://localhost:4747', openUrl: async url => {
       if (fail) throw new Error('Browser unavailable');
       opened.push(url);
     } });

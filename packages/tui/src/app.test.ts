@@ -4,7 +4,8 @@ import { getOsc8LinkAtColumn, stripTerminalSequences, visibleWidth } from '@eare
 import type { Component, TuiAltScreen, TuiMouseEvent } from '@earendil-works/pi-tui';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import type { TestContext } from 'node:test';
-import { ApiError, LovelaceClient, type QuickStartOptions } from '@lovelace/client';
+import { createLovelaceClient, type LovelaceClient } from '@lovelace/client';
+import { fakeClient, serverError, type FakeHandlers } from '@lovelace/client/testing';
 import {
   CODING_HARNESSES, type AgentSession, type AvailableHarness, type DashboardResponse, type PullRequestPayload, type LaunchResponse, type SessionOpenResponse,
   type LaunchState, type WorkItemDetails, type WorkItemState,
@@ -64,13 +65,13 @@ class FakeTui {
   }
 }
 
-// -- FakeClient -----------------------------------------------------------
+// -- FakeServer -----------------------------------------------------------
 
 interface OpenCall { workItemId: string; sessionId: string }
-interface LaunchCall { endpoint: 'quickStart' | 'newSession'; workItemId?: string; jiraIssueId?: string; reviewRequestId?: string; prompt: string; requestId?: string; repoIds?: string[]; promptId?: string }
+interface LaunchCall { endpoint: 'quickStart' | 'newSession'; workItemId?: string; jiraIssueId?: string | null; reviewRequestId?: string | null; prompt: string; requestId?: string; repoIds?: string[]; promptId?: string }
 
-class FakeClient {
-  readonly serverUrl = 'http://127.0.0.1:4747';
+/** Server state behind a typed fake client; tests may replace `handlers` entries before the call. */
+class FakeServer {
   dashboardResponse: DashboardResponse = emptyDashboard();
   workItemByIdResponse: Record<string, WorkItemDetails> = {};
   readonly openCalls: OpenCall[] = [];
@@ -78,43 +79,38 @@ class FakeClient {
   openQueue: Array<SessionOpenResponse | Error> = [];
   launchQueue: Array<LaunchResponse | Error> = [];
 
-  async getDashboard() { return this.dashboardResponse; }
-  async getWorkItem(id: string): Promise<WorkItemDetails> {
-    return this.workItemByIdResponse[id] ?? detailsOf(id);
-  }
-  async getJiraIssues() { return []; }
-  async getTools() { return fixtureTools(); }
-  async openSession(workItemId: string, sessionId: string): Promise<SessionOpenResponse> {
-    this.openCalls.push({ workItemId, sessionId });
-    const next = this.openQueue.shift();
-    if (!next) throw new Error('No queued open response');
-    if (next instanceof Error) throw next;
-    return next;
-  }
-  async setWorkItemState() { return {} as never; }
-  async getLaunch(): Promise<LaunchResponse> { throw new ApiError(404, 'launch not found'); }
-  async quickStart(prompt: string, jiraIssueId?: string, _agentId?: unknown, _overrides?: unknown, requestId?: string, options?: QuickStartOptions): Promise<LaunchResponse> {
-    this.launchCalls.push({ endpoint: 'quickStart', jiraIssueId, prompt, requestId, ...(options?.reviewRequestId ? { reviewRequestId: options.reviewRequestId } : {}), ...(options?.repoIds ? { repoIds: options.repoIds } : {}), ...(options?.promptId ? { promptId: options.promptId } : {}) });
+  readonly handlers: FakeHandlers = {
+    'dashboard.get': async () => this.dashboardResponse,
+    'workItems.get': async ({ id }) => this.workItemByIdResponse[id] ?? detailsOf(id),
+    'jira.issues': async () => [],
+    'tools.list': async () => fixtureTools(),
+    'sessions.open': async ({ workItemId, sessionId }) => {
+      this.openCalls.push({ workItemId, sessionId });
+      const next = this.openQueue.shift();
+      if (!next) throw new Error('No queued open response');
+      if (next instanceof Error) throw next;
+      return next;
+    },
+    'workItems.setState': async ({ id, state }) => detailsOf(id, state).workItem,
+    'launches.get': async () => { throw serverError(404, 'launch not found'); },
+    'launches.quickStart': async ({ prompt, jiraIssueId, requestId, reviewRequestId, repoIds, promptId }) => {
+      this.launchCalls.push({ endpoint: 'quickStart', jiraIssueId, prompt, requestId, ...(reviewRequestId ? { reviewRequestId } : {}), ...(repoIds ? { repoIds } : {}), ...(promptId ? { promptId } : {}) });
+      return this.nextLaunch();
+    },
+    'launches.newSession': async ({ workItemId, prompt, requestId }) => {
+      this.launchCalls.push({ endpoint: 'newSession', workItemId, prompt, requestId });
+      return this.nextLaunch();
+    },
+  };
+  /** Looks handlers up on every call, so replacing one takes effect immediately. */
+  readonly client: LovelaceClient = fakeClient(this.handlers);
+
+  private nextLaunch(): LaunchResponse {
     const next = this.launchQueue.shift();
     if (!next) throw new Error('No queued launch response');
     if (next instanceof Error) throw next;
     return next;
   }
-  async newSession(id: string, prompt: string, _agentId?: unknown, _o?: unknown, requestId?: string): Promise<LaunchResponse> {
-    this.launchCalls.push({ endpoint: 'newSession', workItemId: id, prompt, requestId });
-    const next = this.launchQueue.shift();
-    if (!next) throw new Error('No queued launch response');
-    if (next instanceof Error) throw next;
-    return next;
-  }
-}
-
-function fakeClient(): LovelaceClient {
-  return new FakeClient() as unknown as LovelaceClient;
-}
-
-function asFake(c: LovelaceClient): FakeClient {
-  return c as unknown as FakeClient;
 }
 
 // -- Helpers --------------------------------------------------------------
@@ -152,11 +148,11 @@ function launched(id: string, state: LaunchState = 'accepted', error: string | n
   return { details: { ...detailsOf(id), launches: [launch] }, launch };
 }
 
-function makeRoot(opts: { tui?: FakeTui; client?: LovelaceClient } = {}) {
+function makeRoot(opts: { tui?: FakeTui; server?: FakeServer; client?: LovelaceClient } = {}) {
   const tui = opts.tui ?? new FakeTui();
-  const client = opts.client ?? fakeClient();
-  const root = new AppRoot({ tui: tui as unknown as TuiAltScreen, client });
-  return { root, tui, client: client as LovelaceClient };
+  const server = opts.server ?? new FakeServer();
+  const root = new AppRoot({ tui: tui as unknown as TuiAltScreen, client: opts.client ?? server.client, serverUrl: 'http://127.0.0.1:4747' });
+  return { root, tui, server };
 }
 
 function withSession(id: string, state: WorkItemState = 'active'): WorkItemDetails {
@@ -174,27 +170,27 @@ const openSession = (root: AppRoot, sessionId = 'm') => (root as unknown as { op
 
 describe('AppRoot review list', () => {
   it('lists reviews in the sidebar and starts one with the review template in its repository', async (t) => {
-    const { root, tui, client } = makeRoot();
+    const { root, tui, server } = makeRoot();
     const rendered: unknown[] = [];
-    client.renderPrompt = async input => { rendered.push(input); return { promptId: 'review', content: 'Review org/a#7\n' }; };
+    server.handlers['prompts.render'] = async input => { rendered.push(input); return { promptId: 'review', content: 'Review org/a#7\n' }; };
     const review = {
       id: 'PR_1', number: 7, title: 'Retry uploads', url: '', repoFullName: 'org/a', repoId: 'github:a',
       authorLogin: 'human', headRefName: 'feature/retry', baseRefName: 'main', updatedAt: '',
     };
-    asFake(client).dashboardResponse.pendingReviews = [review];
+    server.dashboardResponse.pendingReviews = [review];
     const done = root.start();
     t.after(async () => { root.quit(); await done; });
-    root.state.applyDashboardResponse(asFake(client).dashboardResponse);
+    root.state.applyDashboardResponse(server.dashboardResponse);
     assert.match(stripTerminalSequences(root.render(120).join('\n')), /REVIEWS  1[\s\S]*a#7 Retry uploads/);
     assert.match(stripTerminalSequences(root.render(120).join('\n')), /Reviews  1[\s\S]*Retry uploads/, 'Home lists reviews too');
     root.state.navigate({ kind: 'review', id: review.id });
     assert.match(stripTerminalSequences(root.render(120).join('\n')), /Start review/);
-    asFake(client).launchQueue.push(launched('created'));
+    server.launchQueue.push(launched('created'));
     tui.feedInput('\r');
-    await waitFor(() => asFake(client).launchCalls.length === 1 && !root.state.mutationInFlight);
+    await waitFor(() => server.launchCalls.length === 1 && !root.state.mutationInFlight);
     assert.deepEqual(rendered, [{ promptId: 'review', title: 'org/a#7: Retry uploads',
       sources: [{ sourceType: 'change-request', provider: 'github', externalId: 'PR_1', payload: review }] }]);
-    const launch = asFake(client).launchCalls[0]!;
+    const launch = server.launchCalls[0]!;
     assert.equal(launch.reviewRequestId, 'PR_1');
     assert.deepEqual(launch.repoIds, ['github:a']);
     assert.equal(launch.promptId, 'review');
@@ -205,19 +201,19 @@ describe('AppRoot review list', () => {
 
 describe('AppRoot Jira start-work overlay', () => {
   it('keeps Jira details underneath one modal with repositories and an editable prompt together', async (t) => {
-    const { root, tui, client } = makeRoot();
-    client.getPromptTemplates = async () => [{ id: 'refine', title: 'Refine', content: '', builtIn: true, overridden: true }];
-    client.getRepositories = async () => ['sync', 'client'].map((name, index) => ({
+    const { root, tui, server } = makeRoot();
+    server.handlers['prompts.list'] = async () => [{ id: 'refine', title: 'Refine', content: '', builtIn: true, overridden: true }];
+    server.handlers['repositories.list'] = async () => ['sync', 'client'].map((name, index) => ({
       id: String(index), provider: 'github', externalId: String(index), name, fullName: `org/${name}`,
       cloneUrl: '', defaultBranch: 'main', isArchived: false, topics: [index ? 'examplecom' : 'infra'], lastSyncedAt: '',
     }));
-    client.renderPrompt = async () => ({ promptId: 'refine', content: '  Rendered prompt\n' });
+    server.handlers['prompts.render'] = async () => ({ promptId: 'refine', content: '  Rendered prompt\n' });
     const issue = { id: '42', key: 'PROJ-42', title: 'Fix sync', url: '', status: 'To Do', issueType: 'Task', updatedAt: '' };
-    asFake(client).dashboardResponse.pendingJiraIssues = [issue];
-    asFake(client).dashboardResponse.settings.repositoryTopics = ['infra', 'examplecom'];
+    server.dashboardResponse.pendingJiraIssues = [issue];
+    server.dashboardResponse.settings.repositoryTopics = ['infra', 'examplecom'];
     const done = root.start();
     t.after(async () => { root.quit(); await done; });
-    root.state.applyDashboardResponse(asFake(client).dashboardResponse);
+    root.state.applyDashboardResponse(server.dashboardResponse);
     root.state.navigate({ kind: 'jira', id: issue.id });
     tui.feedInput('\r');
     const overlay = tui.overlays[0]!;
@@ -257,10 +253,10 @@ describe('AppRoot Jira start-work overlay', () => {
     tui.feedInput('\x1b[1;5F');
     tui.feedInput('Edited');
     const prompt = modal.editor.getExpandedText();
-    asFake(client).launchQueue.push(new ApiError(400, 'fixture preparation failure'));
+    server.launchQueue.push(serverError(400, 'fixture preparation failure'));
     tui.feedInput('\x13');
     await waitFor(() => !root.state.mutationInFlight);
-    const launch = asFake(client).launchCalls[0]!;
+    const launch = server.launchCalls[0]!;
     assert.equal(launch.jiraIssueId, '42');
     assert.deepEqual(launch.repoIds, ['0', '1']);
     assert.equal(launch.promptId, 'refine');
@@ -275,14 +271,14 @@ describe('AppRoot Jira start-work overlay', () => {
   });
 
   it('isolates filter command letters, retains drafts on cancel and refuses unresolved launch changes', async (t) => {
-    const { root, tui, client } = makeRoot();
-    client.getPromptTemplates = async () => [];
-    client.getRepositories = async () => [];
+    const { root, tui, server } = makeRoot();
+    server.handlers['prompts.list'] = async () => [];
+    server.handlers['repositories.list'] = async () => [];
     const issue = { id: '42', key: 'PROJ-42', title: 'Task', url: '', status: null, issueType: null, updatedAt: '' };
-    asFake(client).dashboardResponse.pendingJiraIssues = [issue];
+    server.dashboardResponse.pendingJiraIssues = [issue];
     const done = root.start();
     t.after(async () => { root.quit(); await done; });
-    root.state.applyDashboardResponse(asFake(client).dashboardResponse);
+    root.state.applyDashboardResponse(server.dashboardResponse);
     root.state.navigate({ kind: 'jira', id: issue.id });
     root.state.setDraft({ text: 'Keep prompt', repoIds: ['1'] });
     tui.feedInput('n'); // Jira opens the modal, never a hidden quick-start editor.
@@ -299,42 +295,42 @@ describe('AppRoot Jira start-work overlay', () => {
     assert.deepEqual(root.state.draft.repoIds, ['1']);
     root.state.setDraft({ requestId: 'id' });
     assert.match(root.render(80).join('\n'), /Resend unanswered launch/);
-    asFake(client).launchQueue.push(new ApiError(503, 'Fixture retry failed'));
+    server.launchQueue.push(serverError(503, 'Fixture retry failed'));
     tui.feedInput('\r');
-    await waitFor(() => asFake(client).launchCalls.length === 1 && !root.state.mutationInFlight);
+    await waitFor(() => server.launchCalls.length === 1 && !root.state.mutationInFlight);
     assert.equal(tui.overlays.length, 1, 'cannot change an unanswered launch');
-    assert.equal(asFake(client).launchCalls[0]!.prompt, 'Keep prompt');
-    assert.equal(asFake(client).launchCalls[0]!.requestId, 'id');
-    assert.deepEqual(asFake(client).launchCalls[0]!.repoIds, ['1']);
+    assert.equal(server.launchCalls[0]!.prompt, 'Keep prompt');
+    assert.equal(server.launchCalls[0]!.requestId, 'id');
+    assert.deepEqual(server.launchCalls[0]!.repoIds, ['1']);
     assert.match(root.state.error!, /Fixture retry failed/);
   });
 
   it('a successful start closes the overlay and navigates to the saved work without opening a session', async (t) => {
-    const { root, tui, client } = makeRoot();
-    client.getPromptTemplates = async () => [];
-    client.getRepositories = async () => [];
+    const { root, tui, server } = makeRoot();
+    server.handlers['prompts.list'] = async () => [];
+    server.handlers['repositories.list'] = async () => [];
     const issue = { id: '42', key: 'PROJ-42', title: 'Task', url: '', status: null, issueType: null, updatedAt: '' };
-    asFake(client).dashboardResponse.pendingJiraIssues = [issue];
+    server.dashboardResponse.pendingJiraIssues = [issue];
     const done = root.start();
     t.after(async () => { root.quit(); await done; });
-    root.state.applyDashboardResponse(asFake(client).dashboardResponse);
+    root.state.applyDashboardResponse(server.dashboardResponse);
     root.state.navigate({ kind: 'jira', id: issue.id });
     root.state.setDraft({ text: 'Start this task' });
     tui.feedInput('\r');
     const modal = tui.overlays[0]!.component as JiraStartModal;
     await waitFor(() => !modal.loading);
-    asFake(client).launchQueue.push(launched('created'));
+    server.launchQueue.push(launched('created'));
     tui.feedInput('\x13');
     await waitFor(() => !tui.overlays[0]!.visible);
     assert.equal(root.state.view, 'work-item');
     assert.equal(root.state.selectedWorkItemId, 'created');
-    assert.equal(asFake(client).openCalls.length, 0);
+    assert.equal(server.openCalls.length, 0);
   });
 });
 
 describe('AppRoot new-session overlay', () => {
   it('starts another session on the selected work item from n or its row', async (t) => {
-    const { root, tui, client } = makeRoot();
+    const { root, tui, server } = makeRoot();
     const done = root.start();
     t.after(async () => { root.quit(); await done; });
     root.state.navigateToWorkItem('w1');
@@ -351,19 +347,19 @@ describe('AppRoot new-session overlay', () => {
       assert.ok(lines.every(line => visibleWidth(line) <= cols! - 2));
     }
     tui.feedInput('Second pass');
-    asFake(client).launchQueue.push(new ApiError(404, 'Work item not found.'));
+    server.launchQueue.push(serverError(404, 'Work item not found.'));
     tui.feedInput('\x13');
     await waitFor(() => !root.state.mutationInFlight && !modal.launching);
     assert.equal(overlay.visible, true, 'a rejection stays in the dialog');
     assert.match(stripTerminalSequences(modal.render(76).join('\n')), /Work item not found/);
-    asFake(client).launchQueue.push({ ...launched('w1'), details: withSession('w1') });
+    server.launchQueue.push({ ...launched('w1'), details: withSession('w1') });
     tui.feedInput('\x13');
     await waitFor(() => !overlay.visible);
-    assert.deepEqual(asFake(client).launchCalls.map(call => [call.endpoint, call.workItemId, call.prompt]),
+    assert.deepEqual(server.launchCalls.map(call => [call.endpoint, call.workItemId, call.prompt]),
       [['newSession', 'w1', 'Second pass'], ['newSession', 'w1', 'Second pass']]);
     assert.equal(root.state.view, 'work-item');
     assert.equal(root.state.draft.text, '');
-    assert.equal(asFake(client).openCalls.length, 0);
+    assert.equal(server.openCalls.length, 0);
   });
 
   it('refuses inactive work and keeps Escape inside the dialog', async (t) => {
@@ -389,27 +385,27 @@ describe('AppRoot new-session overlay', () => {
 describe('AppRoot session open', () => {
   it('selecting a session asks the server once; Herdr focuses or continues it', async (t) => {
     let finish!: (value: SessionOpenResponse) => void;
-    const client = fakeClient();
-    client.openSession = (workItemId, sessionId) => { asFake(client).openCalls.push({ workItemId, sessionId }); return new Promise(resolve => { finish = resolve; }); };
-    const { root, tui } = makeRoot({ client });
+    const server = new FakeServer();
+    server.handlers['sessions.open'] = ({ workItemId, sessionId }) => { server.openCalls.push({ workItemId, sessionId }); return new Promise(resolve => { finish = resolve; }); };
+    const { root, tui } = makeRoot({ server });
     const done = root.start();
     t.after(async () => { root.quit(); await done; });
     root.state.navigateToWorkItem('wi');
     root.state.setWorkItemData(withSession('wi'));
     tui.feedInput('\r');
     tui.feedInput('\r');
-    assert.deepEqual(asFake(client).openCalls, [{ workItemId: 'wi', sessionId: 'm' }]);
+    assert.deepEqual(server.openCalls, [{ workItemId: 'wi', sessionId: 'm' }]);
     assert.equal(root.state.pendingConfirm, null, 'no confirmation: selecting is the request');
     finish({ action: 'continued', details: withSession('wi') });
     await waitFor(() => root.state.notice === 'Continued the conversation in Herdr.');
-    assert.equal(asFake(client).launchCalls.length, 0);
+    assert.equal(server.launchCalls.length, 0);
   });
 
   it('a focused session clears the notice and server refusals surface as errors', async () => {
-    const { root, client } = makeRoot();
+    const { root, server } = makeRoot();
     root.state.navigateToWorkItem('wi');
     root.state.setWorkItemData(withSession('wi'));
-    asFake(client).openQueue.push({ action: 'focused', details: withSession('wi') }, new ApiError(409, 'No native conversation was recorded for this session'));
+    server.openQueue.push({ action: 'focused', details: withSession('wi') }, serverError(409, 'No native conversation was recorded for this session'));
     await openSession(root);
     assert.equal(root.state.notice, null);
     assert.equal(root.state.error, null);
@@ -420,21 +416,21 @@ describe('AppRoot session open', () => {
 
   for (const localState of ['done', 'cancelled'] as const) {
     it(localState + ' work needs explicit reactivation before opening a session', async () => {
-      const { root, client } = makeRoot();
+      const { root, server } = makeRoot();
       root.state.navigateToWorkItem('wi');
       root.state.setWorkItemData(withSession('wi', localState));
       await openSession(root);
       assert.match(root.state.error!, /Reactivate local work explicitly/);
-      assert.equal(asFake(client).openCalls.length, 0);
+      assert.equal(server.openCalls.length, 0);
       root.stop();
     });
   }
 
   it('a late open reply after quit changes nothing', async (t) => {
     let finish!: (value: SessionOpenResponse) => void;
-    const client = fakeClient();
-    client.openSession = () => new Promise(resolve => { finish = resolve; });
-    const { root, tui } = makeRoot({ client });
+    const server = new FakeServer();
+    server.handlers['sessions.open'] = () => new Promise(resolve => { finish = resolve; });
+    const { root, tui } = makeRoot({ server });
     const done = root.start();
     t.after(() => root.stop());
     root.state.navigateToWorkItem('wi');
@@ -451,13 +447,13 @@ describe('AppRoot session open', () => {
 
 describe('AppRoot editor sync across drafts', () => {
   it('swaps editor contents when navigating between work items and back', async () => {
-    const { root, client, tui } = makeRoot();
+    const { root, server, tui } = makeRoot();
     const dash = emptyDashboard();
     dash.activeWorkItems = [
       { id: 'wi-A', title: 'A', state: 'active', notes: null, createdAt: '', updatedAt: '', startedAt: null, completedAt: null, sessionCount: 0, repositoryCount: 0, trackerIssueKeys: [], pullRequestRefs: [] },
       { id: 'wi-B', title: 'B', state: 'active', notes: null, createdAt: '', updatedAt: '', startedAt: null, completedAt: null, sessionCount: 0, repositoryCount: 0, trackerIssueKeys: [], pullRequestRefs: [] },
     ];
-    asFake(client).dashboardResponse = dash;
+    server.dashboardResponse = dash;
     root.state.applyDashboardResponse(dash);
 
     // Navigate to A and set a draft.
@@ -506,12 +502,12 @@ describe('AppRoot editor sync across drafts', () => {
 
 describe('AppRoot offline rendering', () => {
   it('keeps the last-known dashboard content and shows an offline banner', () => {
-    const { root, client } = makeRoot();
+    const { root, server } = makeRoot();
     const dash = emptyDashboard();
     dash.activeWorkItems = [
       { id: 'wi-A', title: 'Alpha Task', state: 'active', notes: null, createdAt: '', updatedAt: '', startedAt: null, completedAt: null, sessionCount: 0, repositoryCount: 0, trackerIssueKeys: [], pullRequestRefs: [] },
     ];
-    asFake(client).dashboardResponse = dash;
+    server.dashboardResponse = dash;
     root.state.applyDashboardResponse(dash);
     root.state.setOffline();
     const output = root.render(80).join('\n');
@@ -523,8 +519,8 @@ describe('AppRoot offline rendering', () => {
 
 describe('AppRoot requestId lifecycle integration', () => {
   it('a failed launch is still an answer: the draft clears and its work item shows the failure', async () => {
-    const { root, client } = makeRoot();
-    const fake = asFake(client);
+    const { root, server } = makeRoot();
+    const fake = server;
     fake.launchQueue.push(launched('wi-new', 'failed', 'tool missing'));
     root.state.setDraft({ text: 'go' });
     await (root as unknown as { launchFromEditor: (p: string) => Promise<void> }).launchFromEditor('go');
@@ -539,9 +535,9 @@ describe('AppRoot requestId lifecycle integration', () => {
   });
 
   it('an unanswered launch resends its request ID across navigation', async () => {
-    const { root, client } = makeRoot();
-    const fake = asFake(client);
-    fake.launchQueue.push(new ApiError(0, 'network'));
+    const { root, server } = makeRoot();
+    const fake = server;
+    fake.launchQueue.push(new Error('network'));
     fake.launchQueue.push(launched('wi-ok'));
     root.state.setDraft({ text: 'risky' });
     await (root as unknown as { launchFromEditor: (p: string) => Promise<void> }).launchFromEditor('risky');
@@ -676,35 +672,41 @@ function reply(res: ServerResponse, status: number, body: unknown) {
   res.end(JSON.stringify(body));
 }
 
+/** tRPC wire replies: `{ result }` on success, `{ error }` with the HTTP status on rejection. */
+const replyData = (res: ServerResponse, data: unknown) => reply(res, 200, { result: { data } });
+function replyError(res: ServerResponse, status: 400 | 404, message: string, path: string) {
+  const code = status === 400 ? 'BAD_REQUEST' : 'NOT_FOUND';
+  reply(res, status, { error: { message, code: status === 400 ? -32600 : -32004, data: { code, httpStatus: status, path } } });
+}
+
 describe('AppRoot real Editor submission over fixture HTTP', () => {
   for (const failure of ['400', 'timeout'] as const) {
     it(`preserves exact typed and pasted whitespace/buffer after ${failure}, then retries deliberately`, async t => {
       const requests: Array<{ path: string; body: { prompt: string; requestId: string } }> = [];
       const url = await httpFixture(t, (req, res) => {
-        if (req.method === 'GET') {
-          if (req.url!.startsWith('/launches/')) reply(res, 404, { error: 'launch not found' });
-          else reply(res, 200, req.url === '/dashboard' ? emptyDashboard() : req.url === '/tools' ? fixtureTools() : detailsOf('created'));
-          return;
-        }
         let data = '';
         req.on('data', chunk => { data += chunk; });
         req.on('end', () => {
+          const path = req.url!.split('?')[0]!;
+          if (path !== '/trpc/launches.quickStart') {
+            if (path === '/trpc/launches.get') replyError(res, 404, 'launch not found', 'launches.get');
+            else replyData(res, path === '/trpc/dashboard.get' ? emptyDashboard() : path === '/trpc/tools.list' ? fixtureTools() : detailsOf('created'));
+            return;
+          }
           const body = JSON.parse(data) as { prompt: string; requestId: string };
-          requests.push({ path: req.url!, body });
+          requests.push({ path, body });
           if (requests.length === 1) {
-            if (failure === '400') reply(res, 400, { error: 'Rejected' });
+            if (failure === '400') replyError(res, 400, 'Rejected', 'launches.quickStart');
             else { /* Deliberately withhold fixture reply. */ }
-          } else reply(res, 200, launched('created'));
+          } else replyData(res, launched('created'));
         });
       });
-      class DeadlineClient extends LovelaceClient {
-        override quickStart(...args: Parameters<LovelaceClient['quickStart']>) {
-          // Only the timeout case races a deadline; slow runners must not turn a reply into one.
-          if (failure === 'timeout') args[5] = { ...args[5], timeoutMs: 35 };
-          return super.quickStart(...args);
-        }
-      }
-      const { root, tui } = makeRoot({ client: new DeadlineClient(url) });
+      // Only the timeout case races a short deadline; slow runners must not turn a reply into one.
+      // The TUI cannot pass a per-call deadline, so the injected fetch aborts the launch request itself.
+      const deadlineFetch: typeof fetch = (input, init) => failure === 'timeout' && String(input).endsWith('/trpc/launches.quickStart')
+        ? fetch(input, { ...init, signal: AbortSignal.any([...init?.signal ? [init.signal] : [], AbortSignal.timeout(35)]) })
+        : fetch(input, init);
+      const { root, tui } = makeRoot({ client: createLovelaceClient(url, deadlineFetch) });
       const done = root.start();
       t.after(async () => { root.quit(); await done; });
       await waitFor(() => !root.state.isLoading);
@@ -733,7 +735,7 @@ describe('AppRoot real Editor submission over fixture HTTP', () => {
       tui.feedInput('\r');
       await waitFor(() => requests.length === 2 && !root.state.mutationInFlight);
       assert.equal(requests[1]!.body.prompt, prompt);
-      assert.equal(requests[1]!.path, '/work-items/quick-start');
+      assert.equal(requests[1]!.path, '/trpc/launches.quickStart');
       if (failure === 'timeout') assert.equal(requests[1]!.body.requestId, requests[0]!.body.requestId);
       else assert.notEqual(requests[1]!.body.requestId, requests[0]!.body.requestId);
       assert.equal(root.state.view, 'work-item');
@@ -744,7 +746,7 @@ describe('AppRoot real Editor submission over fixture HTTP', () => {
   }
 
   it('expands large paste markers but retains native compact rendering, split paste Enter and newline shortcuts', async t => {
-    const { root, tui, client } = makeRoot();
+    const { root, tui, server } = makeRoot();
     const done = root.start();
     t.after(async () => { root.quit(); await done; });
     await waitFor(() => !root.state.isLoading);
@@ -755,7 +757,7 @@ describe('AppRoot real Editor submission over fixture HTTP', () => {
     tui.feedInput('\x1b[201~');
     const prompt = root.editor.getExpandedText();
     assert.ok(root.editor.getText().includes('[paste #'));
-    assert.equal(asFake(client).launchCalls.length, 0);
+    assert.equal(server.launchCalls.length, 0);
     assert.ok(prompt.startsWith('\n  '));
     for (const [cols, rows] of [[50, 12], [80, 24], [120, 36]]) {
       tui.resize(cols!, rows!);
@@ -770,10 +772,10 @@ describe('AppRoot real Editor submission over fixture HTTP', () => {
     root.render(80);
     assert.equal(root.editor.getExpandedText(), prompt);
     assert.ok(root.editor.getText().includes('[paste #'), 'restore stays compact');
-    asFake(client).launchQueue.push(new ApiError(400, 'Rejected'));
+    server.launchQueue.push(serverError(400, 'Rejected'));
     tui.feedInput('\r');
-    await waitFor(() => asFake(client).launchCalls.length === 1 && !root.state.mutationInFlight);
-    assert.equal(asFake(client).launchCalls[0]!.prompt, prompt);
+    await waitFor(() => server.launchCalls.length === 1 && !root.state.mutationInFlight);
+    assert.equal(server.launchCalls[0]!.prompt, prompt);
     assert.equal(root.editor.getExpandedText(), prompt);
 
     root.editor.setText('');
@@ -786,14 +788,14 @@ describe('AppRoot real Editor submission over fixture HTTP', () => {
     tui.feedInput('\x1b[13;2u');
     assert.equal(root.editor.getExpandedText(), 'a\nb\nc\n');
     tui.feedInput('burst\rtext');
-    assert.equal(asFake(client).launchCalls.length, 1, 'input burst does not submit');
+    assert.equal(server.launchCalls.length, 1, 'input burst does not submit');
   });
 
   it('late mutation reply updates only its originating draft, not a newly selected task', async t => {
     let finish!: (value: LaunchResponse) => void;
-    const client = fakeClient();
-    client.quickStart = () => new Promise(resolve => { finish = resolve; });
-    const { root, tui } = makeRoot({ client });
+    const server = new FakeServer();
+    server.handlers['launches.quickStart'] = () => new Promise(resolve => { finish = resolve; });
+    const { root, tui } = makeRoot({ server });
     const done = root.start();
     t.after(async () => { root.quit(); await done; });
     tui.feedInput('n');
@@ -814,13 +816,13 @@ describe('AppRoot real Editor submission over fixture HTTP', () => {
 
 describe('AppRoot input/lifecycle integration', () => {
   it('starts details through real navigation input and restores focus after sidebar selection', async t => {
-    const { root, tui, client } = makeRoot();
+    const { root, tui, server } = makeRoot();
     const dash = emptyDashboard();
     dash.activeWorkItems = [{
       ...detailsOf('wi').workItem, sessionCount: 0, repositoryCount: 0,
       trackerIssueKeys: [], pullRequestRefs: [],
     }];
-    asFake(client).dashboardResponse = dash;
+    server.dashboardResponse = dash;
     const done = root.start();
     t.after(async () => { root.quit(); await done; });
     await waitFor(() => !root.state.isLoading);
@@ -838,12 +840,12 @@ describe('AppRoot input/lifecycle integration', () => {
 
 
   it('kitty key releases do not repeat navigation', async t => {
-    const { root, tui, client } = makeRoot();
+    const { root, tui, server } = makeRoot();
     const dash = emptyDashboard();
     dash.activeWorkItems = ['a', 'b', 'c'].map(id => ({
       ...detailsOf(id).workItem, sessionCount: 0, repositoryCount: 0, trackerIssueKeys: [], pullRequestRefs: [],
     }));
-    asFake(client).dashboardResponse = dash;
+    server.dashboardResponse = dash;
     const done = root.start();
     t.after(async () => { root.quit(); await done; });
     await waitFor(() => !root.state.isLoading);
@@ -872,7 +874,7 @@ describe('AppRoot input/lifecycle integration', () => {
   });
 
   it('Esc cancels confirmation before navigating; movement clears it', async t => {
-    const { root, tui, client } = makeRoot();
+    const { root, tui, server } = makeRoot();
     const done = root.start();
     t.after(async () => { root.quit(); await done; });
     root.state.navigateToWorkItem('wi');
@@ -884,12 +886,12 @@ describe('AppRoot input/lifecycle integration', () => {
     tui.feedInput('\x1b[B');
     tui.feedInput('y');
     assert.equal(root.state.pendingConfirm, null);
-    assert.equal(asFake(client).openCalls.length, 0);
+    assert.equal(server.openCalls.length, 0);
   });
 
 
   it('discarding a stuck launch needs explicit x/y and cannot implicitly replay or clear it', async t => {
-    const { root, tui, client } = makeRoot();
+    const { root, tui, server } = makeRoot();
     const done = root.start();
     t.after(async () => { root.quit(); await done; });
     root.state.setDraft({ text: 'original', requestId: 'id' });
@@ -904,7 +906,7 @@ describe('AppRoot input/lifecycle integration', () => {
     assert.equal(root.state.draft.requestId, undefined);
     assert.equal(root.editor.getExpandedText(), '');
     assert.equal(root.state.focus, 'editor');
-    assert.equal(asFake(client).launchCalls.length, 0);
+    assert.equal(server.launchCalls.length, 0);
   });
 
   it('sidebar selection remains visible beyond the viewport and stale/offline footer fits', () => {
@@ -935,8 +937,8 @@ describe('AppRoot input/lifecycle integration', () => {
 
 describe('AppRoot detailsPoller runs from start', () => {
   it('fetches work item details when selected and refresh is triggered', async () => {
-    const { root, client } = makeRoot();
-    const fake = asFake(client);
+    const { root, server } = makeRoot();
+    const fake = server;
     fake.workItemByIdResponse['wi-7'] = detailsOf('wi-7', 'active');
     root.state.selectedWorkItemId = 'wi-7';
     root.state.view = 'work-item';
@@ -1117,20 +1119,20 @@ describe('AppRoot mouse', () => {
     const tui = new FakeTui();
     tui.resize(120, 36);
     const opened: string[] = [];
-    const client = fakeClient();
-    const root = new AppRoot({ tui: tui as unknown as TuiAltScreen, client, openUrl: async url => { opened.push(url); } });
+    const server = new FakeServer();
+    const root = new AppRoot({ tui: tui as unknown as TuiAltScreen, client: server.client, serverUrl: 'http://127.0.0.1:4747', openUrl: async url => { opened.push(url); } });
     const dash = emptyDashboard();
     dash.activeWorkItems = ['a', 'b'].map(id => ({
       ...detailsOf(id).workItem, sessionCount: 0, repositoryCount: 0, trackerIssueKeys: [], pullRequestRefs: [],
     }));
     dash.recent.workItems = [{ ...detailsOf('y').workItem, title: 'Recent item', sessionCount: 0, repositoryCount: 0, trackerIssueKeys: [], pullRequestRefs: [] }];
     root.state.applyDashboardResponse(dash);
-    return { root, tui, client, opened };
+    return { root, tui, server, opened };
   }
 
   it('clicking sidebar and content rows navigates like Enter', async () => {
-    const { root, client } = mouseRoot();
-    asFake(client).workItemByIdResponse.b = detailsOf('b');
+    const { root, server } = mouseRoot();
+    server.workItemByIdResponse.b = detailsOf('b');
     clickText(root, 'Item b');
     assert.equal(root.state.view, 'work-item');
     assert.equal(root.state.selectedWorkItemId, 'b');

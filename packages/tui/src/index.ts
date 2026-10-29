@@ -1,5 +1,5 @@
 import { ProcessTerminal, TuiAltScreen } from '@earendil-works/pi-tui';
-import { LovelaceClient } from '@lovelace/client';
+import { createLovelaceClient } from '@lovelace/client';
 import type { SidebarSide } from '@lovelace/core';
 
 import { AppRoot } from './app.js';
@@ -114,8 +114,8 @@ export async function runTui(argv: readonly string[]): Promise<void> {
   // Clicked OSC 8 links (rows, help chips, provider URLs) route through the app.
   let root: AppRoot | undefined;
   const tui = new TuiAltScreen(terminal, undefined, undefined, { openUrl: url => root?.openLink(url) });
-  const client = new LovelaceClient(parsed.url);
-  root = new AppRoot({ tui, client, sidebarSide: parsed.sidebarSide });
+  const client = createLovelaceClient(parsed.url);
+  root = new AppRoot({ tui, client, serverUrl: parsed.url, sidebarSide: parsed.sidebarSide });
   tui.setLayoutRoot(root);
 
   const onSignal = () => {

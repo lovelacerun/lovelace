@@ -100,7 +100,7 @@ background; `lovelace server start|stop|restart|status` manage it.
 | --- | --- |
 | `cli` | The `lovelace` executable: setup, server lifecycle, scripting commands |
 | `server` | Local HTTP server; the only part that talks to providers and Herdr |
-| `client` | Typed HTTP client for the server |
+| `client` | tRPC client for the server, typed from its router |
 | `tui` | Terminal workbench |
 | `core` | Shared types and configuration |
 | `coriol` | Seed clones and dependency-warm worktrees |

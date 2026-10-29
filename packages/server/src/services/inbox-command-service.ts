@@ -1,21 +1,14 @@
-import type { InboxSourceType, WorkItem } from '@lovelace/core';
+import type { StartWorkSource, WorkItem } from '@lovelace/core';
 import type { DatabaseState } from '../database.js';
 import { createActiveWorkItem, type PendingAttachment } from '../repositories/work-item-repository.js';
 
-export interface InboxActionSource {
-  sourceType: InboxSourceType;
-  provider: string;
-  externalId: string;
-  payload?: unknown;
-}
-
 export type ActivateInboxInput =
   | { sourceType: 'work-item'; id: string }
-  | { title: string; sources: InboxActionSource[] };
+  | { title: string; sources: StartWorkSource[] };
 
 export type DismissInboxInput =
   | { sourceType: 'work-item'; id: string }
-  | { sources: Array<Pick<InboxActionSource, 'sourceType' | 'provider' | 'externalId'>> };
+  | { sources: Array<Omit<StartWorkSource, 'payload'>> };
 
 export function activateInboxItem(database: DatabaseState, input: ActivateInboxInput): WorkItem | null {
   if (isWorkItemActivateInput(input)) {

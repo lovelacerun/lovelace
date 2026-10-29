@@ -1,11 +1,5 @@
-import {
-  isWorkspaceMode,
-  isWorkItemState,
-  WORK_ITEM_STATES,
-  type StartWorkRepositoryInput,
-  type WorkItemState,
-} from '@lovelace/core';
-import type { FastifyInstance } from 'fastify';
+import { WORK_ITEM_STATES } from '@lovelace/core';
+import { z } from 'zod';
 import { createManualWorkItem, getWorkItemDetails, updateWorkItem } from '../repositories/work-item-repository.js';
 import {
   attachPullRequestToWorkItem,
@@ -17,235 +11,127 @@ import { attachJiraIssueToWorkItem, detachJiraIssueFromWorkItem, parseJiraIssueR
 import { workItemIdForPath } from '../services/task-workspace-service.js';
 import { beginRepositoryPreparation } from '../services/work-start-service.js';
 import { renameWorkItemWorkspace } from '../herdr/work-item-workspace.js';
-import type { RouteDeps } from './deps.js';
-import { isNonEmptyString } from '../helpers.js';
+import { notFound, procedure, rejected, router, type Context } from '../trpc.js';
+import { nonEmpty, startWorkRepository } from './schemas.js';
 
-export function registerWorkItemRoutes(app: FastifyInstance, deps: RouteDeps) {
-  const { database, github, jira, workspaceManager, herdr } = deps;
-  const workStartDeps = { database, github, logger: app.log, workspaceManager };
+const workItemId = z.object({ id: z.string() });
 
-  /** Runs a work-item change and relabels its Herdr workspace in the background when the title changed. */
-  const retitling = async <T>(workItemId: string, change: () => T | Promise<T>): Promise<T> => {
-    const before = database.getWorkItem(workItemId)?.title;
-    const result = await change();
-    const after = database.getWorkItem(workItemId)?.title;
-    if (before !== undefined && after !== undefined && before !== after) {
-      renameWorkItemWorkspace(database, herdr, workItemId)
-        .catch((error: unknown) => app.log.warn({ err: error, workItemId }, 'Failed to rename Herdr workspace'));
-    }
-    return result;
-  };
-
-  app.get('/work-items', async (request) => {
-    const state = (request.query as { state?: WorkItemState }).state;
-    return database.listWorkItems(isWorkItemState(state) ? state : undefined);
-  });
-
-  app.get('/work-items/current', async (request, reply) => {
-    const path = (request.query as { path?: unknown }).path;
-    if (!isNonEmptyString(path)) {
-      reply.code(400);
-      return { ok: false, error: 'path query parameter required' };
-    }
-    const id = workItemIdForPath(workspaceManager.workspacesDirectory, path, database.listWorkItems().map(workItem => workItem.id));
-    const details = id ? getWorkItemDetails(database, id) : null;
-    if (!details) {
-      reply.code(404);
-      return { ok: false, error: `${path} is not inside a Lovelace work item workspace` };
-    }
-    return details;
-  });
-
-  app.get('/work-items/:id', async (request, reply) => {
-    const params = request.params as { id: string };
-    const details = getWorkItemDetails(database, params.id);
-    if (!details) {
-      reply.code(404);
-      return { ok: false, error: 'work item not found' };
-    }
-
-    return details;
-  });
-
-  app.post('/work-items/:id/repositories', async (request, reply) => {
-    const params = request.params as { id: string };
-    const body = request.body as { repositories?: unknown; wait?: unknown } | null;
-    if (!body || (body.wait !== undefined && typeof body.wait !== 'boolean') || !Array.isArray(body.repositories) || !body.repositories.every(isValidStartWorkRepositoryInput)) {
-      reply.code(400);
-      return { ok: false, error: 'invalid repository selection payload' };
-    }
-
-    try {
-      const operation = beginRepositoryPreparation(workStartDeps, params.id, body.repositories);
-      if (!operation) {
-        reply.code(404);
-        return { ok: false, error: 'work item not found' };
-      }
-      if (body.wait === false) {
-        // Disconnecting the caller never cancels server-owned preparation.
-        void operation.completion.catch(error => app.log.error({ err: error, workItemId: params.id }, 'Repository preparation operation failed'));
-        reply.code(202);
-        return operation.details;
-      }
-      await operation.completion;
-      return getWorkItemDetails(database, params.id);
-    } catch (error) {
-      app.log.error({ err: error, workItemId: params.id, repositories: body.repositories }, 'Failed to attach repositories to work item');
-      reply.code(400);
-      return { ok: false, error: error instanceof Error ? error.message : 'failed to attach repositories' };
-    }
-  });
-
-  app.post('/work-items/:id/pull-requests', async (request, reply) => {
-    const params = request.params as { id: string };
-    const ref = parsePullRequestRef(request.body as { url?: string; repoFullName?: string; number?: number });
-    if (!ref) {
-      reply.code(400);
-      return { ok: false, error: 'body must include a GitHub pull request url or repoFullName and number' };
-    }
-    try {
-      const meta = await attachPullRequestToWorkItem(database, github, params.id, ref);
-      if (!meta) {
-        reply.code(404);
-        return { ok: false, error: 'work item not found' };
-      }
-      return meta;
-    } catch (error) {
-      app.log.error({ err: error, workItemId: params.id, ref }, 'Failed to attach pull request to work item');
-      reply.code(400);
-      return { ok: false, error: error instanceof Error ? error.message : 'failed to attach pull request' };
-    }
-  });
-
-  app.delete('/work-items/:id/pull-requests/:externalId', async (request, reply) => {
-    const params = request.params as { id: string; externalId: string };
-    const ok = detachPullRequestFromWorkItem(database, params.id, decodeURIComponent(params.externalId));
-    if (!ok) {
-      reply.code(404);
-      return { ok: false, error: 'work item not found' };
-    }
-    return { ok: true };
-  });
-
-  app.post('/work-items/:id/pull-requests/refresh', async (request, reply) => {
-    const params = request.params as { id: string };
-    try {
-      const metas = await refreshPullRequestsForWorkItem(database, github, params.id);
-      if (!metas) {
-        reply.code(404);
-        return { ok: false, error: 'work item not found' };
-      }
-      return metas;
-    } catch (error) {
-      app.log.error({ err: error, workItemId: params.id }, 'Failed to refresh pull requests for work item');
-      reply.code(400);
-      return { ok: false, error: error instanceof Error ? error.message : 'failed to refresh pull requests' };
-    }
-  });
-
-  app.post('/work-items/:id/tracker-items', async (request, reply) => {
-    const params = request.params as { id: string };
-    const body = request.body as { provider?: string; key?: string; url?: string };
-    if (body.provider !== undefined && body.provider !== 'jira') {
-      reply.code(400);
-      return { ok: false, error: 'only jira tracker items are supported' };
-    }
-    const ref = parseJiraIssueRef(body);
-    if (!ref) {
-      reply.code(400);
-      return { ok: false, error: 'body must include a Jira issue key or browse url' };
-    }
-    try {
-      const meta = await retitling(params.id, () => attachJiraIssueToWorkItem(database, jira, params.id, ref));
-      if (!meta) {
-        reply.code(404);
-        return { ok: false, error: 'work item not found' };
-      }
-      return meta;
-    } catch (error) {
-      app.log.error({ err: error, workItemId: params.id, ref }, 'Failed to attach Jira issue to work item');
-      reply.code(400);
-      return { ok: false, error: error instanceof Error ? error.message : 'failed to attach Jira issue' };
-    }
-  });
-
-  app.delete('/work-items/:id/tracker-items/:externalId', async (request, reply) => {
-    const params = request.params as { id: string; externalId: string };
-    const ok = await retitling(params.id, () => detachJiraIssueFromWorkItem(database, params.id, decodeURIComponent(params.externalId)));
-    if (!ok) {
-      reply.code(404);
-      return { ok: false, error: 'work item not found' };
-    }
-    return { ok: true };
-  });
-
-  app.post('/work-items/manual', async (request, reply) => {
-    const body = request.body as {
-      title?: string;
-      notes?: string;
-    };
-
-    if (!body.title?.trim()) {
-      reply.code(400);
-      return { ok: false, error: 'title is required' };
-    }
-
-    return createManualWorkItem(database, {
-      title: body.title,
-      notes: body.notes,
-    });
-  });
-
-  app.patch('/work-items/:id', async (request, reply) => {
-    const params = request.params as { id: string };
-    const body = request.body as { title?: unknown; notes?: unknown };
-    const validTitle = body.title === undefined || (typeof body.title === 'string' && body.title.trim());
-    const validNotes = body.notes === undefined || body.notes === null || typeof body.notes === 'string';
-    if (!validTitle || !validNotes) {
-      reply.code(400);
-      return { ok: false, error: 'title must be a non-empty string and notes a string or null' };
-    }
-
-    const workItem = await retitling(params.id, () => updateWorkItem(database, params.id, body as { title?: string; notes?: string | null }));
-    if (!workItem) {
-      reply.code(404);
-      return { ok: false, error: 'work item not found' };
-    }
-
-    return workItem;
-  });
-
-  app.post('/work-items/:id/state', async (request, reply) => {
-    const params = request.params as { id: string };
-    const body = request.body as { state?: WorkItemState };
-
-    if (!isWorkItemState(body.state)) {
-      reply.code(400);
-      return { ok: false, error: `state must be one of: ${WORK_ITEM_STATES.join(', ')}` };
-    }
-
-    const workItem = database.updateWorkItemState(params.id, body.state);
-    if (!workItem) {
-      reply.code(404);
-      return { ok: false, error: 'work item not found' };
-    }
-
-    return workItem;
-  });
+/** Runs a work-item change and relabels its Herdr workspace in the background when the title changed. */
+async function retitling<T>({ database, herdr, logger }: Context, workItemId: string, change: () => T | Promise<T>): Promise<T> {
+  const before = database.getWorkItem(workItemId)?.title;
+  const result = await change();
+  const after = database.getWorkItem(workItemId)?.title;
+  if (before !== undefined && after !== undefined && before !== after) {
+    renameWorkItemWorkspace(database, herdr, workItemId)
+      .catch((error: unknown) => logger.warn({ err: error, workItemId }, 'Failed to rename Herdr workspace'));
+  }
+  return result;
 }
 
-function isValidStartWorkRepositoryInput(value: unknown): value is StartWorkRepositoryInput {
-  if (!value || typeof value !== 'object') return false;
-  const record = value as Record<string, unknown>;
-  if (!isNonEmptyString(record.repoId)) return false;
-  if (record.role !== undefined && record.role !== 'primary' && record.role !== 'secondary') return false;
-  if (record.workspaceMode !== undefined && !isWorkspaceMode(asOptionalString(record.workspaceMode))) return false;
-  if (record.sourceExternalId !== undefined && record.sourceExternalId !== null && !isNonEmptyString(record.sourceExternalId)) return false;
-  if (record.branchName !== undefined && record.branchName !== null && !isNonEmptyString(record.branchName)) return false;
-  if (record.baseBranch !== undefined && record.baseBranch !== null && !isNonEmptyString(record.baseBranch)) return false;
-  return true;
-}
+export const workItemsRouter = router({
+  list: procedure
+    .input(z.object({ state: z.enum(WORK_ITEM_STATES).optional() }).optional())
+    .query(({ ctx, input }) => ctx.database.listWorkItems(input?.state)),
 
-function asOptionalString(value: unknown): string | undefined {
-  return typeof value === 'string' ? value : undefined;
+  /** The work item whose task directory contains `path`. */
+  current: procedure
+    .input(z.object({ path: nonEmpty }))
+    .query(({ ctx: { database, workspaceManager }, input: { path } }) => {
+      const id = workItemIdForPath(workspaceManager.workspacesDirectory, path, database.listWorkItems().map(workItem => workItem.id));
+      return (id ? getWorkItemDetails(database, id) : null) ?? notFound(`${path} is not inside a Lovelace work item workspace`);
+    }),
+
+  get: procedure
+    .input(workItemId)
+    .query(({ ctx, input }) => getWorkItemDetails(ctx.database, input.id) ?? notFound('work item not found')),
+
+  create: procedure
+    .input(z.object({ title: nonEmpty, notes: z.string().optional() }))
+    .mutation(({ ctx, input }) => createManualWorkItem(ctx.database, input)),
+
+  /** Omitted fields keep their current value; `notes: null` clears notes. Never changes upstream issues. */
+  update: procedure
+    .input(z.object({ id: z.string(), title: nonEmpty.optional(), notes: z.string().nullable().optional() }))
+    .mutation(async ({ ctx, input: { id, ...patch } }) =>
+      await retitling(ctx, id, () => updateWorkItem(ctx.database, id, patch)) ?? notFound('work item not found')),
+
+  setState: procedure
+    .input(z.object({ id: z.string(), state: z.enum(WORK_ITEM_STATES) }))
+    .mutation(({ ctx, input }) => ctx.database.updateWorkItemState(input.id, input.state) ?? notFound('work item not found')),
+
+  /** Submits a repository selection once; `wait: false` returns before preparation finishes. */
+  addRepositories: procedure
+    .input(z.object({ id: z.string(), repositories: z.array(startWorkRepository), wait: z.boolean().optional() }))
+    .mutation(async ({ ctx, input: { id, repositories, wait } }) => {
+      const { database, github, logger, workspaceManager } = ctx;
+      try {
+        const operation = beginRepositoryPreparation({ database, github, logger, workspaceManager }, id, repositories);
+        if (!operation) notFound('work item not found');
+        if (wait === false) {
+          // Disconnecting the caller never cancels server-owned preparation.
+          void operation.completion.catch(error => logger.error({ err: error, workItemId: id }, 'Repository preparation operation failed'));
+          return operation.details;
+        }
+        await operation.completion;
+        return getWorkItemDetails(database, id)!;
+      } catch (error) {
+        logger.error({ err: error, workItemId: id, repositories }, 'Failed to attach repositories to work item');
+        throw rejected(error, 'failed to attach repositories');
+      }
+    }),
+
+  attachPullRequest: procedure
+    .input(z.object({ id: z.string(), url: z.string().optional(), repoFullName: z.string().optional(), number: z.number().optional() }))
+    .mutation(async ({ ctx, input: { id, ...body } }) => {
+      const ref = parsePullRequestRef(body) ?? rejectInput('body must include a GitHub pull request url or repoFullName and number');
+      try {
+        return await attachPullRequestToWorkItem(ctx.database, ctx.github, id, ref) ?? notFound('work item not found');
+      } catch (error) {
+        ctx.logger.error({ err: error, workItemId: id, ref }, 'Failed to attach pull request to work item');
+        throw rejected(error, 'failed to attach pull request');
+      }
+    }),
+
+  detachPullRequest: procedure
+    .input(z.object({ id: z.string(), externalId: z.string() }))
+    .mutation(({ ctx, input }) => {
+      if (!detachPullRequestFromWorkItem(ctx.database, input.id, input.externalId)) notFound('work item not found');
+      return { ok: true as const };
+    }),
+
+  /** Re-reads every attached pull request from GitHub. */
+  refreshPullRequests: procedure
+    .input(workItemId)
+    .mutation(async ({ ctx, input: { id } }) => {
+      try {
+        return await refreshPullRequestsForWorkItem(ctx.database, ctx.github, id) ?? notFound('work item not found');
+      } catch (error) {
+        ctx.logger.error({ err: error, workItemId: id }, 'Failed to refresh pull requests for work item');
+        throw rejected(error, 'failed to refresh pull requests');
+      }
+    }),
+
+  attachTrackerItem: procedure
+    .input(z.object({ id: z.string(), provider: z.literal('jira').optional(), key: z.string().optional(), url: z.string().optional() }))
+    .mutation(async ({ ctx, input: { id, ...body } }) => {
+      const ref = parseJiraIssueRef(body) ?? rejectInput('body must include a Jira issue key or browse url');
+      try {
+        return await retitling(ctx, id, () => attachJiraIssueToWorkItem(ctx.database, ctx.jira, id, ref)) ?? notFound('work item not found');
+      } catch (error) {
+        ctx.logger.error({ err: error, workItemId: id, ref }, 'Failed to attach Jira issue to work item');
+        throw rejected(error, 'failed to attach Jira issue');
+      }
+    }),
+
+  /** Detaches by the tracker's issue ID or key. */
+  detachTrackerItem: procedure
+    .input(z.object({ id: z.string(), idOrKey: z.string() }))
+    .mutation(async ({ ctx, input: { id, idOrKey } }) => {
+      if (!await retitling(ctx, id, () => detachJiraIssueFromWorkItem(ctx.database, id, idOrKey))) notFound('work item not found');
+      return { ok: true as const };
+    }),
+});
+
+function rejectInput(message: string): never {
+  throw rejected(new Error(message), message);
 }

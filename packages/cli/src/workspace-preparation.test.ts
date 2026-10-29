@@ -23,18 +23,19 @@ test('work-items add-worktree polls after submission and preserves final JSON in
     const details = (ready) => ({ workItem: { id: 'work' }, attachments: ['a','b'].map(repoId => ({
       id: repoId, type: 'worktree', payload: payload(repoId, ready ? (repoId === 'a' ? 'ready' : 'failed') : 'pending'),
     })) });
+    const reply = data => Response.json({ result: { data } });
     globalThis.fetch = async (url, init) => {
-      if (!String(url).startsWith('http://127.0.0.1:48999/')) throw new Error('Nonlocal fixture request');
-      const path = new URL(url).pathname;
-      if (path === '/repos') return Response.json(['a','b'].map(id => ({ id, name: id, fullName: 'org/' + id })));
-      if (init?.method === 'POST') {
+      if (!String(url).startsWith('http://127.0.0.1:48999/trpc/')) throw new Error('Nonlocal fixture request');
+      const path = new URL(url).pathname.slice('/trpc/'.length);
+      if (path === 'repositories.list') return reply(['a','b'].map(id => ({ id, name: id, fullName: 'org/' + id })));
+      if (path === 'workItems.addRepositories') {
         posts++;
         if (posts !== 1) throw new Error('Mutation resubmitted');
         const body = JSON.parse(init.body);
-        if (path !== '/work-items/work/repositories' || body.wait !== false || JSON.stringify(body.repositories) !== JSON.stringify([{ repoId: 'a', branchName: 'feature', baseBranch: 'parent' }])) throw new Error('Wrong submission');
-        return Response.json(details(false), { status: 202 });
+        if (body.id !== 'work' || body.wait !== false || JSON.stringify(body.repositories) !== JSON.stringify([{ repoId: 'a', branchName: 'feature', baseBranch: 'parent' }])) throw new Error('Wrong submission');
+        return reply(details(false));
       }
-      if (path === '/work-items/work') return Response.json(details(true));
+      if (path === 'workItems.get' && JSON.parse(new URL(url).searchParams.get('input')).id === 'work') return reply(details(true));
       throw new Error('Unexpected request');
     };
   `);
@@ -56,10 +57,11 @@ test('Ctrl-C during workspace preparation emits a JSON interruption error with a
   t.after(() => rm(root, { recursive: true, force: true }));
   const preload = join(root, 'fake-http.mjs');
   await writeFile(preload, `globalThis.fetch = async (url, init) => {
-    if (!String(url).startsWith('http://127.0.0.1:48999/')) throw new Error('Nonlocal fixture request');
-    if (new URL(url).pathname === '/repos') return Response.json([{ id: 'a', name: 'a', fullName: 'org/a' }]);
-    if (init?.method === 'POST') setTimeout(() => process.emit('SIGINT'), 25);
-    return Response.json({ workItem: { id: 'work' }, attachments: [{ id: 'a', type: 'worktree', payload: { repoId: 'a', repoName: 'a', sourceExternalId: null, status: 'preparing' } }] });
+    if (!String(url).startsWith('http://127.0.0.1:48999/trpc/')) throw new Error('Nonlocal fixture request');
+    const path = new URL(url).pathname.slice('/trpc/'.length);
+    if (path === 'repositories.list') return Response.json({ result: { data: [{ id: 'a', name: 'a', fullName: 'org/a' }] } });
+    if (path === 'workItems.addRepositories') setTimeout(() => process.emit('SIGINT'), 25);
+    return Response.json({ result: { data: { workItem: { id: 'work' }, attachments: [{ id: 'a', type: 'worktree', payload: { repoId: 'a', repoName: 'a', sourceExternalId: null, status: 'preparing' } }] } } });
   };`);
   const result = spawnSync(process.execPath, ['--import', loader, '--import', preload, entry, 'work-items', 'add-worktree', 'work', 'a'], {
     env: { ...process.env, LOVELACE_ROOT: root, LOVELACE_CONFIG: join(root, 'config.jsonc'), LOVELACE_PORT: '48999', LOVELACE_NO_AUTOSTART: '1' }, encoding: 'utf8', timeout: 5_000,

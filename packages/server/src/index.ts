@@ -19,6 +19,7 @@ import { loadTools } from './tools/tool-loader.js';
 
 export { resolveMacOSSystemProxy } from './macos-system-proxy.js';
 export { findExecutable } from './tools/executables.js';
+export type { AppRouter } from './router.js';
 
 export interface StartServerOptions {
   /** How launched agents call the CLI back; without it prompts get no Lovelace context. */

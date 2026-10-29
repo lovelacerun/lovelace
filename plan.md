@@ -15,8 +15,8 @@ In order:
 4. ~~Lighter launches: one `launches` table with a single state column and a
    boot ID, server-side retry, the TUI keeping only the prompt, selections
    and in-flight request ID.~~ Done.
-5. Typed API: every route has a typed client method; no untyped requests
-   from the CLI.
+5. ~~Typed API: a tRPC router on the server; clients infer every
+   procedure's types from it.~~ Done.
 6. Provider-neutral domain types (`Repository`, `TrackerIssue`,
    `ChangeRequest`) with tracker and code host interfaces in the server.
 7. Validated config, split into server config and client settings; fewer

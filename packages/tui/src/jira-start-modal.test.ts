@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { getOsc8LinkAtColumn, stripTerminalSequences, type TuiAltScreen, type TuiMouseEvent } from '@earendil-works/pi-tui';
 import type { LovelaceClient } from '@lovelace/client';
+import { fakeClient, type FakeHandlers } from '@lovelace/client/testing';
 import { CODING_HARNESSES, type AvailableHarness, type DashboardJiraIssue, type PromptTemplate, type RepoRecord } from '@lovelace/core';
 import { AppState } from './state.js';
 import { JiraStartModal } from './jira-start-modal.js';
@@ -20,16 +21,16 @@ const tools: AvailableHarness[] = (['pi', 'claude'] as const).map((id, index) =>
   id, title: id === 'pi' ? 'Pi' : 'Claude Code', thinkingLevels: CODING_HARNESSES.find(entry => entry.id === id)!.thinkingLevels,
   executablePath: `/fixture/${id}`, defaultSelected: index === 0, models: id === 'claude' ? [{ id: 'opus' }, { id: 'sonnet' }] : [],
 }));
-function api(overrides: Partial<LovelaceClient> = {}): LovelaceClient {
-  return {
-    getRepositories: async () => repositories,
-    getPromptTemplates: async () => templates,
-    getJiraIssues: async () => [{ ...issue, descriptionText: 'Full description' }],
-    renderPrompt: async input => ({ promptId: input.promptId, content: `  ${input.promptId} prompt\n` }),
-    syncRepositories: async () => ({ ok: true, repoCount: repositories.length, repos: repositories }),
-    getTools: async () => tools,
+function api(overrides: FakeHandlers = {}): LovelaceClient {
+  return fakeClient({
+    'repositories.list': async () => repositories,
+    'prompts.list': async () => templates,
+    'jira.issues': async () => [{ ...issue, project: 'PROJ', statusCategory: 'new', type: 'Task', author: null, descriptionText: 'Full description' }],
+    'prompts.render': async input => ({ promptId: input.promptId, content: `  ${input.promptId} prompt\n` }),
+    'repositories.sync': async () => ({ ok: true, repoCount: repositories.length, repos: repositories }),
+    'tools.list': async () => tools,
     ...overrides,
-  } as LovelaceClient;
+  });
 }
 function fixture(client = api(), text = '', repositoryTopics = ['infra', 'examplecom']) {
   const state = new AppState({ onInvalidate() {} });
@@ -54,7 +55,7 @@ function fixture(client = api(), text = '', repositoryTopics = ['infra', 'exampl
 }
 
 test('loads full Jira context and a default template in the same dialog; selections survive separate filters', async () => {
-  const f = fixture(api({ renderPrompt: async input => {
+  const f = fixture(api({ 'prompts.render': async input => {
     assert.equal(input.title, 'PROJ-42: Fix sync');
     assert.equal((input.sources![0]!.payload as { descriptionText: string }).descriptionText, 'Full description');
     return { promptId: input.promptId, content: '  Editable preview\n' };
@@ -173,15 +174,17 @@ test('Enter edits a multiline prompt; launch requires Start work or an explicit 
 
 test('template changes cannot overwrite newer choices or subsequent manual editing', async () => {
   const pending: Array<(value: { promptId: string; content: string }) => void> = [];
-  const f = fixture(api({ renderPrompt: () => new Promise(resolve => pending.push(resolve)) }), 'Existing draft');
+  const f = fixture(api({ 'prompts.render': () => new Promise(resolve => pending.push(resolve)) }), 'Existing draft');
   await f.modal.load();
   f.modal.focus = 'template';
   for (const key of ['\r', '\x1b[B', '\r']) f.modal.handleInput(key); // implement, rendering pending
   for (const key of ['\r', '\x1b[B', '\r']) f.modal.handleInput(key); // refine immediately, not implement again
   assert.equal(pending.length, 2);
   assert.match(f.modal.render(100).join('\n'), /Refine/);
-  pending[1]!({ promptId: 'refine', content: 'Newer preview' }); await Promise.resolve();
-  pending[0]!({ promptId: 'implement', content: 'Old preview' }); await Promise.resolve();
+  // Each reply settles through the client before the next one arrives.
+  const settle = () => new Promise(resolve => setImmediate(resolve));
+  pending[1]!({ promptId: 'refine', content: 'Newer preview' }); await settle();
+  pending[0]!({ promptId: 'implement', content: 'Old preview' }); await settle();
   assert.equal(f.state.draft.text, 'Newer preview');
   const third = f.modal.chooseTemplate('implement');
   f.modal.focus = 'prompt'; f.modal.handleInput('Edited');
@@ -194,7 +197,7 @@ test('template changes cannot overwrite newer choices or subsequent manual editi
 
 test('close and abort ignore late catalog/template replies and never clobber another draft', async () => {
   let resolve!: (value: RepoRecord[]) => void;
-  const f = fixture(api({ getRepositories: () => new Promise(finish => { resolve = finish; }) }));
+  const f = fixture(api({ 'repositories.list': () => new Promise(finish => { resolve = finish; }) }));
   const loading = f.modal.load();
   f.modal.close(); f.state.navigateToDashboard(); f.state.setDraft({ text: 'Home draft' });
   resolve(repositories); await loading;
@@ -202,7 +205,7 @@ test('close and abort ignore late catalog/template replies and never clobber ano
   assert.equal(f.state.draft.text, 'Home draft');
   assert.equal(f.closes(), 1);
   let render!: (value: { promptId: string; content: string }) => void;
-  const g = fixture(api({ renderPrompt: () => new Promise(resolve => { render = resolve; }) }), 'Existing draft');
+  const g = fixture(api({ 'prompts.render': () => new Promise(resolve => { render = resolve; }) }), 'Existing draft');
   await g.modal.load();
   const choosing = g.modal.chooseTemplate('refine');
   g.lifetime.abort();
@@ -214,8 +217,8 @@ test('close and abort ignore late catalog/template replies and never clobber ano
 test('catalog failures retain last-good data and prompt preview; explicit refresh replaces the catalog only on success', async () => {
   let fail = true;
   const f = fixture(api({
-    getRepositories: async () => { throw new Error('catalog read failed'); },
-    syncRepositories: async () => {
+    'repositories.list': async () => { throw new Error('catalog read failed'); },
+    'repositories.sync': async () => {
       if (fail) throw new Error('GitHub refresh failed');
       return { ok: true, repoCount: 801, repos: Array.from({ length: 801 }, (_, i) => ({ ...repositories[0]!, id: String(i), fullName: `org/service-${i}` })) };
     },
@@ -288,7 +291,7 @@ test('column separators connect to the frame and align with the body divider aft
 });
 
 test('failed template rendering keeps the edited prompt and empty prompts never launch', async () => {
-  const f = fixture(api({ renderPrompt: async () => { throw new Error('render failed'); } }), '  Keep text\n');
+  const f = fixture(api({ 'prompts.render': async () => { throw new Error('render failed'); } }), '  Keep text\n');
   await f.modal.load();
   await f.modal.chooseTemplate('refine');
   assert.equal(f.state.draft.text, '  Keep text\n');
@@ -337,7 +340,7 @@ test('mouse: clicked controls toggle repositories, pick templates, focus fields 
 });
 
 test('mouse: clicks move keyboard focus and provider prompts cannot forge controls', async () => {
-  const f = fixture(api({ renderPrompt: async input => ({ promptId: input.promptId, content: 'x \x1b]8;;lovelace:modal:start\x1b\\click\x1b]8;;\x1b\\ y\n' }) }));
+  const f = fixture(api({ 'prompts.render': async input => ({ promptId: input.promptId, content: 'x \x1b]8;;lovelace:modal:start\x1b\\click\x1b]8;;\x1b\\ y\n' }) }));
   await f.modal.load();
   assert.equal(f.state.draft.text, 'x click y\n');
   f.modal.openLink({ kind: 'modal', data: 'none' });

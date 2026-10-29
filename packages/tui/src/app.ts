@@ -35,6 +35,8 @@ import { launchField, launchFocus, LaunchOptionsRow } from './launch-options.js'
 interface AppRootOptions {
   tui: TuiAltScreen;
   client: LovelaceClient;
+  /** The actual client address, shown so a stale port override is visible. */
+  serverUrl: string;
   sidebarSide?: SidebarSide;
   /** Injectable browser launcher; tests never open operator browser windows. */
   openUrl?: (url: string) => Promise<void>;
@@ -48,6 +50,7 @@ export class AppRoot implements Component {
   readonly state: AppState;
   readonly tui: TuiAltScreen;
   readonly client: LovelaceClient;
+  private readonly serverUrl: string;
   readonly editor: Editor;
   /** The one open dialog: Jira start-work or a work item's new session. */
   private overlay?: { modal: JiraStartModal | NewSessionModal; handle: OverlayHandle };
@@ -74,6 +77,7 @@ export class AppRoot implements Component {
   constructor(options: AppRootOptions) {
     this.tui = options.tui;
     this.client = options.client;
+    this.serverUrl = options.serverUrl;
     this.openUrl = options.openUrl ?? openBrowser;
     this.state = new AppState({
       sidebarSide: options.sidebarSide,
@@ -204,7 +208,7 @@ export class AppRoot implements Component {
     const mark = ' ' + accent + icons.app + reset + '  ' + (cols >= 50 ? bold + 'lovelace' + reset + faint + '  /  ' + reset : '');
     let right = connectionStatus(this.state);
     // The actual client address, so a stale port override is visible.
-    if (cols >= 80) right = faint + safeText(this.client.serverUrl) + reset + '   ' + right;
+    if (cols >= 80) right = faint + safeText(this.serverUrl) + reset + '   ' + right;
     const room = cols - visibleWidth(right) - 1;
     const left = padRight(truncate(mark + place, room - 2), room);
     return left + right;
@@ -548,7 +552,7 @@ export class AppRoot implements Component {
     this.state.setError(null);
     this.state.setNotice('Rendering review prompt…');
     try {
-      const rendered = await this.client.renderPrompt({
+      const rendered = await this.client.prompts.render.mutate({
         promptId: 'review', title: `${review.repoFullName}#${review.number}: ${review.title}`,
         sources: [{ sourceType: 'change-request', provider: 'github', externalId: review.id, payload: review }],
       }, { signal: this.lifetime.signal });
@@ -608,7 +612,7 @@ export class AppRoot implements Component {
   /** Harness detection is cheap and rarely changes: once per TUI, and again with each Jira setup. */
   private async loadTools(): Promise<void> {
     try {
-      const tools = await this.client.getTools({ signal: this.lifetime.signal });
+      const tools = await this.client.tools.list.query(undefined, { signal: this.lifetime.signal });
       if (!this.stopped) this.state.setTools(tools);
     } catch (error) {
       // Launches still fall back to the server's default agent.
@@ -620,7 +624,7 @@ export class AppRoot implements Component {
 
   private async fetchDashboard(signal: AbortSignal): Promise<void> {
     try {
-      const data = await this.client.getDashboard({ signal });
+      const data = await this.client.dashboard.get.query(undefined, { signal });
       if (signal.aborted || this.stopped) return;
       this.state.applyDashboardResponse(data);
     } catch (error) {
@@ -642,10 +646,10 @@ export class AppRoot implements Component {
     const current = () => !signal.aborted && token === this.detailLoadToken;
     try {
       if (view === 'work-item' && selectedWorkItemId) {
-        const details = await this.client.getWorkItem(selectedWorkItemId, { signal });
+        const details = await this.client.workItems.get.query({ id: selectedWorkItemId }, { signal });
         if (current() && this.state.selectedWorkItemId === details.workItem.id) this.state.setWorkItemData(details);
       } else if (view === 'jira' && selectedJira) {
-        const issues = await this.client.getJiraIssues({ signal });
+        const issues = await this.client.jira.issues.query(undefined, { signal });
         if (current()) this.state.setJiraDetails(issues.find(issue => issue.id === this.state.selectedJira?.id) ?? null);
       }
     } catch (error) {
@@ -685,7 +689,7 @@ export class AppRoot implements Component {
     this.state.setError(null);
     this.state.setNotice('Opening session in Herdr…');
     try {
-      const response = await this.client.openSession(workItemId, sessionId, { signal: this.lifetime.signal });
+      const response = await this.client.sessions.open.mutate({ workItemId, sessionId }, { signal: this.lifetime.signal });
       if (this.stopped || this.state.selectedWorkItemId !== workItemId) return;
       this.state.setWorkItemData(response.details);
       this.state.setNotice(response.action === 'continued' ? 'Continued the conversation in Herdr.' : null);

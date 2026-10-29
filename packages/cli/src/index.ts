@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 import { readFile } from 'node:fs/promises';
 import { parseArgs } from 'node:util';
-import { attachmentsOfType, type WorkItemAttachment, type WorkItemDetails, type Worktree } from '@lovelace/core';
-import { client, request } from './http.js';
+import { attachmentsOfType, type InboxSourceType, type WorkItemAttachment, type WorkItemDetails, type Worktree } from '@lovelace/core';
+import { prepareRepositories, type RouterInputs } from '@lovelace/client';
+import { client } from './http.js';
 import { launchTools, openTool } from './launch-tools.js';
 import { agentCommand, agentGuide, version } from './self.js';
 
@@ -47,36 +48,36 @@ async function main() {
     case '--version':
       return console.log(version);
     case 'dashboard':
-      return printJson(await request('/dashboard'));
+      return printJson(await client().dashboard.get.query());
     case 'status':
-      return printJson(await request('/status'));
+      return printJson(await client().system.status.query());
     case 'repos':
-      if (subcommand === 'sync') return printJson(await client().syncRepositories());
-      return printJson(await request('/repos'));
+      if (subcommand === 'sync') return printJson(await client().repositories.sync.mutate());
+      return printJson(await client().repositories.list.query());
     case 'inbox':
       if (subcommand === 'dismiss' || subcommand === 'start') return handleInbox(subcommand, rest);
-      return printJson(await request('/inbox'));
+      return printJson(await client().inbox.get.query());
     case 'work-items':
       return handleWorkItems(subcommand, rest);
     case 'work':
       return handleCurrentWork(subcommand, rest);
     case 'cleanup':
-      return printJson(await request('/workspaces/cleanup', { method: 'POST' }));
+      return printJson(await client().workspaces.cleanup.mutate());
     case 'doctor':
-      return printJson(await request('/workspaces/status'));
+      return printJson(await client().workspaces.status.query());
     case 'cache':
-      return printJson(await request('/cache/snapshots'));
+      return printJson(await client().system.cacheSnapshots.query());
     case 'github':
       if (subcommand === 'reviews' && rest[0] === 'refresh') {
-        return printJson(await request('/github/reviews/refresh', { method: 'POST' }));
+        return printJson(await client().github.refreshReviewRequests.mutate());
       }
-      if (subcommand === 'reviews') return printJson(await request('/github/reviews'));
+      if (subcommand === 'reviews') return printJson(await client().github.reviewRequests.query());
       return printJson({ error: 'Usage: lovelace github reviews [refresh]' });
     case 'jira':
       if (subcommand === 'issues' && rest[0] === 'refresh') {
-        return printJson(await request('/jira/issues/refresh', { method: 'POST' }));
+        return printJson(await client().jira.refreshIssues.mutate());
       }
-      if (subcommand === 'issues') return printJson(await request('/jira/issues'));
+      if (subcommand === 'issues') return printJson(await client().jira.issues.query());
       return printJson({ error: 'Usage: lovelace jira issues [refresh]' });
     case 'help':
     default:
@@ -92,7 +93,7 @@ async function handleInbox(subcommand: string | undefined, args: string[]) {
         throw new Error('Usage: lovelace inbox start <work-item> <id> | <tracker-item|change-request> <provider> <externalId> <title>');
       }
 
-      const body =
+      const body: RouterInputs['inbox']['activate'] =
         sourceType === 'work-item'
           ? (() => {
               const id = args[1]?.trim();
@@ -108,16 +109,11 @@ async function handleInbox(subcommand: string | undefined, args: string[]) {
               }
               return {
                 title,
-                sources: [{ sourceType, provider, externalId }],
+                sources: [{ sourceType: inboxSourceType(sourceType), provider, externalId }],
               };
             })();
 
-      return printJson(
-        await request('/inbox/activate', {
-          method: 'POST',
-          body: JSON.stringify(body),
-        }),
-      );
+      return printJson(await client().inbox.activate.mutate(body));
     }
     case 'dismiss': {
       const sourceType = args[0]?.trim();
@@ -125,7 +121,7 @@ async function handleInbox(subcommand: string | undefined, args: string[]) {
         throw new Error('Usage: lovelace inbox dismiss <work-item> <id> | <tracker-item|change-request> <provider> <externalId> [externalId...]');
       }
 
-      const body =
+      const body: RouterInputs['inbox']['dismiss'] =
         sourceType === 'work-item'
           ? (() => {
               const id = args[1]?.trim();
@@ -139,19 +135,14 @@ async function handleInbox(subcommand: string | undefined, args: string[]) {
                 throw new Error('Usage: lovelace inbox dismiss <tracker-item|change-request> <provider> <externalId> [externalId...]');
               }
               return {
-                sources: externalIds.map((externalId) => ({ sourceType, provider, externalId })),
+                sources: externalIds.map((externalId) => ({ sourceType: inboxSourceType(sourceType), provider, externalId })),
               };
             })();
 
-      return printJson(
-        await request('/inbox/dismiss', {
-          method: 'POST',
-          body: JSON.stringify(body),
-        }),
-      );
+      return printJson(await client().inbox.dismiss.mutate(body));
     }
     default:
-      return printJson(await request('/inbox'));
+      return printJson(await client().inbox.get.query());
   }
 }
 
@@ -160,37 +151,22 @@ async function handleWorkItems(subcommand: string | undefined, args: string[]) {
     case 'create': {
       const title = args.join(' ').trim();
       if (!title) throw new Error('Usage: lovelace work-items create <title>');
-      return printJson(
-        await request('/work-items/manual', {
-          method: 'POST',
-          body: JSON.stringify({ title }),
-        }),
-      );
+      return printJson(await client().workItems.create.mutate({ title }));
     }
     case 'start': {
       const id = args[0]?.trim();
       if (!id) throw new Error('Usage: lovelace work-items start <id>');
-      return printJson(
-        await request(`/work-items/${id}/state`, {
-          method: 'POST',
-          body: JSON.stringify({ state: 'active' }),
-        }),
-      );
+      return printJson(await client().workItems.setState.mutate({ id, state: 'active' }));
     }
     case 'done': {
       const id = args[0]?.trim();
       if (!id) throw new Error('Usage: lovelace work-items done <id>');
-      return printJson(
-        await request(`/work-items/${id}/state`, {
-          method: 'POST',
-          body: JSON.stringify({ state: 'done' }),
-        }),
-      );
+      return printJson(await client().workItems.setState.mutate({ id, state: 'done' }));
     }
     case 'show': {
       const id = args[0]?.trim();
       if (!id) throw new Error('Usage: lovelace work-items show <id>');
-      const details = (await request(`/work-items/${id}`)) as WorkItemDetails;
+      const details = await client().workItems.get.query({ id });
       return printJson({ ...details, pullRequests: extractPullRequests(details.attachments), jiraIssues: extractJiraIssues(details.attachments) });
     }
     case 'update':
@@ -214,12 +190,12 @@ async function handleWorkItems(subcommand: string | undefined, args: string[]) {
     case 'workspaces': {
       const id = args[0]?.trim();
       if (!id) throw new Error('Usage: lovelace work-items workspaces <id>');
-      const details = (await request(`/work-items/${id}`)) as WorkItemDetails;
+      const details = await client().workItems.get.query({ id });
       return printJson(extractRepositoryWorkspaces(details.attachments));
     }
     case 'list':
     default:
-      return printJson(await request('/work-items'));
+      return printJson(await client().workItems.list.query());
   }
 }
 
@@ -228,7 +204,7 @@ const CURRENT_WORK_COMMANDS = new Set(['show', 'update', 'start', 'done', 'attac
 
 async function handleCurrentWork(subcommand = 'show', args: string[]) {
   if (!CURRENT_WORK_COMMANDS.has(subcommand)) throw new Error(`Usage: lovelace work [${[...CURRENT_WORK_COMMANDS].join('|')}] ...`);
-  const current = (await request(`/work-items/current?path=${encodeURIComponent(process.cwd())}`)) as { workItem: { id: string } };
+  const current = await client().workItems.current.query({ path: process.cwd() });
   return handleWorkItems(subcommand, [current.workItem.id, ...args]);
 }
 
@@ -258,9 +234,7 @@ async function handleUpdate(args: string[]) {
   const notes = values['clear-notes']
     ? null
     : values['notes-file'] !== undefined ? await readFile(values['notes-file'], 'utf8') : values.notes;
-  return printJson(
-    await request(`/work-items/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify({ title: values.title, notes }) }),
-  );
+  return printJson(await client().workItems.update.mutate({ id, title: values.title, notes }));
 }
 
 async function handleAttachPr(args: string[]) {
@@ -268,7 +242,7 @@ async function handleAttachPr(args: string[]) {
   if (!id || refs.length === 0) throw new Error('Usage: lovelace work-items attach-pr <id> <pr...>');
   const attachments = [];
   for (const ref of refs) {
-    attachments.push(await request(`/work-items/${id}/pull-requests`, { method: 'POST', body: JSON.stringify(bodyForPullRequestRef(ref)) }));
+    attachments.push(await client().workItems.attachPullRequest.mutate({ id, ...bodyForPullRequestRef(ref) }));
   }
   return printJson(attachments);
 }
@@ -279,7 +253,7 @@ async function handleDetachPr(args: string[]) {
   const parsed = parsePullRequestShorthand(ref);
   const externalId = parsed ? `${parsed.repoFullName}#${parsed.number}` : externalIdFromUrl(ref);
   if (!externalId) throw new Error('Pull request must be a GitHub URL or owner/repo#number');
-  return printJson(await request(`/work-items/${id}/pull-requests/${encodeURIComponent(externalId)}`, { method: 'DELETE' }));
+  return printJson(await client().workItems.detachPullRequest.mutate({ id, externalId }));
 }
 
 async function handleAttachJira(args: string[]) {
@@ -287,7 +261,7 @@ async function handleAttachJira(args: string[]) {
   if (!id || refs.length === 0) throw new Error('Usage: lovelace work-items attach-jira <id> <issue...>');
   const attachments = [];
   for (const ref of refs) {
-    attachments.push(await request(`/work-items/${id}/tracker-items`, { method: 'POST', body: JSON.stringify(bodyForJiraIssueRef(ref)) }));
+    attachments.push(await client().workItems.attachTrackerItem.mutate({ id, ...bodyForJiraIssueRef(ref) }));
   }
   return printJson(attachments);
 }
@@ -296,7 +270,7 @@ async function handleDetachJira(args: string[]) {
   const [id, ref] = args.map((value) => value.trim()).filter(Boolean);
   if (!id || !ref) throw new Error('Usage: lovelace work-items detach-jira <id> <issue>');
   const idOrKey = jiraKeyFromUrl(ref) ?? ref;
-  return printJson(await request(`/work-items/${id}/tracker-items/${encodeURIComponent(idOrKey)}`, { method: 'DELETE' }));
+  return printJson(await client().workItems.detachTrackerItem.mutate({ id, idOrKey }));
 }
 
 function jiraKeyFromUrl(value: string): string | null {
@@ -314,8 +288,8 @@ async function handlePrs(args: string[]) {
   if (!id) throw new Error('Usage: lovelace work-items prs <id> [--refresh]');
   const refresh = args.includes('--refresh');
   const attachments = refresh
-    ? ((await request(`/work-items/${id}/pull-requests/refresh`, { method: 'POST' })) as WorkItemAttachment[])
-    : ((await request(`/work-items/${id}`)) as WorkItemDetails).attachments;
+    ? await client().workItems.refreshPullRequests.mutate({ id })
+    : (await client().workItems.get.query({ id })).attachments;
   return printJson(extractPullRequests(attachments));
 }
 
@@ -334,7 +308,7 @@ async function handleAddWorktree(args: string[]) {
   const baseBranch = values.base?.trim();
   if (positionals.length !== 2 || !id || !ref || branchName === '' || baseBranch === '') throw new Error(ADD_WORKTREE_USAGE);
 
-  const repos = (await request('/repos')) as Array<{ id: string; name: string; fullName: string }>;
+  const repos = await client().repositories.list.query();
   const repo = repos.find((entry) => entry.id === ref || entry.name === ref || entry.fullName === ref);
   if (!repo) {
     const known = repos.map((entry) => entry.name).join(', ');
@@ -349,7 +323,7 @@ async function handleAddWorktree(args: string[]) {
   let details: WorkItemDetails;
   let previousProgress = '';
   try {
-    details = await client().prepareRepositories(id, repositories, {
+    details = await prepareRepositories(client(), id, repositories, {
       signal: controller.signal,
       onProgress(workspaces) {
         if (!process.stderr.isTTY) return;
@@ -375,6 +349,11 @@ async function handleAddWorktree(args: string[]) {
 
 function extractPullRequests(attachments: WorkItemAttachment[]) {
   return attachmentsOfType(attachments, 'pull-request').map((attachment) => ({ externalId: attachment.externalId, ...attachment.payload }));
+}
+
+function inboxSourceType(value: string): InboxSourceType {
+  if (value === 'tracker-item' || value === 'change-request') return value;
+  throw new Error('Inbox source type must be work-item, tracker-item or change-request');
 }
 
 function bodyForPullRequestRef(ref: string) {

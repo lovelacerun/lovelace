@@ -1,31 +1,16 @@
-import type { RenderPromptInput } from '@lovelace/core';
-import type { FastifyInstance } from 'fastify';
+import { z } from 'zod';
 import { listPromptTemplates, renderPrompt } from '../services/prompt-service.js';
-import type { RouteDeps } from './deps.js';
-import { isNonEmptyString } from '../helpers.js';
+import { notFound, procedure, router } from '../trpc.js';
+import { nonEmpty, startWorkSource } from './schemas.js';
 
-export function registerPromptRoutes(app: FastifyInstance, deps: RouteDeps) {
-  app.get('/prompts', async () => listPromptTemplates(deps.config.lovelaceDir));
+export const promptsRouter = router({
+  list: procedure.query(({ ctx }) => listPromptTemplates(ctx.config.lovelaceDir)),
 
-  app.post('/prompts/render', async (request, reply) => {
-    if (!isRenderPromptInput(request.body)) {
-      reply.code(400);
-      return { ok: false, error: 'invalid prompt render payload' };
-    }
-    const rendered = renderPrompt(deps.config, request.body, request.log);
-    if (!rendered) {
-      reply.code(404);
-      return { ok: false, error: 'prompt not found' };
-    }
-    return rendered;
-  });
-}
-
-function isRenderPromptInput(value: unknown): value is RenderPromptInput {
-  if (!value || typeof value !== 'object') return false;
-  const record = value as Record<string, unknown>;
-  if (!isNonEmptyString(record.promptId) || !isNonEmptyString(record.title)) return false;
-  if (record.sources !== undefined && !Array.isArray(record.sources)) return false;
-  if (record.workspacePaths !== undefined && (!Array.isArray(record.workspacePaths) || !record.workspacePaths.every(isNonEmptyString))) return false;
-  return true;
-}
+  /** Renders a template before user editing; a mutation only so provider text travels in the body, not the URL. */
+  render: procedure
+    .input(z.object({
+      promptId: nonEmpty, title: nonEmpty,
+      sources: z.array(startWorkSource).optional(), workspacePaths: z.array(nonEmpty).optional(),
+    }))
+    .mutation(({ ctx, input }) => renderPrompt(ctx.config, input, ctx.logger) ?? notFound('prompt not found')),
+});

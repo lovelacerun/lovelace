@@ -1,17 +1,18 @@
 import { readFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { parseArgs } from 'node:util';
-import { CODING_HARNESSES, isToolLaunchOptionsById, loadConfig, type CodingHarnessId } from '@lovelace/core';
-import { LovelaceClient } from '@lovelace/client';
+import { CODING_HARNESSES, isToolLaunchOptionsById, type CodingHarnessId } from '@lovelace/core';
+import type { LovelaceClient } from '@lovelace/client';
+import { client } from './http.js';
 
 export interface AgentCommandDeps {
-  client: Pick<LovelaceClient, 'newSession' | 'openSession'>;
+  client: LovelaceClient;
   uuid: () => string;
   readPrompt: (path: string) => Promise<string>;
 }
 function dependencies(overrides: Partial<AgentCommandDeps>): AgentCommandDeps {
   return {
-    client: new LovelaceClient(`http://127.0.0.1:${loadConfig().port}`),
+    client: overrides.client ?? client(),
     uuid: randomUUID, readPrompt: path => readFile(path, 'utf8'), ...overrides,
   };
 }
@@ -38,12 +39,12 @@ export async function launchTools(args: string[], overrides: Partial<AgentComman
     throw new Error(`Invalid launch options for ${toolId}. Supported thinking levels: ${levels}.`);
   }
   const prompt = values['prompt-file'] !== undefined ? await deps.readPrompt(values['prompt-file']) : values.prompt!;
-  return deps.client.newSession(workItemId, prompt, agentId, options, deps.uuid());
+  return deps.client.launches.newSession.mutate({ workItemId, prompt, agentId, options, requestId: deps.uuid() });
 }
 
 /** Focus the session's Herdr pane, or continue its exact conversation when the agent ended. */
 export async function openTool(args: string[], overrides: Partial<AgentCommandDeps> = {}): Promise<unknown> {
   const deps = dependencies(overrides);
   if (args.length !== 2 || !args[0] || !args[1]) throw new Error('Usage: lovelace work-items open <id> <session-id>');
-  return deps.client.openSession(args[0], args[1]);
+  return deps.client.sessions.open.mutate({ workItemId: args[0], sessionId: args[1] });
 }

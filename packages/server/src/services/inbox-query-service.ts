@@ -1,4 +1,4 @@
-import type { GitHubReviewRequest, InboxSourceType, JiraIssueSummary, LovelaceLink, WorkItem, WorkItemAttachment, WorkItemDetails } from '@lovelace/core';
+import type { GitHubReviewRequest, InboxSourceType, JiraIssueSummary, LovelaceLink, StartWorkSource, WorkItem, WorkItemAttachment, WorkItemDetails } from '@lovelace/core';
 import groupBy from '@nkzw/core/groupBy.js';
 import isPresent from '@nkzw/core/isPresent.js';
 import type { CachedGitHub, CachedJira } from '../cached-providers.js';
@@ -11,42 +11,27 @@ export interface InboxProviders {
   jira: Pick<CachedJira, 'peekAssignedIssues'>;
 }
 
-type InboxItemSourceType = 'work-item' | 'tracker-item' | 'change-request';
-
-interface InboxItemSource {
-  sourceType: InboxSourceType;
-  provider: string;
-  externalId: string;
-  payload: unknown;
-}
-
-interface RelatedWorkItemRef {
+export interface RelatedWorkItemRef {
   id: string;
   title: string;
   state: WorkItem['state'];
   completedAt: string | null;
 }
 
-interface InboxItem {
+export interface InboxItem {
   id: string;
-  sourceType: InboxItemSourceType;
+  sourceType: 'work-item' | InboxSourceType;
   title: string;
   subtitle: string | null;
   url: string | null;
   updatedAt: string;
-  sources?: InboxItemSource[];
+  sources?: StartWorkSource[];
   links?: LovelaceLink[];
   relatedWorkItems?: RelatedWorkItemRef[];
   raw: JiraIssueSummary | WorkItemDetails | GitHubReviewRequest;
 }
 
-interface InboxResponse {
-  activeWorkItems: InboxItem[];
-  jiraIssues: InboxItem[];
-  reviewRequests: InboxItem[];
-}
-
-export function buildInbox(database: DatabaseState, providers: InboxProviders): InboxResponse {
+export function buildInbox(database: DatabaseState, providers: InboxProviders) {
   const workItems = database.listWorkItems();
   const attachments = database.listAttachments();
   const attachmentsByWorkItemId = groupBy(attachments, (attachment) => attachment.workItemId);

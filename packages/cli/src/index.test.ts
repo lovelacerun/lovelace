@@ -14,10 +14,12 @@ test('no-argument CLI prints help; JSON agent/server commands never open TUI; ex
   t.after(() => rm(root, { recursive: true, force: true }));
   const preload = join(root, 'fake-http.mjs');
   await writeFile(preload, `globalThis.fetch = async (url, init) => {
-    if (!String(url).startsWith('http://127.0.0.1:48999/')) throw new Error('Nonlocal fixture request');
-    const { pathname, searchParams } = new URL(url);
-    if (pathname === '/work-items/current') return Response.json({ workItem: { id: searchParams.get('path') === process.cwd() ? 'cwd-work' : 'wrong' } });
-    return Response.json({ path: pathname, body: init?.body ? JSON.parse(init.body) : null });
+    if (!String(url).startsWith('http://127.0.0.1:48999/trpc/')) throw new Error('Nonlocal fixture request');
+    const path = new URL(url).pathname.slice('/trpc/'.length);
+    const raw = init?.body ?? new URL(url).searchParams.get('input');
+    const input = raw ? JSON.parse(raw) : null;
+    if (path === 'workItems.current') return Response.json({ result: { data: { workItem: { id: input.path === process.cwd() ? 'cwd-work' : 'wrong' } } } });
+    return Response.json({ result: { data: { path, body: input } } });
   };\n`);
   const run = (args: string[]) => spawnSync(process.execPath, ['--import', loader, '--import', preload, entry, ...args], {
     env: { ...process.env, LOVELACE_ROOT: root, LOVELACE_CONFIG: join(root, 'config.jsonc'), LOVELACE_PORT: '48999', LOVELACE_NO_AUTOSTART: '1' }, encoding: 'utf8', timeout: 5_000,
@@ -29,7 +31,7 @@ test('no-argument CLI prints help; JSON agent/server commands never open TUI; ex
     assert.doesNotMatch(result.stdout, /\x1b|dashboard \(default\)/);
     assert.equal(result.stderr, '');
   }
-  for (const [args, path] of [[['status'], '/status'], [['inbox'], '/inbox'], [['work-items', 'start', 'work'], '/work-items/work/state']] as const) {
+  for (const [args, path] of [[['status'], 'system.status'], [['inbox'], 'inbox.get'], [['work-items', 'start', 'work'], 'workItems.setState']] as const) {
     const result = run([...args]);
     assert.equal(result.status, 0, result.stderr);
     const output = JSON.parse(result.stdout);
@@ -41,7 +43,7 @@ test('no-argument CLI prints help; JSON agent/server commands never open TUI; ex
   assert.match(guide.stdout, /^---\nname: lovelace/);
   const current = run(['work', 'done']);
   assert.equal(current.status, 0, current.stderr);
-  assert.deepEqual(JSON.parse(current.stdout), { path: '/work-items/cwd-work/state', body: { state: 'done' } });
+  assert.deepEqual(JSON.parse(current.stdout), { path: 'workItems.setState', body: { id: 'cwd-work', state: 'done' } });
   const invalid = run(['work-items', 'launch']);
   assert.equal(invalid.status, 1);
   assert.equal(invalid.stdout, '');
@@ -57,10 +59,9 @@ test('work-items update sends only passed fields', async t => {
   t.after(() => rm(root, { recursive: true, force: true }));
   const preload = join(root, 'fake-http.mjs');
   await writeFile(preload, `globalThis.fetch = async (url, init) => {
-    if (!String(url).startsWith('http://127.0.0.1:48999/')) throw new Error('Nonlocal fixture request');
-    const { pathname } = new URL(url);
-    if (!init?.method || init.method === 'GET') return Response.json({ path: pathname, method: 'GET' });
-    return Response.json({ path: pathname, method: init.method, body: JSON.parse(init.body) });
+    if (!String(url).startsWith('http://127.0.0.1:48999/trpc/')) throw new Error('Nonlocal fixture request');
+    const path = new URL(url).pathname.slice('/trpc/'.length);
+    return Response.json({ result: { data: { path, method: init.method, body: JSON.parse(init.body) } } });
   };\n`);
   const notesFile = join(root, 'notes.md');
   await writeFile(notesFile, 'From file\n');
@@ -76,7 +77,7 @@ test('work-items update sends only passed fields', async t => {
   for (const [flags, body] of cases) {
     const result = run(['work-items', 'update', 'work', ...flags]);
     assert.equal(result.status, 0, result.stderr);
-    assert.deepEqual(JSON.parse(result.stdout), { path: '/work-items/work', method: 'PATCH', body });
+    assert.deepEqual(JSON.parse(result.stdout), { path: 'workItems.update', method: 'POST', body: { id: 'work', ...body } });
   }
   for (const args of [['work'], ['work', '--notes', 'a', '--clear-notes'], ['work', '--title', ' '], ['--title', 'x'], ['work', '--bogus']]) {
     const result = run(['work-items', 'update', ...args]);
