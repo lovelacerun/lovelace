@@ -521,7 +521,7 @@ export class LaunchDialog implements Component {
 
   private separator(leftWidth: number, rightWidth: number, junction: '┬' | '┴'): string {
     // Include the outer padding and the gutter beside each column.
-    if (this.single) return muted + '├' + '─'.repeat(rightWidth + 2) + '┤' + reset;
+    if (this.single) return muted + '├' + '─'.repeat(this.body.width + 2) + '┤' + reset;
     return muted + '├' + '─'.repeat(leftWidth + 2) + junction + '─'.repeat(rightWidth + 2) + '┤' + reset;
   }
 

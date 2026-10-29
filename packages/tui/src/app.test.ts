@@ -243,6 +243,8 @@ describe('AppRoot Jira start-work overlay', () => {
       const lines = modal.render(cols! - 2);
       assert.ok(lines.length <= rows! - 2);
       assert.ok(lines.every(line => visibleWidth(line) <= cols! - 2));
+      // Every row, separators included, reaches the right border.
+      assert.ok(lines.every(line => visibleWidth(stripTerminalSequences(line).trimEnd()) === cols! - 2));
       assert.match(lines.join('\n'), /2 repositories/);
       assert.match(lines.join('\n'), /Name:/);
       // Narrow dialogs show only the focused pane; Tab reaches the prompt.
@@ -347,6 +349,8 @@ describe('AppRoot new-session overlay', () => {
       const lines = modal.render(cols! - 2);
       assert.ok(lines.length <= rows! - 2);
       assert.ok(lines.every(line => visibleWidth(line) <= cols! - 2));
+      // Every row, separators included, reaches the right border.
+      assert.ok(lines.every(line => visibleWidth(stripTerminalSequences(line).trimEnd()) === cols! - 2));
     }
     tui.feedInput('Second pass');
     server.launchQueue.push(serverError(404, 'Work item not found.'));
