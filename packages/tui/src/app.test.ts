@@ -92,6 +92,7 @@ class FakeClient {
     return next;
   }
   async setWorkItemState() { return {} as never; }
+  async getLaunch(): Promise<LaunchResponse> { throw new ApiError(404, 'launch not found'); }
   async quickStart(prompt: string, jiraIssueId?: string, _agentId?: unknown, _overrides?: unknown, requestId?: string, options?: QuickStartOptions): Promise<LaunchResponse> {
     this.launchCalls.push({ endpoint: 'quickStart', jiraIssueId, prompt, requestId, ...(options?.reviewRequestId ? { reviewRequestId: options.reviewRequestId } : {}), ...(options?.repoIds ? { repoIds: options.repoIds } : {}), ...(options?.promptId ? { promptId: options.promptId } : {}) });
     const next = this.launchQueue.shift();
@@ -681,7 +682,8 @@ describe('AppRoot real Editor submission over fixture HTTP', () => {
       const requests: Array<{ path: string; body: { prompt: string; requestId: string } }> = [];
       const url = await httpFixture(t, (req, res) => {
         if (req.method === 'GET') {
-          reply(res, 200, req.url === '/dashboard' ? emptyDashboard() : req.url === '/tools' ? fixtureTools() : detailsOf('created'));
+          if (req.url!.startsWith('/launches/')) reply(res, 404, { error: 'launch not found' });
+          else reply(res, 200, req.url === '/dashboard' ? emptyDashboard() : req.url === '/tools' ? fixtureTools() : detailsOf('created'));
           return;
         }
         let data = '';

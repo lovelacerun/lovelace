@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { LovelaceClient } from '@lovelace/client';
 import { ApiError } from '@lovelace/client';
-import type { WorkItemState } from '@lovelace/core';
+import type { LaunchResponse, WorkItemState } from '@lovelace/core';
 import { isLaunchFocus, type AppState } from './state.js';
 import type { Action } from './views/common.js';
 import type { KeyIntent } from './keymap.js';
@@ -194,8 +194,8 @@ async function retryLaunch(state: AppState, deps: ControllerDeps, launchId: stri
  * - The exact prompt string (including trailing whitespace) is forwarded; only
  *   emptiness is checked via trim.
  * - The request ID is saved on the draft before sending. Until the server
- *   answers, submitting again resends it, and the server replays that launch
- *   instead of starting another one.
+ *   answers, submitting again first looks the request ID up, so an edited
+ *   draft cannot turn a recorded launch into a conflict; an unknown ID is sent.
  * - Any answer hands the launch to the server: the draft is cleared and the
  *   work item shows its progress, failure and retry.
  */
@@ -230,9 +230,10 @@ export async function submitLaunch(
       signal: deps.signal, repoIds: draft.repoIds, promptId: draft.promptId, wait: false,
       reviewRequestId: state.view === 'review' ? state.selectedReview?.id : undefined,
     };
-    const response = workItemId
+    // A resent request the server already recorded is answered by its launch, whatever the draft says now.
+    const response = (resend ? await recordedLaunch(deps.client, requestId, deps.signal) : null) ?? (workItemId
       ? await deps.client.newSession(workItemId, prompt, state.launchAgent, state.launchToolOptions, requestId, options)
-      : await deps.client.quickStart(prompt, state.view === 'jira' ? state.selectedJira?.id : undefined, state.launchAgent, state.launchToolOptions, requestId, options);
+      : await deps.client.quickStart(prompt, state.view === 'jira' ? state.selectedJira?.id : undefined, state.launchAgent, state.launchToolOptions, requestId, options));
     deps.signal?.throwIfAborted();
     const currentText = state.drafts.get(draftKey)?.text ?? '';
     setDraft({ text: currentText === prompt ? '' : currentText, repoIds: undefined, promptId: undefined, requestId: undefined });
@@ -256,6 +257,15 @@ export async function submitLaunch(
   } finally {
     state.mutationInFlight = false;
     state.changed();
+  }
+}
+
+async function recordedLaunch(client: ControllerDeps['client'], requestId: string, signal?: AbortSignal): Promise<LaunchResponse | null> {
+  try {
+    return await client.getLaunch(requestId, { signal });
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 404) return null;
+    throw error;
   }
 }
 

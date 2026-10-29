@@ -39,7 +39,8 @@ the exact prompt, selections and a single state (`accepted`, `preparing`,
 `starting`, `started`, `failed`, `uncertain`). Resending a request ID joins or
 reads that launch instead of launching again; a different request under the
 same ID is rejected. Launches left in progress by an earlier server boot become
-`uncertain` on startup and are never replayed.
+`uncertain` on startup and are never replayed; so does a launch whose error
+came after Herdr may have started the agent.
 Quick-start accepts `reviewRequestId` from the cached review requests: the
 work item gets the pull request as its `change-request`, and the pull request's
 repository, which must be among `repoIds`, is checked out at its branch.

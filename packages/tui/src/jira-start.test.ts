@@ -25,6 +25,7 @@ function client(overrides: Partial<LovelaceClient> = {}): LovelaceClient {
     getPromptTemplates: async () => templates,
     getJiraIssues: async () => [{ ...issue, descriptionText: 'Full description' }],
     renderPrompt: async () => ({ promptId: 'refine', content: 'Rendered prompt' }),
+    getLaunch: async () => { throw new ApiError(404, 'launch not found'); },
     ...overrides,
   } as unknown as LovelaceClient;
 }

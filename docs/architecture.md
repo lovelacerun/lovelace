@@ -92,14 +92,18 @@ carries a client-generated request ID.
    `herdr agent start` with native flags only, then `herdr agent prompt`.
    Nothing is focused.
 4. Once Herdr detects the agent, a `session` attachment is recorded and the
-   launch is `started`; any error makes it `failed`.
+   launch is `started`. An error before Herdr was asked to start the agent,
+   or Herdr refusing it, makes it `failed`; any later error makes it
+   `uncertain`, since the agent may be running without a session.
 
 Repeating a request ID joins or reads that launch instead of launching again.
 Each row records the boot ID of the server that ran it; on startup, launches
 still in progress under an earlier boot become `uncertain` and are never
 replayed. `POST /launches/:id/retry` runs a `failed` launch again in place
 with its saved prompt and selections. The TUI keeps only the prompt,
-selections and the request ID of a request that got no answer.
+selections and the request ID of a request that got no answer; before
+resending it, it looks the ID up and takes the recorded launch if there is
+one.
 
 ## Sessions
 

@@ -179,8 +179,8 @@ quitting stops client polling, not server preparation/startup.
 Validation errors stay in the setup dialog. Later preparation/startup failures
 appear on the saved work item with **Retry saved prompt**, which asks the
 server to run that launch again with its saved prompt, template/repositories
-and harness options; ready worktrees are reused. After a server restart,
-uncertain launches require inspecting Herdr before deliberately starting another
+and harness options; ready worktrees are reused. Uncertain launches (an
+error after the agent may have started, or a server restart) require inspecting Herdr before deliberately starting another
 session. Progress is restored from server state when revisiting/reopening the TUI.
 
 ## Sessions in Herdr

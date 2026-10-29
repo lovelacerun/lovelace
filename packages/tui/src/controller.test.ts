@@ -151,6 +151,7 @@ describe('submitLaunch requestId lifecycle', () => {
         if (failure) throw failure;
         return accepted('wi-new', requestId);
       },
+      getLaunch: async () => { throw new ApiError(404, 'launch not found'); },
     } as unknown as LovelaceClient;
     let seq = 0;
     const deps = { client, refreshDashboard: () => {}, newRequestId: () => `uuid-${++seq}` };
@@ -177,6 +178,7 @@ describe('submitLaunch requestId lifecycle', () => {
         captured.push(requestId);
         throw captured.length === 1 ? new ApiError(0, 'offline') : new ApiError(409, 'This request ID belongs to a different launch');
       },
+      getLaunch: async () => { throw new ApiError(404, 'launch not found'); },
     } as unknown as LovelaceClient;
     let seq = 0;
     const deps = { client, refreshDashboard: () => {}, newRequestId: () => `uuid-${++seq}` };
@@ -189,6 +191,29 @@ describe('submitLaunch requestId lifecycle', () => {
     assert.equal(state.draft.requestId, undefined);
     assert.equal(state.draft.text, '');
     assert.deepEqual(captured, ['uuid-1', 'uuid-1']);
+  });
+
+  it('a resend takes the recorded launch instead of sending an edited draft', async () => {
+    const state = new AppState({ onInvalidate() {} });
+    state.applyDashboardResponse(dash());
+    state.setDraft({ text: 'original' });
+    let sends = 0;
+    let recorded = false;
+    const client = {
+      quickStart: async () => { sends++; recorded = true; throw new ApiError(0, 'offline'); },
+      getLaunch: async (id: string) => {
+        if (!recorded) throw new ApiError(404, 'launch not found');
+        return accepted('wi-new', id);
+      },
+    } as unknown as LovelaceClient;
+    const deps = { client, refreshDashboard: () => {}, newRequestId: () => 'uuid-1' };
+    await submitLaunch(state, deps, 'original');
+    state.setDraft({ text: 'edited' });
+    await submitLaunch(state, deps, 'edited');
+    assert.equal(sends, 1, 'the recorded launch answers the resend');
+    assert.equal(state.error, null);
+    assert.equal(state.drafts.get('home')!.requestId, undefined);
+    assert.equal(state.selectedWorkItemId, 'wi-new');
   });
 
   it('passes the exact prompt (including trailing whitespace) through to the server', async () => {

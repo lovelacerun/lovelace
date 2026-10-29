@@ -14,6 +14,7 @@ import { harnessArguments, isNativeSessionId } from '../tools/harness-arguments.
 import type { LoadedTool } from '../tools/tool-loader.js';
 import { emitActivity } from './activity-bus.js';
 import { appendAgentContext } from './agent-context.js';
+import { UncertainLaunchError } from './launch-service.js';
 import { ensureTaskWorkspacePath } from './task-workspace-service.js';
 
 interface Logger {
@@ -59,8 +60,11 @@ export async function launchSessions(deps: SessionServiceDeps, workItemId: strin
 
   const created: Array<Attachment<'session'>> = [];
   const failures: string[] = [];
+  let uncertain = false;
   for (const toolId of harnesses) {
     const title = harnessTitle(toolId);
+    let stage: 'opening' | 'starting' | 'started' = 'opening';
+    let paneId: string | undefined;
     try {
       emitActivity({ type: 'tool.launching', workItemId, message: `Launching ${title}` });
       // Templates show the context in the editable prompt; free text gets it appended.
@@ -70,8 +74,11 @@ export async function launchSessions(deps: SessionServiceDeps, workItemId: strin
       // Claude accepts a chosen conversation ID; the others report theirs through Herdr.
       const nativeSessionId = toolId === 'claude' ? randomUUID() : null;
       const pane = await openLaunchPane(database, deps.herdr, workItem, { cwd, label: title });
+      paneId = pane.paneId;
+      stage = 'starting';
       const ready = await startAgent(deps.herdr, { name: agentName, kind: toolId, paneId: pane.paneId,
         args: [...(nativeSessionId ? ['--session-id', nativeSessionId] : []), ...harnessArguments(toolId, options)] }, { freshPane: true });
+      stage = 'started';
       const promptPending = Boolean(prompt) && !(ready && await submitPrompt(deps.herdr, agentName, prompt!));
       // Herdr's integration usually reports the conversation at startup; record it before the agent can exit.
       const reported = (await deps.herdr.listPanes()).find(entry => entry.paneId === pane.paneId && entry.agent === toolId)?.agentSession;
@@ -87,12 +94,18 @@ export async function launchSessions(deps: SessionServiceDeps, workItemId: strin
       emitActivity({ type: 'tool.launched', workItemId, message: `${title} launched` });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      failures.push(`${title}: ${message}`);
+      // Only a refusal from Herdr proves the agent did not start; after that, it may be running unrecorded.
+      const mayRun = stage === 'started' || (stage === 'starting' && !isHerdrRefusal(error));
+      uncertain ||= mayRun;
+      failures.push(`${title}: ${message}${mayRun ? ` (the agent may be running in Herdr pane ${paneId})` : ''}`);
       logger.error({ err: error, workItemId, toolId }, 'Agent launch failed');
       emitActivity({ type: 'tool.failed', workItemId, message: `${title} failed to launch: ${message}` });
     }
   }
-  if (created.length === 0 && failures.length > 0) throw new Error(`Failed to launch ${failures.join('; ')}`);
+  if (created.length === 0 && failures.length > 0) {
+    const message = `Failed to launch ${failures.join('; ')}`;
+    throw uncertain ? new UncertainLaunchError(message) : new Error(message);
+  }
   return created;
 }
 
@@ -201,6 +214,10 @@ async function startAgent(herdr: HerdrClient, input: Parameters<HerdrClient['sta
       await new Promise(resolve => setTimeout(resolve, FRESH_PANE_RETRY_MS));
     }
   }
+}
+
+function isHerdrRefusal(error: unknown): boolean {
+  return error instanceof HerdrError && error.code !== 'herdr_timeout' && error.code !== 'herdr_invalid_response';
 }
 
 const FRESH_PANE_ATTEMPTS = 40;

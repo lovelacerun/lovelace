@@ -12,6 +12,7 @@ import { buildServer } from '../app.js';
 import type { RouteDeps } from './deps.js';
 import type { LoadedTool } from '../tools/tool-loader.js';
 import { createActiveWorkItem } from '../repositories/work-item-repository.js';
+import { HerdrError } from '../herdr/herdr-client.js';
 import { FakeHerdr } from '../test-support/fake-herdr.js';
 import { fixtureProviders, storedSnapshot } from '../test-support/providers.js';
 import { syncSessions } from '../services/session-service.js';
@@ -28,7 +29,7 @@ async function fixture(t: TestContext, fail = false, providers = fixtureProvider
   };
   const database = openDatabase(config);
   const herdr = new FakeHerdr();
-  if (fail) herdr.failStart = new Error('fixture launch failure');
+  if (fail) herdr.failStart = new HerdrError('agent_start_failed', 'fixture launch failure');
   const starts = () => herdr.calls.filter(call => call.method === 'startAgent').map(call => call.args as { name: string; kind: string; paneId: string; args: string[] });
   const deps: RouteDeps = {
     config, tools: tools(), database, cache: providers.cache, herdr,
@@ -506,7 +507,7 @@ test('restart recovers a pending intent as uncertain and never replays its launc
   assert.equal(starts().length, 1);
 });
 
-test('concurrent launches keep separate successful and failed prompts', async (t) => {
+test('concurrent launches keep separate prompts; an error after the agent started is uncertain', async (t) => {
   const { app, database, herdr } = await fixture(t);
   const work = createActiveWorkItem(database, { title: 'Concurrent drafts', attachments: [] });
   let release!: () => void;
@@ -524,14 +525,16 @@ test('concurrent launches keep separate successful and failed prompts', async (t
   const a = app.inject({ method: 'POST', url, payload: aPayload });
   await entering;
   const b = await app.inject({ method: 'POST', url, payload: bPayload });
-  assert.equal(b.json<LaunchResponse>().launch.state, 'failed');
+  assert.equal(b.json<LaunchResponse>().launch.state, 'uncertain');
+  assert.match(b.json<LaunchResponse>().launch.error!, /may be running in Herdr pane/);
   release();
   assert.equal((await a).json<LaunchResponse>().launch.state, 'started');
   assert.equal(database.getLaunch(aPayload.requestId)!.state, 'started');
-  assert.equal(database.getLaunch(bPayload.requestId)!.state, 'failed');
+  assert.equal(database.getLaunch(bPayload.requestId)!.state, 'uncertain');
   assert.equal(database.getLaunch(bPayload.requestId)!.prompt, bPayload.prompt);
   const replay = await app.inject({ method: 'POST', url, payload: bPayload });
-  assert.equal(replay.json<LaunchResponse>().launch.state, 'failed');
+  assert.equal(replay.json<LaunchResponse>().launch.state, 'uncertain');
+  assert.equal((await app.inject({ method: 'POST', url: `/launches/${bPayload.requestId}/retry` })).statusCode, 409);
   assert.equal(database.listLaunches(work.id).length, 2);
 });
 

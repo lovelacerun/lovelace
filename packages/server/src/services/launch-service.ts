@@ -7,6 +7,9 @@ export class LaunchRequestError extends Error {
   constructor(public status: number, message: string) { super(message); }
 }
 
+/** Thrown by a runner when an agent may have started despite the error; the launch is never retried. */
+export class UncertainLaunchError extends Error {}
+
 /** Takes a launch to its agent start, recording progress; throws when it fails. */
 export type LaunchRunner = (launch: Launch) => Promise<void>;
 
@@ -68,7 +71,7 @@ function execute(database: DatabaseState, launch: LaunchRecord, input: Pick<Laun
       await input.run(toLaunch(launch));
       database.setLaunchState(launch.id, 'started');
     } catch (error) {
-      database.setLaunchState(launch.id, 'failed', error instanceof Error ? error.message : String(error));
+      database.setLaunchState(launch.id, error instanceof UncertainLaunchError ? 'uncertain' : 'failed', error instanceof Error ? error.message : String(error));
     }
     return response(database, database.getLaunch(launch.id)!);
   })().finally(() => { if (launches.get(launch.id) === task) launches.delete(launch.id); });
