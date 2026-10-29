@@ -34,6 +34,8 @@ Summarize the task and identify the relevant code first. If the task is ambiguou
 
 Review the selected changes in the prepared local workspaces. Report risks, likely impact, anything suspicious and your recommended outcome to me. Do not push commits, comment on the pull requests or change their state.
 
+Find the tracker issues these changes belong to, for example issue keys in the pull request title, branch or description, and attach any that are not attached yet to this Lovelace work item (\`work attach-jira\`). Attaching only changes local Lovelace state.
+
 {{lovelace}}`,
   },
   {

@@ -12,7 +12,8 @@ In order:
    - Review request grouping and link inference. Keep the review request list
      with bots filtered out, and starting review work from it: the pull
      request's branch checked out and installed, an agent reviewing in the
-     background. Add a review list to the TUI.
+     background. Add a review list to the TUI. The review prompt asks the
+     agent to attach the tracker issues it finds.
 3. Typed attachments: a discriminated union instead of `metaType` +
    `payloadJson`, parsed once at the database boundary and sent typed over
    HTTP; real tables for sessions and worktrees; unique indexes.
