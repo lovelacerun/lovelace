@@ -14,6 +14,7 @@ const dashboard: DashboardResponse = {
 };
 const details: WorkItemDetails = {
   workItem: { id: 'work', title: 'Linked work', state: 'active', notes: null, createdAt: '', updatedAt: '', startedAt: null, completedAt: null },
+  launches: [],
   attachments: [
     { key: 'PROJ-1', title: 'A long Jira title '.repeat(8), url: 'https://jira.example/browse/PROJ-1' },
     { key: 'PROJ-2', title: 'Second ticket', url: 'https://jira.example/browse/PROJ-2' },

@@ -80,7 +80,7 @@ test('legacy metas move to typed attachments, sessions and worktrees without dup
   meta('session', 'session', 'pi', 'll-1', { agentName: 'll-1', toolId: 'pi', terminalRef: { workspaceId: 'ws-1', paneId: 'p1' }, status: 'running', agentState: 'idle', options: { model: 'm' }, promptPending: true });
   db.exec(`insert into work_launch_operations values ('r1', 'quick-start', '{}', 'w1', 'draft', 'pending', null, 'now', 'now')`);
 
-  migrateDatabase(db, backupDir);
+  migrateDatabase(db, backupDir, migrations.slice(0, 2));
 
   const rows = (sql: string) => db.prepare(sql).all().map(row => ({ ...row }));
   assert.deepEqual(rows('select id, type, provider, external_id as externalId, payload_json as payload from work_item_attachments order by id'), [
@@ -94,4 +94,32 @@ test('legacy metas move to typed attachments, sessions and worktrees without dup
   assert.deepEqual(rows('select request_id as requestId, draft_meta_id as draftId from work_launch_operations'), [{ requestId: 'r1', draftId: 'draft' }]);
   assert.equal(db.prepare("select name from sqlite_master where name = 'work_item_meta'").get(), undefined);
   assert.throws(() => db.exec("insert into sessions select * from sessions where id = 'session'"), /UNIQUE/);
+});
+
+test('launch operations and their drafts become launches with one state', async (t) => {
+  const { db, backupDir } = await fixture(t);
+  migrateDatabase(db, backupDir, migrations.slice(0, 2));
+  db.exec("insert into work_items (id, title, state, created_at, updated_at) values ('w1', 'Work', 'active', 'now', 'now')");
+  const draft = (id: string, payload: unknown) => db.prepare("insert into work_item_attachments values (?, 'w1', 'prompt-draft', null, null, ?, 'now', 'now')").run(id, JSON.stringify(payload));
+  const operation = (id: string, draftId: string, status: string, outcome: unknown) =>
+    db.prepare("insert into work_launch_operations values (?, 'quick-start', '{\"prompt\":\"p\"}', 'w1', ?, ?, ?, 'now', 'now')").run(id, draftId, status, outcome ? JSON.stringify(outcome) : null);
+  draft('d1', { toolIds: ['claude'], toolOptions: { claude: { model: 'opus' } }, repoIds: ['a'], promptId: 'implement', prompt: 'Started', status: 'launched' });
+  draft('d2', { toolIds: ['pi'], repoIds: null, promptId: null, prompt: 'Failed', status: 'pending' });
+  draft('d3', { toolIds: ['pi'], repoIds: null, promptId: null, prompt: 'Interrupted', status: 'pending' });
+  draft('d4', { toolIds: ['codex'], repoIds: null, promptId: null, prompt: 'Orphan', status: 'pending' });
+  operation('r1', 'd1', 'completed', { ok: true, phase: 'started', error: null });
+  operation('r2', 'd2', 'completed', { ok: false, phase: 'failed', error: 'boom' });
+  operation('r3', 'd3', 'pending', { ok: false, phase: 'starting', error: null });
+
+  migrateDatabase(db, backupDir);
+
+  assert.deepEqual(db.prepare(`select id, kind, request_json as request, harness, options_json as options, repo_ids_json as repoIds,
+    prompt_id as promptId, prompt, state, error is not null as hasError from launches order by id`).all().map(row => ({ ...row })), [
+    { id: 'd4', kind: 'new-session', request: '{}', harness: 'codex', options: null, repoIds: '[]', promptId: null, prompt: 'Orphan', state: 'uncertain', hasError: 1 },
+    { id: 'r1', kind: 'quick-start', request: '{"prompt":"p"}', harness: 'claude', options: '{"claude":{"model":"opus"}}', repoIds: '["a"]', promptId: 'implement', prompt: 'Started', state: 'started', hasError: 0 },
+    { id: 'r2', kind: 'quick-start', request: '{"prompt":"p"}', harness: 'pi', options: null, repoIds: '[]', promptId: null, prompt: 'Failed', state: 'failed', hasError: 1 },
+    { id: 'r3', kind: 'quick-start', request: '{"prompt":"p"}', harness: 'pi', options: null, repoIds: '[]', promptId: null, prompt: 'Interrupted', state: 'uncertain', hasError: 1 },
+  ]);
+  assert.equal(db.prepare("select count(*) as count from work_item_attachments where type = 'prompt-draft'").get()!.count, 0);
+  assert.equal(db.prepare("select name from sqlite_master where name = 'work_launch_operations'").get(), undefined);
 });

@@ -57,7 +57,7 @@ test('additive activity schema preserves legacy work/metas and invents no v3 his
   database.db.close();
   // Simulate an unversioned v3 database that had no activity table. This is temporary fixture state only.
   const legacy = new DatabaseSync(join(config.lovelaceDir, 'state.db'));
-  legacy.exec('drop table work_activity; drop table work_launch_operations; drop table work_item_attachments; drop table worktrees; drop table sessions');
+  legacy.exec('drop table work_activity; drop table launches; drop table work_item_attachments; drop table worktrees; drop table sessions');
   migrations[0]!(legacy);
   legacy.exec(`
     drop table work_activity;

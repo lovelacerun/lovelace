@@ -1,7 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { CreateManualWorkItemInput, WorkItem, WorkItemAttachment, WorkItemDetails } from '@lovelace/core';
-import type { DatabaseState, NewAttachment } from '../database.js';
-import { launchOperationSummary } from './launch-operation-repository.js';
+import { toLaunch, type DatabaseState, type NewAttachment } from '../database.js';
 
 /** An attachment to add to a work item that is not created yet. */
 export type PendingAttachment = NewAttachment extends infer A ? A extends NewAttachment ? Omit<A, 'workItemId'> : never : never;
@@ -9,12 +8,7 @@ export type PendingAttachment = NewAttachment extends infer A ? A extends NewAtt
 export function getWorkItemDetails(database: DatabaseState, id: string): WorkItemDetails | null {
   const workItem = database.getWorkItem(id);
   if (!workItem) return null;
-  const launchOperations = database.listLaunchOperations(id).map(launchOperationSummary);
-  return {
-    workItem,
-    attachments: database.listAttachments(id),
-    ...(launchOperations.length ? { launchOperations } : {}),
-  };
+  return { workItem, attachments: database.listAttachments(id), launches: database.listLaunches(id).map(toLaunch) };
 }
 
 export function createManualWorkItem(database: DatabaseState, input: CreateManualWorkItemInput): WorkItem {

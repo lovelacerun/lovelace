@@ -1,7 +1,7 @@
 import type { Component, OverlayHandle, TuiAltScreen, TuiMouseEvent, TuiMouseEventResult } from '@earendil-works/pi-tui';
 import { compositeTuiLine, Editor, getKeybindings, isKeyRelease, matchesKey } from '@earendil-works/pi-tui';
 import type { LovelaceClient } from '@lovelace/client';
-import type { SidebarSide } from '@lovelace/core';
+import { isLaunchInProgress, type SidebarSide } from '@lovelace/core';
 
 import { AppState } from './state.js';
 import { openBrowser } from './browser.js';
@@ -88,9 +88,9 @@ export class AppRoot implements Component {
     this.launchOptions = new LaunchOptionsRow(this.state);
 
     this.dashboardPoller = new RefreshPoller((signal) => this.fetchDashboard(signal),
-      () => this.state.activeWorkItems.some(item => ['accepted', 'preparing', 'starting'].includes(item.launchPhase ?? '')) ? 2000 : 7000);
+      () => this.state.activeWorkItems.some(item => item.launchState && isLaunchInProgress(item.launchState)) ? 2000 : 7000);
     this.detailsPoller = new RefreshPoller((signal) => this.fetchDetails(signal),
-      () => this.state.selectedWorkItemData?.launchOperations?.some(operation => operation.status === 'pending') ? 1000 : 7000);
+      () => this.state.selectedWorkItemData?.launches.some(launch => isLaunchInProgress(launch.state)) ? 1000 : 7000);
     this.split = new SplitPane(
       {
         render: width => this.renderContent(width),
@@ -473,7 +473,7 @@ export class AppRoot implements Component {
 
   private focusEditor(): void {
     if (this.state.view === 'jira') {
-      if (!this.state.draft.pendingLaunch) this.openJiraStart();
+      if (!this.state.draft.requestId) this.openJiraStart();
       return;
     }
     if (this.state.view === 'work-item') {
@@ -481,7 +481,7 @@ export class AppRoot implements Component {
       return;
     }
     if (this.state.view === 'review') {
-      if (!this.state.draft.pendingLaunch) void this.startReview();
+      if (!this.state.draft.requestId) void this.startReview();
       return;
     }
     if (this.state.view !== 'dashboard') return;
@@ -514,8 +514,8 @@ export class AppRoot implements Component {
 
   private openJiraStart(): void {
     if (this.overlay || this.state.view !== 'jira' || !this.state.selectedJira || this.state.mutationInFlight) return;
-    if (this.state.draft.pendingLaunch) {
-      this.state.setError('Resolve or discard the pending launch before changing its template or repositories.');
+    if (this.state.draft.requestId) {
+      this.state.setError('Resend or discard (x) the unanswered launch before changing its template or repositories.');
       return;
     }
     const draftKey = this.state.draftKey;
@@ -540,8 +540,8 @@ export class AppRoot implements Component {
   private async startReview(): Promise<void> {
     const review = this.state.selectedReview;
     if (this.overlay || this.state.view !== 'review' || !review?.repoId || this.state.mutationInFlight) return;
-    if (this.state.draft.pendingLaunch) {
-      this.state.setError('Retry or discard (x) the unresolved launch before starting the review again.');
+    if (this.state.draft.requestId) {
+      this.state.setError('Resend or discard (x) the unanswered launch before starting the review again.');
       return;
     }
     const draftKey = this.state.draftKey;
@@ -572,8 +572,8 @@ export class AppRoot implements Component {
       this.state.setError('Reactivate local work explicitly (press a, then y) before starting a session.');
       return;
     }
-    if (this.state.draft.pendingLaunch) {
-      this.state.setError('Retry or discard (x) the unresolved launch before starting another session.');
+    if (this.state.draft.requestId) {
+      this.state.setError('Resend or discard (x) the unanswered launch before starting another session.');
       return;
     }
     const draftKey = this.state.draftKey;
@@ -582,9 +582,9 @@ export class AppRoot implements Component {
       onClose: () => this.closeOverlay(),
       onStart: async prompt => {
         await this.launchFromEditor(prompt);
-        // Acceptance clears the draft; failures stay in the dialog to edit or retry.
+        // Acceptance clears the draft; failures stay in the dialog to edit or resend.
         const draft = this.state.drafts.get(draftKey);
-        if (!draft?.pendingLaunch && !this.state.error) this.closeOverlay();
+        if (!draft?.requestId && !this.state.error) this.closeOverlay();
       },
     });
     const handle = this.tui.showOverlay(modal, { width: '96%', maxHeight: '96%', margin: 1, anchor: 'center' });

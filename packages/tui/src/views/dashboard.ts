@@ -2,14 +2,14 @@ import type { DashboardJiraIssue, DashboardReview, WorkItemSummary } from '@love
 import type { AppState } from '../state.js';
 import { muted, faint, heading, icons, reset } from '../theme.js';
 import { columnWidths, columns, safeText } from '@lovelace/tui-components';
-import { launchPhaseBadge } from './launch-progress.js';
+import { launchStateBadge } from './launch-progress.js';
 import { DocumentBuilder, keyedTitle, meta, plural, stateBadge, type Document } from './common.js';
 
 /** Two-row entries need wider columns than the shared column helper allows. */
 const SPLIT_MIN_WIDTH = 96;
 
 const workDetail = (item: WorkItemSummary): string => muted + meta([
-  (item.launchPhase ? launchPhaseBadge(item.launchPhase) : stateBadge(item.state)) + muted,
+  (item.launchState ? launchStateBadge(item.launchState) : stateBadge(item.state)) + muted,
   item.sessionCount && plural(item.sessionCount, 'session'),
   item.repositoryCount && plural(item.repositoryCount, 'repo'),
   item.pullRequestRefs.length && plural(item.pullRequestRefs.length, 'PR'),
@@ -48,7 +48,7 @@ export function renderDashboard(state: AppState, width: number): Document {
     }
   };
   const work = (item: WorkItemSummary) => ({
-    rows: [(compact && item.launchPhase ? launchPhaseBadge(item.launchPhase, true) + ' ' : '') + keyedTitle(item.title), workDetail(item)],
+    rows: [(compact && item.launchState ? launchStateBadge(item.launchState, true) + ' ' : '') + keyedTitle(item.title), workDetail(item)],
     entry: { kind: 'navigate', entry: { kind: 'work', id: item.id } } as const,
   });
 

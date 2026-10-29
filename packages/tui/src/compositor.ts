@@ -56,7 +56,7 @@ export function helpChips(state: AppState, launchMenuOpen = false): { status: st
     : '';
 
   const typing = state.focus === 'editor' || isLaunchFocus(state.focus);
-  if (state.draft.pendingLaunch && !typing) chips.push(keyChip('x', 'discard intent'));
+  if (state.draft.requestId && !typing) chips.push(keyChip('x', 'discard launch'));
   if (isLaunchFocus(state.focus) && launchMenuOpen) {
     chips.push(keyChip('↑/↓', 'move'), keyChip('Enter', 'choose'), keyChip('type', 'filter'), keyChip('Esc', 'close'));
   } else if (isLaunchFocus(state.focus)) {

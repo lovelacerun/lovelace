@@ -83,6 +83,7 @@ describe('renderWorkItem', () => {
         id: 'wi-1', title: 'Big change', state: 'active', notes: 'important notes',
         createdAt: '', updatedAt: '', startedAt: null, completedAt: null,
       },
+      launches: [],
       attachments: [
         {
           id: 'm-session', workItemId: 'wi-1', type: 'session',
@@ -127,7 +128,7 @@ describe('renderJira', () => {
     state.navigate({ kind: 'jira', id: 'J-1' });
     const doc = renderJira(state, 80);
     assert.deepEqual(doc.actions, [{ kind: 'jira-setup' }, { kind: 'open-url', url: 'https://x/' }]);
-    state.setDraft({ pendingLaunch: { endpoint: 'quickStart', prompt: 'saved prompt', requestId: 'retry-id' } });
+    state.setDraft({ text: 'saved prompt', requestId: 'retry-id' });
     assert.deepEqual(renderJira(state, 80).actions, [{ kind: 'launch-retry' }, { kind: 'open-url', url: 'https://x/' }]);
     checkWidth(doc.lines, 80);
   });

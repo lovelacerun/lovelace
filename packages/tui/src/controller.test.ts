@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import type { DashboardResponse, QuickStartResponse, WorkItemDetails } from '@lovelace/core';
+import type { DashboardResponse, Launch, LaunchResponse, WorkItemDetails } from '@lovelace/core';
 import { ApiError, type LovelaceClient } from '@lovelace/client';
 import { AppState } from './state.js';
 import { handleKey, handleAction, submitLaunch, abandonLaunchIntent, type ControllerDeps } from './controller.js';
@@ -29,7 +29,15 @@ function detailsOf(id: string): WorkItemDetails {
       createdAt: '', updatedAt: '', startedAt: null, completedAt: null,
     },
     attachments: [],
+    launches: [],
   };
+}
+
+function accepted(id: string, requestId = 'uuid'): LaunchResponse {
+  const launch: Launch = {
+    id: requestId, workItemId: id, state: 'accepted', error: null, harness: 'pi', repoIds: [], promptId: null, prompt: '', createdAt: '', updatedAt: '',
+  };
+  return { details: { ...detailsOf(id), launches: [launch] }, launch };
 }
 
 function makeDeps(overrides: Partial<ControllerDeps> & { client?: Partial<LovelaceClient> } = {}): ControllerDeps {
@@ -55,8 +63,8 @@ function fakeClient(): LovelaceClient {
   // Minimal shape covering what the tests exercise.
   return {
     setWorkItemState: async () => ({} as never),
-    newSession: async () => ({ details: detailsOf('wi-1'), launch: { ok: true, error: null } }),
-    quickStart: async () => ({ details: detailsOf('wi-1'), launch: { ok: true, error: null } }),
+    newSession: async () => accepted('wi-1'),
+    quickStart: async () => accepted('wi-1'),
   } as unknown as LovelaceClient;
 }
 
@@ -107,183 +115,80 @@ describe('submitLaunch flows', () => {
     state.setDraft({ text: 'do thing' });
     const client = {
       newSession: async () => { throw new ApiError(409, 'Work item is not active.'); },
-    } as unknown as import('@lovelace/client').LovelaceClient;
-    await submitLaunch(state, {
-      client,
-      refreshDashboard: () => {},
-    }, 'do thing');
+    } as unknown as LovelaceClient;
+    await submitLaunch(state, { client, refreshDashboard: () => {} }, 'do thing');
     assert.match(state.error ?? '', /not active/i);
+    assert.equal(state.draft.requestId, undefined, 'a rejected first send leaves nothing to resend');
+    assert.equal(state.draft.text, 'do thing');
     assert.equal(state.mutationInFlight, false);
   });
 
-  it('on partial launch failure keeps retryWorkId pointing to the same work item', async () => {
+  it('hands any answer to the server: clears the draft and opens the work item', async () => {
     const state = new AppState({ onInvalidate() {} });
     state.applyDashboardResponse(dash());
-    state.setDraft({ text: 'build it' });
-    let calls = 0;
-    const client = {
-      quickStart: async () => {
-        calls++;
-        return { details: detailsOf('wi-new'), launch: { ok: false, error: 'tool missing' } } satisfies QuickStartResponse;
-      },
-      newSession: async (id: string) => {
-        calls++;
-        assert.equal(id, 'wi-new', 'retry must target the same work item');
-        return { details: detailsOf('wi-new'), launch: { ok: true, error: null } } satisfies QuickStartResponse;
-      },
-    } as unknown as import('@lovelace/client').LovelaceClient;
+    state.setDraft({ text: 'build it', repoIds: ['repo'], promptId: 'implement' });
+    const client = { quickStart: async () => accepted('wi-new') } as unknown as LovelaceClient;
     await submitLaunch(state, { client, refreshDashboard: () => {} }, 'build it');
-    assert.equal(state.draft.retryWorkId, 'wi-new');
-    assert.match(state.error ?? '', /tool missing/);
-    // Second submit uses newSession on the retained id.
-    await submitLaunch(state, { client, refreshDashboard: () => {} }, 'build it');
-    assert.equal(calls, 2);
-    assert.equal(state.draft.retryWorkId, undefined);
-  });
-
-  it('on offline network error marks uncertain and does not retry', async () => {
-    const state = new AppState({ onInvalidate() {} });
-    state.applyDashboardResponse(dash());
-    state.setDraft({ text: 'risky' });
-    const client = {
-      quickStart: async () => { throw new ApiError(0, 'cannot reach server'); },
-    } as unknown as import('@lovelace/client').LovelaceClient;
-    await submitLaunch(state, { client, refreshDashboard: () => {} }, 'risky');
-    assert.equal(state.draft.uncertain, true);
-    assert.match(state.error ?? '', /uncertain/i);
-    assert.equal(state.draft.retryWorkId, undefined);
+    assert.equal(state.drafts.get('home')!.text, '');
+    assert.equal(state.drafts.get('home')!.repoIds, undefined);
+    assert.equal(state.drafts.get('home')!.requestId, undefined);
+    assert.equal(state.view, 'work-item');
+    assert.equal(state.selectedWorkItemId, 'wi-new');
+    assert.equal(state.error, null);
   });
 });
 
 describe('submitLaunch requestId lifecycle', () => {
-  it('generates a stable requestId per launch intent and forwards it to the server', async () => {
-    const state = new AppState({ onInvalidate() {} });
-    state.applyDashboardResponse(dash());
-    state.setDraft({ text: 'go' });
-    const captured: Array<string | undefined> = [];
-    const client = {
-      quickStart: async (_p: string, _j?: string, _a?: unknown, _o?: unknown, requestId?: string) => {
-        captured.push(requestId);
-        return { details: detailsOf('wi-new'), launch: { ok: true, error: null } } satisfies QuickStartResponse;
-      },
-    } as unknown as import('@lovelace/client').LovelaceClient;
-    let seq = 0;
-    const newRequestId = () => `uuid-${++seq}`;
-    await submitLaunch(state, {
-      client, refreshDashboard: () => {}, newRequestId,
-    }, 'go');
-    assert.deepEqual(captured, ['uuid-1']);
-    // Success clears the id.
-    const key = state.draftKey;
-    const draftAfter = state.drafts.get(key);
-    assert.equal(draftAfter?.pendingLaunch?.requestId, undefined);
-  });
-
-  it('retains requestId across uncertain network failure and reuses it on retry', async () => {
+  it('keeps the request ID while no answer arrived and resends it', async () => {
     const state = new AppState({ onInvalidate() {} });
     state.applyDashboardResponse(dash());
     state.setDraft({ text: 'retryable' });
     const captured: Array<string | undefined> = [];
-    let shouldThrow = true;
+    let failure: Error | null = new ApiError(0, 'offline');
     const client = {
       quickStart: async (_p: string, _j?: string, _a?: unknown, _o?: unknown, requestId?: string) => {
         captured.push(requestId);
-        if (shouldThrow) throw new ApiError(0, 'offline');
-        return { details: detailsOf('wi-new'), launch: { ok: true, error: null } } satisfies QuickStartResponse;
+        if (failure) throw failure;
+        return accepted('wi-new', requestId);
       },
-    } as unknown as import('@lovelace/client').LovelaceClient;
-    let seq = 0;
-    const newRequestId = () => `uuid-${++seq}`;
-    const deps = { client, refreshDashboard: () => {}, newRequestId };
-
-    await submitLaunch(state, deps, 'retryable');
-    assert.equal(state.draft.uncertain, true);
-    assert.equal(state.draft.pendingLaunch?.requestId, 'uuid-1');
-
-    shouldThrow = false;
-    await submitLaunch(state, deps, 'retryable');
-    assert.deepEqual(captured, ['uuid-1', 'uuid-1'], 'retry must reuse the stable intent id');
-    assert.equal(state.draft.pendingLaunch?.requestId, undefined, 'success clears the intent id');
-  });
-
-  it('on confirmed completed failure clears requestId and retries with a fresh UUID on same work item', async () => {
-    const state = new AppState({ onInvalidate() {} });
-    state.applyDashboardResponse(dash());
-    state.setDraft({ text: 'build' });
-    const captured: Array<{ fn: string; id?: string; req?: string }> = [];
-    const client = {
-      quickStart: async (_p: string, _j?: string, _a?: unknown, _o?: unknown, requestId?: string) => {
-        captured.push({ fn: 'quickStart', req: requestId });
-        return {
-          details: detailsOf('wi-new'),
-          launch: { ok: false, error: 'tool missing' },
-          operation: { requestId: requestId ?? '', status: 'completed' as const },
-        } satisfies QuickStartResponse;
-      },
-      newSession: async (id: string, _p: string, _a?: unknown, _o?: unknown, requestId?: string) => {
-        captured.push({ fn: 'newSession', id, req: requestId });
-        return { details: detailsOf(id), launch: { ok: true, error: null } } satisfies QuickStartResponse;
-      },
-    } as unknown as import('@lovelace/client').LovelaceClient;
+    } as unknown as LovelaceClient;
     let seq = 0;
     const deps = { client, refreshDashboard: () => {}, newRequestId: () => `uuid-${++seq}` };
 
-    await submitLaunch(state, deps, 'build');
-    await submitLaunch(state, deps, 'build');
-    assert.equal(captured[0]?.fn, 'quickStart');
-    assert.equal(captured[0]?.req, 'uuid-1');
-    assert.equal(captured[1]?.fn, 'newSession');
-    assert.equal(captured[1]?.id, 'wi-new');
-    assert.equal(captured[1]?.req, 'uuid-2', 'confirmed-completed failure must generate a fresh UUID for retry');
+    await submitLaunch(state, deps, 'retryable');
+    assert.equal(state.draft.requestId, 'uuid-1');
+    assert.match(state.error ?? '', /never launches twice/);
+    failure = new ApiError(502, 'Bad gateway');
+    await submitLaunch(state, deps, 'retryable');
+    assert.equal(state.draft.requestId, 'uuid-1');
+    failure = null;
+    await submitLaunch(state, deps, 'retryable');
+    assert.deepEqual(captured, ['uuid-1', 'uuid-1', 'uuid-1']);
+    assert.equal(state.drafts.get('home')!.requestId, undefined, 'an answer clears the request ID');
   });
 
-
-  for (const status of ['pending', 'uncertain'] as const) {
-    it(`pins ${status} endpoint/body/UUID despite edits, navigation and later rejection`, async () => {
-      const state = new AppState({ onInvalidate() {} });
-      state.applyDashboardResponse(dash());
-      const exact = '  original\n\n  ';
-      state.setDraft({ text: exact });
-      const captured: Array<{ prompt: string; requestId?: string }> = [];
-      let seq = 0;
-      const client = {
-        quickStart: async (prompt: string, _jira?: string, _agent?: unknown, _o?: unknown, requestId?: string) => {
-          captured.push({ prompt, requestId });
-          if (captured.length === 2) throw new ApiError(409, 'fixture rejection');
-          return {
-            details: detailsOf('persisted'), launch: { ok: false, error: 'Inspect existing sessions' },
-            operation: { requestId: requestId!, status },
-          } satisfies QuickStartResponse;
-        },
-        newSession: async () => { assert.fail('must not roll endpoint'); },
-      } as unknown as import('@lovelace/client').LovelaceClient;
-      const deps = { client, refreshDashboard: () => {}, newRequestId: () => `uuid-${++seq}` };
-      await submitLaunch(state, deps, exact);
-      assert.equal(state.draft.uncertain, true);
-      state.setDraft({ text: 'edited' });
-      state.navigateToWorkItem('other');
-      state.navigateToDashboard();
-      await submitLaunch(state, deps, 'edited');
-      assert.equal(state.draft.pendingLaunch?.requestId, 'uuid-1', 'rejection cannot abandon unresolved operation implicitly');
-      state.setDraft({ text: '' });
-      await submitLaunch(state, deps, '');
-      assert.deepEqual(captured, Array(3).fill({ prompt: exact, requestId: 'uuid-1' }));
-      assert.equal(seq, 1);
-    });
-  }
-
-  it('abandonLaunchIntent clears the stored requestId and draft text', () => {
+  it('a rejected resend keeps its request ID until the launch is discarded', async () => {
     const state = new AppState({ onInvalidate() {} });
     state.applyDashboardResponse(dash());
-    state.setDraft({
-      text: 'stuck', uncertain: true, retryWorkId: 'wi-x',
-      pendingLaunch: { endpoint: 'newSession', workItemId: 'wi-x', prompt: 'stuck', requestId: 'uuid-abc' },
-    });
+    state.setDraft({ text: 'original' });
+    const captured: Array<string | undefined> = [];
+    const client = {
+      quickStart: async (_p: string, _j?: string, _a?: unknown, _o?: unknown, requestId?: string) => {
+        captured.push(requestId);
+        throw captured.length === 1 ? new ApiError(0, 'offline') : new ApiError(409, 'This request ID belongs to a different launch');
+      },
+    } as unknown as LovelaceClient;
+    let seq = 0;
+    const deps = { client, refreshDashboard: () => {}, newRequestId: () => `uuid-${++seq}` };
+    await submitLaunch(state, deps, 'original');
+    state.setDraft({ text: 'edited' });
+    await submitLaunch(state, deps, 'edited');
+    assert.equal(state.draft.requestId, 'uuid-1', 'a rejection cannot abandon a launch that may have started');
+    assert.match(state.error ?? '', /different launch/);
     abandonLaunchIntent(state);
+    assert.equal(state.draft.requestId, undefined);
     assert.equal(state.draft.text, '');
-    assert.equal(state.draft.pendingLaunch, undefined);
-    assert.equal(state.draft.retryWorkId, undefined);
-    assert.equal(state.draft.uncertain, false);
+    assert.deepEqual(captured, ['uuid-1', 'uuid-1']);
   });
 
   it('passes the exact prompt (including trailing whitespace) through to the server', async () => {
@@ -293,14 +198,22 @@ describe('submitLaunch requestId lifecycle', () => {
     state.setDraft({ text: exact });
     const sent: string[] = [];
     const client = {
-      quickStart: async (prompt: string) => {
-        sent.push(prompt);
-        return { details: detailsOf('wi-new'), launch: { ok: true, error: null } } satisfies QuickStartResponse;
-      },
-    } as unknown as import('@lovelace/client').LovelaceClient;
-    await submitLaunch(state, {
-      client, refreshDashboard: () => {}, newRequestId: () => 'uuid-x',
-    }, exact);
+      quickStart: async (prompt: string) => { sent.push(prompt); return accepted('wi-new'); },
+    } as unknown as LovelaceClient;
+    await submitLaunch(state, { client, refreshDashboard: () => {}, newRequestId: () => 'uuid-x' }, exact);
     assert.deepEqual(sent, [exact]);
+  });
+});
+
+describe('launch retry', () => {
+  it('asks the server to retry the failed launch on its work item', async () => {
+    const state = new AppState({ onInvalidate() {} });
+    state.applyDashboardResponse(dash());
+    state.navigateToWorkItem('wi-1');
+    const retried: string[] = [];
+    const deps = makeDeps({ client: { retryLaunch: async (id: string) => { retried.push(id); return accepted('wi-1', id); } } as unknown as LovelaceClient });
+    await handleAction(state, { kind: 'launch-retry', launchId: 'launch-1' }, deps);
+    assert.deepEqual(retried, ['launch-1']);
+    assert.equal(state.selectedWorkItemData!.launches[0]!.state, 'accepted');
   });
 });

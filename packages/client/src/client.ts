@@ -1,6 +1,6 @@
 import type {
   AvailableHarness, CodingHarnessId, DashboardResponse, JiraIssueSummary, LaunchSelection, NewSessionRequest, PromptTemplate, RepoRecord,
-  QuickStartResponse, RenderPromptInput, RenderedPrompt, SessionOpenResponse, StartWorkRepositoryInput, WorkItem, WorkItemDetails, WorkItemState,
+  LaunchResponse, RenderPromptInput, RenderedPrompt, SessionOpenResponse, StartWorkRepositoryInput, WorkItem, WorkItemDetails, WorkItemState,
 } from '@lovelace/core';
 import { prepareRepositories, type PrepareRepositoriesOptions } from './workspace-preparation.js';
 
@@ -125,9 +125,13 @@ export class LovelaceClient {
   getWorkItem(id: string, options?: RequestOptions): Promise<WorkItemDetails> {
     return this.request(`/work-items/${encodeURIComponent(id)}`, {}, options);
   }
-  /** Inspects the exact request identity without launching, including after a lost acceptance reply. */
-  getLaunchOperation(requestId: string, options?: RequestOptions): Promise<QuickStartResponse> {
-    return this.request(`/launch-operations/${encodeURIComponent(requestId)}`, {}, options);
+  /** Reads a launch by its request ID without launching, including after a lost acceptance reply. */
+  getLaunch(id: string, options?: RequestOptions): Promise<LaunchResponse> {
+    return this.request(`/launches/${encodeURIComponent(id)}`, {}, options);
+  }
+  /** Runs a failed launch again with its saved prompt and selections; returns once the server accepted it. */
+  retryLaunch(id: string, options?: RequestOptions): Promise<LaunchResponse> {
+    return this.request(`/launches/${encodeURIComponent(id)}/retry`, { method: 'POST' }, options);
   }
   /** Submits once and polls durable workspace state; cancellation only stops waiting. */
   prepareRepositories(id: string, repositories: StartWorkRepositoryInput[], options?: PrepareRepositoriesOptions): Promise<WorkItemDetails> {
@@ -140,13 +144,13 @@ export class LovelaceClient {
   setWorkItemState(id: string, state: WorkItemState, options?: RequestOptions): Promise<WorkItem> {
     return this.request(`/work-items/${encodeURIComponent(id)}/state`, { method: 'POST', body: JSON.stringify({ state }) }, options);
   }
-  quickStart(prompt: string, jiraIssueId?: string, agentId?: CodingHarnessId, overrides?: NewSessionOptions, requestId?: string, options?: QuickStartOptions): Promise<QuickStartResponse> {
+  quickStart(prompt: string, jiraIssueId?: string, agentId?: CodingHarnessId, overrides?: NewSessionOptions, requestId?: string, options?: QuickStartOptions): Promise<LaunchResponse> {
     return this.request('/work-items/quick-start', {
       method: 'POST', body: JSON.stringify({ prompt, jiraIssueId, reviewRequestId: options?.reviewRequestId, agentId, options: overrides, requestId, repoIds: options?.repoIds, promptId: options?.promptId, wait: options?.wait }),
     }, launchOptions(options));
   }
   /** By default waits for Herdr startup; wait:false returns durable acceptance instead. */
-  newSession(id: string, prompt: string, agentId?: CodingHarnessId, overrides?: NewSessionOptions, requestId?: string, options?: LaunchRequestOptions): Promise<QuickStartResponse> {
+  newSession(id: string, prompt: string, agentId?: CodingHarnessId, overrides?: NewSessionOptions, requestId?: string, options?: LaunchRequestOptions): Promise<LaunchResponse> {
     return this.request(`/work-items/${encodeURIComponent(id)}/new-session`, {
       method: 'POST', body: JSON.stringify({ prompt, agentId, options: overrides, requestId, repoIds: options?.repoIds, promptId: options?.promptId, wait: options?.wait }),
     }, launchOptions(options));

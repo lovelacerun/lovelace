@@ -17,38 +17,14 @@ export function isLaunchFocus(focus: FocusTarget): focus is LaunchFocus {
 export interface NavigationEntry { kind: 'home' | 'work' | 'jira' | 'review'; id: string }
 type SidebarEntry = NavigationEntry & { label: string };
 
-/**
- * Snapshot of the last launch attempt whose outcome is unresolved
- * (uncertain / pending). Used to replay the exact same request body + endpoint
- * on an explicit retry, even across navigation. Reusing a UUID with a
- * different body / endpoint
- * returns 409, so we pin the whole tuple.
- */
-export interface PendingLaunch extends LaunchSelection {
-  endpoint: 'quickStart' | 'newSession';
-  workItemId?: string;
-  jiraIssueId?: string;
-  reviewRequestId?: string;
-  prompt: string;
-  requestId: string;
-  agentId?: CodingHarnessId;
-  toolOptions?: ToolLaunchOptionsById;
-}
-
 interface Draft extends LaunchSelection {
   text: string;
-  agentId?: CodingHarnessId;
-  toolOptions?: ToolLaunchOptionsById;
-  retryWorkId?: string;
-  uncertain?: boolean;
   /**
-   * Pinned endpoint, body and stable client-generated request UUID while the
-   * launch outcome is unresolved, so a lost HTTP reply can be safely replayed
-   * without duplicating work items or agent starts. Cleared on confirmed
-   * success, confirmed failure or explicit abandonment; navigation and editing
-   * retain it.
+   * Request ID of a launch whose reply never arrived. Submitting again resends
+   * it, so the server replays that launch instead of starting another one.
+   * Cleared once the server answered or the user discards the launch.
    */
-  pendingLaunch?: PendingLaunch;
+  requestId?: string;
 }
 
 export type PendingConfirm =

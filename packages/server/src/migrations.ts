@@ -261,6 +261,66 @@ export const migrations: Migration[] = [
     drop table work_item_meta;
     alter table launch_operations_next rename to work_launch_operations;
   `),
+
+  // 3: launches. Operations and their prompt drafts become one row with a single state; unfinished ones become uncertain.
+  (db) => db.exec(`
+    create table launches (
+      id text primary key,
+      work_item_id text not null references work_items(id) on delete cascade,
+      kind text not null,
+      request_json text not null,
+      harness text not null,
+      options_json text,
+      repo_ids_json text not null,
+      prompt_id text,
+      prompt text not null,
+      state text not null,
+      error text,
+      boot_id text not null,
+      created_at text not null,
+      updated_at text not null
+    );
+    create index launches_work_item_idx on launches(work_item_id);
+
+    insert into launches
+    select o.request_id, o.work_item_id, o.operation_kind, o.input_json,
+      coalesce(json_extract(d.payload_json, '$.toolIds[0]'), ''),
+      case when json_type(d.payload_json, '$.toolOptions') = 'object' then json_extract(d.payload_json, '$.toolOptions') end,
+      case when json_type(d.payload_json, '$.repoIds') = 'array' then json_extract(d.payload_json, '$.repoIds') else '[]' end,
+      json_extract(d.payload_json, '$.promptId'),
+      coalesce(json_extract(d.payload_json, '$.prompt'), json_extract(o.input_json, '$.prompt'), ''),
+      case
+        when o.status = 'completed' and json_extract(o.outcome_json, '$.ok') then 'started'
+        when o.status = 'completed' then 'failed'
+        else 'uncertain'
+      end,
+      case
+        when o.status = 'completed' and json_extract(o.outcome_json, '$.ok') then null
+        when o.status = 'pending' then 'launch outcome uncertain after interruption; check Herdr before an explicit new launch'
+        else coalesce(json_extract(o.outcome_json, '$.error'), 'launch failed')
+      end,
+      '', o.created_at, o.updated_at
+    from work_launch_operations o
+    left join work_item_attachments d on d.id = o.draft_meta_id and json_valid(d.payload_json);
+
+    insert into launches
+    select d.id, d.work_item_id, 'new-session', '{}',
+      coalesce(json_extract(d.payload_json, '$.toolIds[0]'), ''),
+      case when json_type(d.payload_json, '$.toolOptions') = 'object' then json_extract(d.payload_json, '$.toolOptions') end,
+      case when json_type(d.payload_json, '$.repoIds') = 'array' then json_extract(d.payload_json, '$.repoIds') else '[]' end,
+      json_extract(d.payload_json, '$.promptId'),
+      coalesce(json_extract(d.payload_json, '$.prompt'), ''),
+      case when json_extract(d.payload_json, '$.status') = 'launched' then 'started' else 'uncertain' end,
+      case when json_extract(d.payload_json, '$.status') = 'launched' then null
+        else 'launch outcome uncertain after interruption; check Herdr before an explicit new launch' end,
+      '', d.created_at, d.updated_at
+    from work_item_attachments d
+    where d.type = 'prompt-draft' and json_valid(d.payload_json)
+      and not exists (select 1 from work_launch_operations o where o.draft_meta_id = d.id);
+
+    drop table work_launch_operations;
+    delete from work_item_attachments where type = 'prompt-draft';
+  `),
 ];
 
 /**

@@ -146,7 +146,7 @@ test('bulk selection rejects more than 100 atomically and cannot mutate frozen l
   f.modal.selectAll();
   assert.equal(f.state.draft.repoIds!.length, 100);
   const selected = [...f.state.draft.repoIds!];
-  f.state.setDraft({ pendingLaunch: { endpoint: 'quickStart', prompt: 'Draft', requestId: 'frozen', repoIds: selected } });
+  f.state.setDraft({ requestId: 'frozen' });
   f.modal.unselectAll();
   f.modal.selectAll();
   assert.deepEqual(f.state.draft.repoIds, selected);

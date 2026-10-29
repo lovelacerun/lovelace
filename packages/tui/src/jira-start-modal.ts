@@ -96,7 +96,7 @@ export class JiraStartModal implements Component {
   }
 
   private get locked(): boolean {
-    return this.launching || Boolean(this.options.state.draft.pendingLaunch);
+    return this.launching || Boolean(this.options.state.draft.requestId);
   }
 
   private setDraft(patch: Parameters<AppState['setDraft']>[0]): void {

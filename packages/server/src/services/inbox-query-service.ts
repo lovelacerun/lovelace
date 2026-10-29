@@ -2,7 +2,7 @@ import type { GitHubReviewRequest, InboxSourceType, JiraIssueSummary, LovelaceLi
 import groupBy from '@nkzw/core/groupBy.js';
 import isPresent from '@nkzw/core/isPresent.js';
 import type { CachedGitHub, CachedJira } from '../cached-providers.js';
-import type { DatabaseState } from '../database.js';
+import { toLaunch, type DatabaseState, type LaunchRecord } from '../database.js';
 import { dedupeLinks, isNonEmptyString, truncateText } from '../helpers.js';
 import { pendingReviewRequests } from './review-request-service.js';
 
@@ -50,6 +50,7 @@ export function buildInbox(database: DatabaseState, providers: InboxProviders): 
   const workItems = database.listWorkItems();
   const attachments = database.listAttachments();
   const attachmentsByWorkItemId = groupBy(attachments, (attachment) => attachment.workItemId);
+  const launchesByWorkItemId = groupBy(database.listLaunches(), (launch) => launch.workItemId);
   const dismissedSourceKeys = buildDismissedSourceKeySet(database.listInboxMeta());
   const linkedSourceKeys = buildLinkedSourceKeySet(workItems, attachments);
   const assignedIssues = providers.jira.peekAssignedIssues()?.value ?? [];
@@ -63,7 +64,7 @@ export function buildInbox(database: DatabaseState, providers: InboxProviders): 
 
   const activeWorkItems = workItems
     .filter((workItem) => workItem.state === 'active')
-    .map((workItem) => toWorkItemInboxItem(workItem, attachmentsByWorkItemId.get(workItem.id) ?? []));
+    .map((workItem) => toWorkItemInboxItem(workItem, attachmentsByWorkItemId.get(workItem.id) ?? [], launchesByWorkItemId.get(workItem.id) ?? []));
 
   return {
     activeWorkItems: sortByUpdatedAt(activeWorkItems),
@@ -72,7 +73,7 @@ export function buildInbox(database: DatabaseState, providers: InboxProviders): 
   };
 }
 
-function toWorkItemInboxItem(workItem: WorkItem, attachments: WorkItemAttachment[]): InboxItem {
+function toWorkItemInboxItem(workItem: WorkItem, attachments: WorkItemAttachment[], launches: LaunchRecord[]): InboxItem {
   const firstUrl = findPrimaryUrl(attachments);
   return {
     id: workItem.id,
@@ -82,7 +83,7 @@ function toWorkItemInboxItem(workItem: WorkItem, attachments: WorkItemAttachment
     url: firstUrl,
     updatedAt: workItem.updatedAt,
     links: extractManualTrackerLinks(attachments),
-    raw: { workItem, attachments },
+    raw: { workItem, attachments, launches: launches.map(toLaunch) },
   };
 }
 

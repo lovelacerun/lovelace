@@ -26,9 +26,10 @@ no terminal dependency: the server drives Herdr.
 `quickStart`/`newSession` accept `{wait:false}` in their final options to return
 202 acceptance immediately, using the ordinary 15-second request deadline.
 No client-side background launch is needed: the server owns completion.
-`getLaunchOperation(requestId)` inspects that exact UUID without starting an
-agent; `getWorkItem` includes launch summaries alongside saved drafts. Default
-synchronous calls and JSON shapes remain available. `wait` is not frozen intent.
+`getLaunch(requestId)` reads that launch without starting an agent;
+`retryLaunch(requestId)` runs a failed launch again with its saved prompt and
+selections. `getWorkItem` includes the work item's launches. `wait` is not
+part of the request identity.
 
 `getRepositories` and `getPromptTemplates` read server-owned launch catalogs;
 `syncRepositories` explicitly refreshes the catalog through the local server;

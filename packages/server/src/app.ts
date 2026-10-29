@@ -10,7 +10,6 @@ import { registerSystemRoutes } from './routes/system.js';
 import { registerToolRoutes } from './routes/tools.js';
 import { registerWorkItemRoutes } from './routes/work-items.js';
 import { registerWorkspaceRoutes } from './routes/workspaces.js';
-import { recoverInterruptedLaunchOperations } from './services/launch-operation-service.js';
 import { recoverInterruptedRepositoryPreparations } from './services/work-start-service.js';
 
 const ROUTES = [
@@ -28,7 +27,7 @@ const ROUTES = [
 
 export function buildServer(deps: RouteDeps, logger?: FastifyBaseLogger) {
   recoverInterruptedRepositoryPreparations(deps.database);
-  recoverInterruptedLaunchOperations(deps.database);
+  deps.database.recoverInterruptedLaunches();
   const app = Fastify({ loggerInstance: logger, forceCloseConnections: true });
   for (const register of ROUTES) register(app, deps);
   return app;

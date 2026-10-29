@@ -6,7 +6,7 @@ import type { CreateWorkspaceRequest } from '@lovelace/coriol';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test, { type TestContext } from 'node:test';
-import { attachmentsOfType, type DashboardResponse, type JiraIssueSummary, type LovelaceConfig, type QuickStartResponse, type SessionOpenResponse, type AgentSession, type WorkItemDetails } from '@lovelace/core';
+import { attachmentsOfType, isLaunchInProgress, type DashboardResponse, type JiraIssueSummary, type LovelaceConfig, type LaunchResponse, type SessionOpenResponse, type AgentSession, type WorkItemDetails } from '@lovelace/core';
 import { openDatabase } from '../database.js';
 import { buildServer } from '../app.js';
 import type { RouteDeps } from './deps.js';
@@ -43,7 +43,7 @@ async function fixture(t: TestContext, fail = false, providers = fixtureProvider
   return { app, database, providers, herdr, starts, deps };
 }
 
-const session = (details: QuickStartResponse['details']) => {
+const session = (details: LaunchResponse['details']) => {
   const meta = attachmentsOfType(details.attachments, 'session')[0]!;
   return { meta, payload: meta.payload as AgentSession };
 };
@@ -80,13 +80,11 @@ test('quick-start opens a Herdr workspace for the work item, starts the agent an
   const prompt = '  Rewrite the sync\n\n  Keep this whitespace.\n';
   const response = await app.inject({ method: 'POST', url: '/work-items/quick-start', payload: { prompt } });
   assert.equal(response.statusCode, 200);
-  const { details, launch } = response.json<QuickStartResponse>();
-  assert.deepEqual(launch, { ok: true, error: null, phase: 'started' });
+  const { details, launch } = response.json<LaunchResponse>();
+  assert.deepEqual([launch.state, launch.error], ['started', null]);
   assert.equal(details.workItem.state, 'active');
   assert.equal(details.workItem.title, 'Rewrite the sync');
-  const draft = attachmentsOfType(details.attachments, 'prompt-draft')[0]!.payload;
-  assert.equal(draft.prompt, prompt);
-  assert.equal(draft.status, 'launched');
+  assert.equal(launch.prompt, prompt);
   const workspace = attachmentsOfType(details.attachments, 'herdr-workspace')[0]!;
   assert.deepEqual(herdr.workspaces.get(workspace.payload.workspaceId)!.tokens, { lovelace: details.workItem.id });
   const { payload } = session(details);
@@ -102,10 +100,10 @@ test('quick-start opens a Herdr workspace for the work item, starts the agent an
 
 test('later sessions open tabs in the same workspace; a restarted Herdr gets its token back', async (t) => {
   const { app, herdr, starts } = await fixture(t);
-  const quick = (await app.inject({ method: 'POST', url: '/work-items/quick-start', payload: { prompt: 'First' } })).json<QuickStartResponse>();
+  const quick = (await app.inject({ method: 'POST', url: '/work-items/quick-start', payload: { prompt: 'First' } })).json<LaunchResponse>();
   herdr.restart();
-  const second = (await app.inject({ method: 'POST', url: `/work-items/${quick.details.workItem.id}/new-session`, payload: { prompt: 'Second', agentId: 'claude' } })).json<QuickStartResponse>();
-  assert.equal(second.launch.ok, true);
+  const second = (await app.inject({ method: 'POST', url: `/work-items/${quick.details.workItem.id}/new-session`, payload: { prompt: 'Second', agentId: 'claude' } })).json<LaunchResponse>();
+  assert.equal(second.launch.state, 'started');
   assert.equal(herdr.workspaces.size, 1);
   const [workspace] = herdr.workspaces.values();
   assert.deepEqual(workspace!.tokens, { lovelace: quick.details.workItem.id });
@@ -118,23 +116,23 @@ test('later sessions open tabs in the same workspace; a restarted Herdr gets its
 
 test('a workspace the user closed or another owner tagged is replaced, not reused', async (t) => {
   const { app, herdr } = await fixture(t);
-  const quick = (await app.inject({ method: 'POST', url: '/work-items/quick-start', payload: { prompt: 'First' } })).json<QuickStartResponse>();
+  const quick = (await app.inject({ method: 'POST', url: '/work-items/quick-start', payload: { prompt: 'First' } })).json<LaunchResponse>();
   const url = `/work-items/${quick.details.workItem.id}/new-session`;
   const [first] = herdr.workspaces.keys();
   herdr.workspaces.get(first!)!.tokens.lovelace = 'someone-else';
-  const second = (await app.inject({ method: 'POST', url, payload: { prompt: 'Second' } })).json<QuickStartResponse>();
+  const second = (await app.inject({ method: 'POST', url, payload: { prompt: 'Second' } })).json<LaunchResponse>();
   const recorded = attachmentsOfType(second.details.attachments, 'herdr-workspace');
   assert.equal(recorded.length, 1);
   assert.notEqual(recorded[0]!.payload.workspaceId, first);
   herdr.workspaces.delete(recorded[0]!.payload.workspaceId);
-  const third = (await app.inject({ method: 'POST', url, payload: { prompt: 'Third' } })).json<QuickStartResponse>();
-  assert.equal(third.launch.ok, true);
+  const third = (await app.inject({ method: 'POST', url, payload: { prompt: 'Third' } })).json<LaunchResponse>();
+  assert.equal(third.launch.state, 'started');
   assert.equal(herdr.workspaces.size, 2);
 });
 
 test('retitling work relabels its own Herdr workspace; attaching Jira keys the title', async (t) => {
   const { app, herdr, providers } = await fixture(t);
-  const quick = (await app.inject({ method: 'POST', url: '/work-items/quick-start', payload: { prompt: 'First' } })).json<QuickStartResponse>();
+  const quick = (await app.inject({ method: 'POST', url: '/work-items/quick-start', payload: { prompt: 'First' } })).json<LaunchResponse>();
   const id = quick.details.workItem.id;
   const [workspaceId] = herdr.workspaces.keys();
   const renames = () => herdr.calls.filter(call => call.method === 'renameWorkspace').map(call => call.args);
@@ -165,8 +163,8 @@ test('an agent that opens blocked on a startup dialog gets its prompt once it is
   const { app, database, herdr } = await fixture(t);
   herdr.startBlocked = true;
   const prompt = 'Exact prompt';
-  const quick = (await app.inject({ method: 'POST', url: '/work-items/quick-start', payload: { prompt } })).json<QuickStartResponse>();
-  assert.equal(quick.launch.ok, true);
+  const quick = (await app.inject({ method: 'POST', url: '/work-items/quick-start', payload: { prompt } })).json<LaunchResponse>();
+  assert.equal(quick.launch.state, 'started');
   const { meta, payload } = session(quick.details);
   assert.equal(payload.promptPending, true);
   assert.equal(payload.agentState, 'blocked');
@@ -185,39 +183,39 @@ test('an agent that opens blocked on a startup dialog gets its prompt once it is
 test('a freshly created shell that is not ready yet is retried', async (t) => {
   const { app, herdr, starts } = await fixture(t);
   herdr.busyStarts = 2;
-  const quick = (await app.inject({ method: 'POST', url: '/work-items/quick-start', payload: { prompt: 'Wait for the shell' } })).json<QuickStartResponse>();
-  assert.equal(quick.launch.ok, true);
+  const quick = (await app.inject({ method: 'POST', url: '/work-items/quick-start', payload: { prompt: 'Wait for the shell' } })).json<LaunchResponse>();
+  assert.equal(quick.launch.state, 'started');
   assert.equal(starts().length, 3);
 });
 
-test('launch failure returns active persisted work and exact pending draft for retry', async (t) => {
-  const { app, database, herdr } = await fixture(t, true);
+test('a failed launch keeps its work and exact prompt and retries in place', async (t) => {
+  const { app, database, herdr, starts } = await fixture(t, true);
   const prompt = '  Keep this exact\n';
   const response = await app.inject({ method: 'POST', url: '/work-items/quick-start', payload: { prompt } });
   assert.equal(response.statusCode, 200);
-  const { details, launch } = response.json<QuickStartResponse>();
-  assert.equal(launch.ok, false);
+  const { details, launch } = response.json<LaunchResponse>();
+  assert.equal(launch.state, 'failed');
   assert.match(launch.error!, /fixture launch failure/);
   assert.equal(details.workItem.state, 'active');
   assert.equal(attachmentsOfType(details.attachments, 'session').length, 0);
-  const pendingDraft = attachmentsOfType(details.attachments, 'prompt-draft')[0]!;
-  assert.equal(pendingDraft.payload.prompt, prompt);
-  assert.equal(pendingDraft.payload.status, 'pending');
+  assert.deepEqual(details.launches.map(entry => [entry.prompt, entry.state]), [[prompt, 'failed']]);
   herdr.failStart = null;
-  const retried = await app.inject({ method: 'POST', url: `/work-items/${details.workItem.id}/new-session`, payload: { prompt } });
-  assert.equal(retried.json<QuickStartResponse>().launch.ok, true);
+  const retried = await app.inject({ method: 'POST', url: `/launches/${launch.id}/retry` });
+  assert.equal(retried.statusCode, 202);
+  assert.equal((await waitForLaunch(database, launch.id)).state, 'started');
+  assert.equal(starts().at(-1)!.kind, 'pi');
+  assert.equal(herdr.prompts.at(-1)!.text, prompt);
   assert.equal(database.getWorkItemCount(), 1);
-  assert.equal(database.listAttachmentsOfType('prompt-draft').length, 2);
-  assert.equal(database.getAttachment('prompt-draft', pendingDraft.id)!.payload.prompt, prompt);
+  assert.equal(database.listLaunches().length, 1);
 });
 
 test('Jira quick-start resolves only server cache and selects no repositories', async (t) => {
   const { app, database, providers, starts } = await fixture(t);
   await providers.setAssigned([issue]);
   const response = await app.inject({ method: 'POST', url: '/work-items/quick-start', payload: { prompt: 'Fix', jiraIssueId: issue.id } });
-  const { details, launch } = response.json<QuickStartResponse>();
+  const { details, launch } = response.json<LaunchResponse>();
   assert.equal(response.statusCode, 200);
-  assert.equal(launch.ok, true);
+  assert.equal(launch.state, 'started');
   assert.equal(details.workItem.title, 'PROJ-42: Something');
   assert.equal(attachmentsOfType(details.attachments, 'tracker-item').length, 1);
   assert.equal(attachmentsOfType(details.attachments, 'worktree').length, 0);
@@ -259,7 +257,7 @@ function repositoryFixture(deps: RouteDeps) {
     repositoryPath: (id: string) => join(deps.config.lovelaceDir, 'repos', id),
     async createWorkspace(request: CreateWorkspaceRequest) {
       calls.push(request);
-      assert.ok(deps.database.listAttachments().some(meta => meta.type === 'prompt-draft'), 'prompt persisted before preparation');
+      assert.ok(deps.database.listLaunches().length > 0, 'prompt persisted before preparation');
       if (failing && request.repository.id.endsWith('/b')) throw new Error('fixture install failure');
       const path = join(workspacesDirectory, request.workspaceId, request.directoryName!);
       await mkdir(path, { recursive: true });
@@ -279,18 +277,17 @@ test('Jira selections prepare isolated worktrees before a single idempotent agen
   const prompt = '  Edited template\n\nExact final text.\n';
   const payload = { prompt, jiraIssueId: issue.id, repoIds: records.map(repo => repo.id), promptId: 'refine', requestId: randomUUID() };
   const first = await app.inject({ method: 'POST', url: '/work-items/quick-start', payload });
-  const { details, launch } = first.json<QuickStartResponse>();
-  assert.equal(launch.ok, true, launch.error ?? '');
+  const { details, launch } = first.json<LaunchResponse>();
+  assert.equal(launch.state, 'started', launch.error ?? '');
   assert.equal(calls.length, 2);
   assert.ok(calls.every(call => call.mode === 'fresh' && call.branchName.includes('proj-42')));
   assert.equal(attachmentsOfType(details.attachments, 'worktree').length, 2);
-  const draft = attachmentsOfType(details.attachments, 'prompt-draft')[0]!.payload;
-  assert.deepEqual(draft.repoIds, payload.repoIds);
-  assert.equal(draft.promptId, 'refine');
-  assert.equal(draft.prompt, prompt);
+  assert.deepEqual(launch.repoIds, payload.repoIds);
+  assert.equal(launch.promptId, 'refine');
+  assert.equal(launch.prompt, prompt);
   assert.equal(session(details).payload.promptId, 'refine');
   assert.equal(starts().length, 1);
-  assert.equal((await app.inject({ method: 'POST', url: '/work-items/quick-start', payload })).json<QuickStartResponse>().details.workItem.id, details.workItem.id);
+  assert.equal((await app.inject({ method: 'POST', url: '/work-items/quick-start', payload })).json<LaunchResponse>().details.workItem.id, details.workItem.id);
   assert.equal(calls.length, 2);
   for (const changes of [{ repoIds: [records[0]!.id] }, { promptId: 'implement' }]) {
     assert.equal((await app.inject({ method: 'POST', url: '/work-items/quick-start', payload: { ...payload, ...changes } })).statusCode, 409);
@@ -314,8 +311,8 @@ test('review quick-start checks out the pull request branch of its repository an
   assert.equal(database.getWorkItemCount(), 0);
 
   const response = await app.inject({ method: 'POST', url: '/work-items/quick-start', payload: { prompt: 'Review', reviewRequestId: 'PR_1', repoIds: records.map(repo => repo.id), promptId: 'review' } });
-  const { details, launch } = response.json<QuickStartResponse>();
-  assert.equal(launch.ok, true, launch.error ?? '');
+  const { details, launch } = response.json<LaunchResponse>();
+  assert.equal(launch.state, 'started', launch.error ?? '');
   assert.equal(details.workItem.title, 'org/a#7: Retry uploads');
   assert.deepEqual(attachmentsOfType(details.attachments, 'change-request').map(meta => meta.externalId), ['PR_1']);
   assert.deepEqual(calls.map(call => [call.repository.id, call.mode, call.remoteBranch]).sort(), [['github/org/a', 'existing', 'feature/retry'], ['github/org/b', 'fresh', null]]);
@@ -323,25 +320,26 @@ test('review quick-start checks out the pull request branch of its repository an
   assert.equal((await app.inject('/dashboard')).json<DashboardResponse>().pendingReviews.length, 0);
 });
 
-test('partial workspace failure preserves the draft and retries only failed repositories on the same work', async (t) => {
+test('partial workspace failure keeps the launch and its retry prepares only failed repositories', async (t) => {
   const { app, deps, starts, database } = await fixture(t);
   const { calls, records, setFailing } = repositoryFixture(deps);
   setFailing(true);
   const payload = { prompt: '  Keep exactly\n', repoIds: records.map(repo => repo.id), promptId: 'implement' };
-  const first = (await app.inject({ method: 'POST', url: '/work-items/quick-start', payload })).json<QuickStartResponse>();
-  assert.equal(first.launch.ok, false);
+  const first = (await app.inject({ method: 'POST', url: '/work-items/quick-start', payload })).json<LaunchResponse>();
+  assert.equal(first.launch.state, 'failed');
   assert.match(first.launch.error!, /Repository preparation failed/);
   assert.equal(starts().length, 0);
-  assert.equal(attachmentsOfType(first.details.attachments, 'prompt-draft')[0]!.payload.prompt, payload.prompt);
+  assert.equal(first.launch.prompt, payload.prompt);
   setFailing(false);
-  const retry = (await app.inject({ method: 'POST', url: `/work-items/${first.details.workItem.id}/new-session`, payload })).json<QuickStartResponse>();
-  assert.equal(retry.launch.ok, true, retry.launch.error ?? '');
+  await app.inject({ method: 'POST', url: `/launches/${first.launch.id}/retry` });
+  const retried = await waitForLaunch(database, first.launch.id);
+  assert.equal(retried.state, 'started', retried.error ?? '');
   assert.equal(database.getWorkItemCount(), 1);
   assert.equal(calls.length, 3, 'ready repository reused; failed repository retried');
   assert.equal(starts().length, 1);
 });
 
-test('new-session rejects inactive work and malformed options without saving drafts', async (t) => {
+test('new-session rejects inactive work and malformed options without recording a launch', async (t) => {
   const { app, database, starts } = await fixture(t);
   const work = createActiveWorkItem(database, { title: 'Active', attachments: [] });
   const url = `/work-items/${work.id}/new-session`;
@@ -352,7 +350,7 @@ test('new-session rejects inactive work and malformed options without saving dra
     database.updateWorkItemState(work.id, state);
     assert.equal((await app.inject({ method: 'POST', url, payload: { prompt: 'Text' } })).statusCode, 409);
   }
-  assert.equal(database.listAttachments(work.id).length, 0);
+  assert.equal(database.listLaunches(work.id).length, 0);
   assert.equal(starts().length, 0);
   assert.equal((await app.inject({ method: 'POST', url: '/work-items/missing/new-session', payload: { prompt: 'Text' } })).statusCode, 404);
 });
@@ -362,9 +360,9 @@ test('quick-start passes harness options as native flags and rejects malformed o
   assert.equal((await app.inject({ method: 'POST', url: '/work-items/quick-start', payload: { prompt: 'Text', options: { pi: { thinkingLevel: 'invalid' } } } })).statusCode, 400);
   const options = { pi: { model: 'fixture/model', thinkingLevel: 'high' } };
   const response = await app.inject({ method: 'POST', url: '/work-items/quick-start', payload: { prompt: 'Text', agentId: 'pi', options } });
-  assert.equal(response.json<QuickStartResponse>().launch.ok, true);
+  assert.equal(response.json<LaunchResponse>().launch.state, 'started');
   assert.deepEqual(starts()[0]!.args, ['--model', 'fixture/model', '--thinking', 'high']);
-  assert.deepEqual(session(response.json<QuickStartResponse>().details).payload.options, options.pi);
+  assert.deepEqual(session(response.json<LaunchResponse>().details).payload.options, options.pi);
 });
 
 test('new-session passes harness options as native flags and keeps them with the session', async (t) => {
@@ -374,17 +372,17 @@ test('new-session passes harness options as native flags and keeps them with the
   const prompt = '  My text\n';
   const response = await app.inject({ method: 'POST', url: `/work-items/${work.id}/new-session`, payload: { prompt, options } });
   assert.equal(response.statusCode, 200);
-  assert.equal(response.json<QuickStartResponse>().launch.ok, true);
-  const draft = database.listAttachmentsOfType('prompt-draft', work.id)[0]!;
-  assert.equal(draft.payload.prompt, prompt);
-  assert.deepEqual(draft.payload.toolOptions, options);
+  assert.equal(response.json<LaunchResponse>().launch.state, 'started');
+  const launch = database.listLaunches(work.id)[0]!;
+  assert.equal(launch.prompt, prompt);
+  assert.deepEqual(launch.options, options);
   assert.deepEqual(starts()[0]!.args, ['--model', 'fixture/model', '--thinking', 'high']);
-  assert.deepEqual(session(response.json<QuickStartResponse>().details).payload.options, options.pi);
+  assert.deepEqual(session(response.json<LaunchResponse>().details).payload.options, options.pi);
 });
 
 test('opening a live session focuses its tab and never starts another agent', async (t) => {
   const { app, herdr, starts } = await fixture(t);
-  const quick = (await app.inject({ method: 'POST', url: '/work-items/quick-start', payload: { prompt: 'Session' } })).json<QuickStartResponse>();
+  const quick = (await app.inject({ method: 'POST', url: '/work-items/quick-start', payload: { prompt: 'Session' } })).json<LaunchResponse>();
   const { meta, payload } = session(quick.details);
   const url = `/work-items/${quick.details.workItem.id}/sessions/${meta.id}/open`;
   const opened = await app.inject({ method: 'POST', url });
@@ -396,7 +394,7 @@ test('opening a live session focuses its tab and never starts another agent', as
 
 test('opening an ended session continues its exact native conversation in the pane it left', async (t) => {
   const { app, database, herdr, starts } = await fixture(t);
-  const quick = (await app.inject({ method: 'POST', url: '/work-items/quick-start', payload: { prompt: 'Session' } })).json<QuickStartResponse>();
+  const quick = (await app.inject({ method: 'POST', url: '/work-items/quick-start', payload: { prompt: 'Session' } })).json<LaunchResponse>();
   const { meta, payload } = session(quick.details);
   const pane = payload.terminalRef!.paneId;
   const reported = herdr.panes.get(pane)!.agentSession!.value;
@@ -415,7 +413,7 @@ test('opening an ended session continues its exact native conversation in the pa
 test('a closed pane continues in a new tab; sessions without native identity are refused', async (t) => {
   const { app, database, herdr, starts } = await fixture(t);
   herdr.reportSessions = false;
-  const quick = (await app.inject({ method: 'POST', url: '/work-items/quick-start', payload: { prompt: 'Session', agentId: 'codex' } })).json<QuickStartResponse>();
+  const quick = (await app.inject({ method: 'POST', url: '/work-items/quick-start', payload: { prompt: 'Session', agentId: 'codex' } })).json<LaunchResponse>();
   const { meta, payload } = session(quick.details);
   const url = `/work-items/${quick.details.workItem.id}/sessions/${meta.id}/open`;
   herdr.closePane(payload.terminalRef!.paneId);
@@ -425,7 +423,7 @@ test('a closed pane continues in a new tab; sessions without native identity are
   assert.match(refused.json().error, /No native conversation/);
   assert.equal(starts().length, 1);
 
-  const second = (await app.inject({ method: 'POST', url: `/work-items/${quick.details.workItem.id}/new-session`, payload: { prompt: 'Again', agentId: 'codex' } })).json<QuickStartResponse>();
+  const second = (await app.inject({ method: 'POST', url: `/work-items/${quick.details.workItem.id}/new-session`, payload: { prompt: 'Again', agentId: 'codex' } })).json<LaunchResponse>();
   const meta2 = attachmentsOfType(second.details.attachments, 'session').find(entry => entry.id !== meta.id)!;
   const payload2 = meta2.payload as AgentSession;
   const nativeId = herdr.panes.get(payload2.terminalRef!.paneId)!.agentSession!.value;
@@ -481,7 +479,7 @@ test('stable request IDs coalesce concurrent submissions and replay uncertain re
   assert.equal(a.statusCode, 200);
   assert.deepEqual(a.json(), b.json());
   const replay = await app.inject({ method: 'POST', url: '/work-items/quick-start', payload });
-  assert.equal(replay.json<QuickStartResponse>().details.workItem.id, a.json<QuickStartResponse>().details.workItem.id);
+  assert.equal(replay.json<LaunchResponse>().details.workItem.id, a.json<LaunchResponse>().details.workItem.id);
   assert.equal(starts().length, 1);
   assert.equal(database.getWorkItemCount(), 1);
   const conflict = await app.inject({ method: 'POST', url: '/work-items/quick-start', payload: { ...payload, prompt: 'Changed intent' } });
@@ -495,21 +493,20 @@ test('stable request IDs coalesce concurrent submissions and replay uncertain re
 test('restart recovers a pending intent as uncertain and never replays its launch', async (t) => {
   const { app, database, starts } = await fixture(t);
   const payload = { prompt: 'Uncertain', requestId: randomUUID() };
-  const completed = (await app.inject({ method: 'POST', url: '/work-items/quick-start', payload })).json<QuickStartResponse>();
-  // The completed request has no in-flight promise. Reset only this temporary
-  // operation row to simulate a daemon interruption during the launch.
-  database.db.prepare("update work_launch_operations set status = 'pending', outcome_json = null where request_id = ?").run(payload.requestId);
-  const recovered = (await app.inject({ method: 'POST', url: '/work-items/quick-start', payload })).json<QuickStartResponse>();
-  assert.equal(recovered.operation!.status, 'uncertain');
-  assert.equal(recovered.launch.ok, false);
+  const completed = (await app.inject({ method: 'POST', url: '/work-items/quick-start', payload })).json<LaunchResponse>();
+  interruptLaunch(database, payload.requestId);
+  const recovered = (await app.inject({ method: 'POST', url: '/work-items/quick-start', payload })).json<LaunchResponse>();
+  assert.equal(recovered.launch.state, 'uncertain');
   assert.match(recovered.launch.error!, /uncertain/);
   assert.equal(recovered.details.workItem.id, completed.details.workItem.id);
   assert.equal(starts().length, 1);
   assert.equal(database.getWorkItemCount(), 1);
-  assert.equal((await app.inject({ method: 'POST', url: '/work-items/quick-start', payload })).json<QuickStartResponse>().operation!.status, 'uncertain');
+  assert.equal((await app.inject({ method: 'POST', url: '/work-items/quick-start', payload })).json<LaunchResponse>().launch.state, 'uncertain');
+  assert.equal((await app.inject({ method: 'POST', url: `/launches/${payload.requestId}/retry` })).statusCode, 409);
+  assert.equal(starts().length, 1);
 });
 
-test('concurrent launches preserve separate successful and failed operation drafts', async (t) => {
+test('concurrent launches keep separate successful and failed prompts', async (t) => {
   const { app, database, herdr } = await fixture(t);
   const work = createActiveWorkItem(database, { title: 'Concurrent drafts', attachments: [] });
   let release!: () => void;
@@ -527,16 +524,15 @@ test('concurrent launches preserve separate successful and failed operation draf
   const a = app.inject({ method: 'POST', url, payload: aPayload });
   await entering;
   const b = await app.inject({ method: 'POST', url, payload: bPayload });
-  assert.equal(b.json<QuickStartResponse>().launch.ok, false);
+  assert.equal(b.json<LaunchResponse>().launch.state, 'failed');
   release();
-  assert.equal((await a).json<QuickStartResponse>().launch.ok, true);
-  const drafts = database.listAttachmentsOfType('prompt-draft', work.id).map((meta) => meta.payload);
-  assert.equal(drafts.find((draft) => draft.requestId === aPayload.requestId)!.status, 'launched');
-  assert.equal(drafts.find((draft) => draft.requestId === bPayload.requestId)!.status, 'pending');
-  assert.equal(drafts.find((draft) => draft.requestId === bPayload.requestId)!.prompt, bPayload.prompt);
+  assert.equal((await a).json<LaunchResponse>().launch.state, 'started');
+  assert.equal(database.getLaunch(aPayload.requestId)!.state, 'started');
+  assert.equal(database.getLaunch(bPayload.requestId)!.state, 'failed');
+  assert.equal(database.getLaunch(bPayload.requestId)!.prompt, bPayload.prompt);
   const replay = await app.inject({ method: 'POST', url, payload: bPayload });
-  assert.equal(replay.json<QuickStartResponse>().launch.ok, false);
-  assert.equal(database.listAttachmentsOfType('prompt-draft', work.id).length, 2);
+  assert.equal(replay.json<LaunchResponse>().launch.state, 'failed');
+  assert.equal(database.listLaunches(work.id).length, 2);
 });
 
 test('request identity validates UUIDs and scopes endpoint/work/options before mutation', async (t) => {
@@ -544,12 +540,12 @@ test('request identity validates UUIDs and scopes endpoint/work/options before m
   for (const requestId of ['', 'invalid', 42, null]) assert.equal((await app.inject({ method: 'POST', url: '/work-items/quick-start', payload: { prompt: 'Text', requestId } })).statusCode, 400);
   assert.equal(database.getWorkItemCount(), 0);
   const id = randomUUID();
-  const original = (await app.inject({ method: 'POST', url: '/work-items/quick-start', payload: { prompt: 'Text', requestId: id } })).json<QuickStartResponse>();
+  const original = (await app.inject({ method: 'POST', url: '/work-items/quick-start', payload: { prompt: 'Text', requestId: id } })).json<LaunchResponse>();
   const workId = original.details.workItem.id;
   assert.equal((await app.inject({ method: 'POST', url: `/work-items/${workId}/new-session`, payload: { prompt: 'Text', requestId: id } })).statusCode, 409);
   const sessionIntent = { prompt: 'Options', requestId: randomUUID(), options: { pi: { model: 'fixture/model', thinkingLevel: 'high' } } };
   const url = `/work-items/${workId}/new-session`;
-  const first = (await app.inject({ method: 'POST', url, payload: sessionIntent })).json<QuickStartResponse>();
+  const first = (await app.inject({ method: 'POST', url, payload: sessionIntent })).json<LaunchResponse>();
   const reversed = { ...sessionIntent, options: { pi: { thinkingLevel: 'high', model: 'fixture/model' } } };
   assert.deepEqual((await app.inject({ method: 'POST', url, payload: reversed })).json(), first);
   assert.equal((await app.inject({ method: 'POST', url, payload: { ...sessionIntent, options: {} } })).statusCode, 409);
@@ -561,16 +557,22 @@ function deferred() {
   return { promise, resolve };
 }
 
-async function waitForLaunch(database: ReturnType<typeof openDatabase>, requestId: string) {
+async function waitForLaunch(database: ReturnType<typeof openDatabase>, id: string) {
   for (let attempt = 0; attempt < 200; attempt++) {
-    const operation = database.getLaunchOperation(requestId);
-    if (operation?.status !== 'pending') return operation!;
+    const launch = database.getLaunch(id);
+    if (launch && !isLaunchInProgress(launch.state)) return launch;
     await new Promise(resolve => setTimeout(resolve, 5));
   }
   assert.fail('fixture launch did not finish');
 }
 
-test('async acceptance persists work/draft/progress; replay joins and synchronous callers still wait', async t => {
+/** Leaves the launch in progress under an earlier boot, then recovers as a restarted server would. */
+function interruptLaunch(database: ReturnType<typeof openDatabase>, id: string) {
+  database.db.prepare("update launches set state = 'starting', boot_id = 'earlier' where id = ?").run(id);
+  database.recoverInterruptedLaunches();
+}
+
+test('async acceptance persists work, launch and progress; replay joins and synchronous callers still wait', async t => {
   const { app, database, deps, starts } = await fixture(t);
   const { records, calls } = repositoryFixture(deps);
   const gate = deferred();
@@ -579,20 +581,19 @@ test('async acceptance persists work/draft/progress; replay joins and synchronou
   const payload = { prompt: '  Accepted exact text\n\n', repoIds: [records[0]!.id], promptId: 'implement', requestId: randomUUID(), wait: false };
   const accepted = await app.inject({ method: 'POST', url: '/work-items/quick-start', payload });
   assert.equal(accepted.statusCode, 202);
-  const response = accepted.json<QuickStartResponse>();
-  assert.equal(response.operation!.status, 'pending');
-  assert.deepEqual(response.launch, { ok: false, error: null, phase: 'preparing' });
-  assert.equal(attachmentsOfType(response.details.attachments, 'prompt-draft')[0]!.payload.prompt, payload.prompt);
+  const response = accepted.json<LaunchResponse>();
+  assert.deepEqual([response.launch.state, response.launch.error], ['preparing', null]);
+  assert.equal(response.launch.prompt, payload.prompt);
   assert.equal(attachmentsOfType(response.details.attachments, 'worktree')[0]!.payload.status, 'pending');
-  assert.equal(response.details.launchOperations![0]!.requestId, payload.requestId);
+  assert.equal(response.details.launches[0]!.id, payload.requestId);
   assert.equal(starts().length, 0);
-  const lookup = (await app.inject(`/launch-operations/${payload.requestId}`)).json<QuickStartResponse>();
-  assert.equal(lookup.operation!.status, 'pending');
+  const lookup = (await app.inject(`/launches/${payload.requestId}`)).json<LaunchResponse>();
+  assert.equal(lookup.launch.state, 'preparing');
   assert.equal(database.getWorkItemCount(), 1);
   const replay = await app.inject({ method: 'POST', url: '/work-items/quick-start', payload });
   assert.equal(replay.statusCode, 202);
-  assert.equal(replay.json<QuickStartResponse>().details.workItem.id, response.details.workItem.id);
-  assert.equal(database.listLaunchOperations().length, 1);
+  assert.equal(replay.json<LaunchResponse>().details.workItem.id, response.details.workItem.id);
+  assert.equal(database.listLaunches().length, 1);
   let synchronousDone = false;
   const synchronous = app.inject({ method: 'POST', url: '/work-items/quick-start', payload: { ...payload, wait: true } })
     .then(result => { synchronousDone = true; return result; });
@@ -600,9 +601,8 @@ test('async acceptance persists work/draft/progress; replay joins and synchronou
   assert.equal(synchronousDone, false);
   gate.resolve();
   assert.equal((await synchronous).statusCode, 200);
-  const completed = (await app.inject(`/launch-operations/${payload.requestId}`)).json<QuickStartResponse>();
-  assert.equal(completed.operation!.status, 'completed');
-  assert.equal(completed.launch.ok, true);
+  const completed = (await app.inject(`/launches/${payload.requestId}`)).json<LaunchResponse>();
+  assert.equal(completed.launch.state, 'started');
   assert.equal(calls.length, 1);
   assert.equal(starts().length, 1);
 });
@@ -627,23 +627,23 @@ test('independent accepted tasks prepare concurrently; later task can finish whi
     return start(input);
   };
   const firstPayload = { prompt: 'First task', jiraIssueId: issue.id, repoIds: [records[0]!.id], requestId: randomUUID(), wait: false };
-  const first = (await app.inject({ method: 'POST', url: '/work-items/quick-start', payload: firstPayload })).json<QuickStartResponse>();
+  const first = (await app.inject({ method: 'POST', url: '/work-items/quick-start', payload: firstPayload })).json<LaunchResponse>();
   const secondPayload = { prompt: 'Second task', agentId: 'claude', repoIds: [records[1]!.id], requestId: randomUUID(), wait: false };
-  const second = (await app.inject({ method: 'POST', url: '/work-items/quick-start', payload: secondPayload })).json<QuickStartResponse>();
+  const second = (await app.inject({ method: 'POST', url: '/work-items/quick-start', payload: secondPayload })).json<LaunchResponse>();
   assert.equal(requests.length, 2, 'neither task waits for another task to provision');
   assert.notEqual(first.details.workItem.id, second.details.workItem.id);
   let dashboard = (await app.inject('/dashboard')).json<DashboardResponse>();
-  assert.ok(dashboard.activeWorkItems.every(item => item.launchPhase === 'preparing'));
+  assert.ok(dashboard.activeWorkItems.every(item => item.launchState === 'preparing'));
   assert.equal(dashboard.pendingJiraIssues.length, 0, 'accepted Jira work is no longer pending');
   preparation[0]!.resolve();
   await starting.promise;
-  assert.equal((await app.inject(`/launch-operations/${firstPayload.requestId}`)).json<QuickStartResponse>().launch.phase, 'starting');
+  assert.equal((await app.inject(`/launches/${firstPayload.requestId}`)).json<LaunchResponse>().launch.state, 'starting');
   preparation[1]!.resolve();
   await waitForLaunch(database, secondPayload.requestId);
-  assert.equal(database.getLaunchOperation(firstPayload.requestId)!.status, 'pending');
+  assert.equal(database.getLaunch(firstPayload.requestId)!.state, 'starting');
   dashboard = (await app.inject('/dashboard')).json<DashboardResponse>();
-  assert.equal(dashboard.activeWorkItems.find(item => item.id === second.details.workItem.id)!.launchPhase, undefined);
-  assert.equal(dashboard.activeWorkItems.find(item => item.id === first.details.workItem.id)!.launchPhase, 'starting');
+  assert.equal(dashboard.activeWorkItems.find(item => item.id === second.details.workItem.id)!.launchState, undefined);
+  assert.equal(dashboard.activeWorkItems.find(item => item.id === first.details.workItem.id)!.launchState, 'starting');
   agent.resolve();
   await waitForLaunch(database, firstPayload.requestId);
   assert.equal(herdr.workspaces.size, 2);
@@ -651,29 +651,27 @@ test('independent accepted tasks prepare concurrently; later task can finish whi
   assert.equal(herdr.prompts.length, 2);
 });
 
-test('background partial preparation failure exposes the exact draft for retry on the same work item', async t => {
+test('background partial preparation failure keeps the exact launch for retry on the same work item', async t => {
   const { app, database, deps, starts } = await fixture(t);
   const { records, calls, setFailing } = repositoryFixture(deps);
   setFailing(true);
   const payload = { prompt: '  Keep this exact prompt\n\n  ', repoIds: records.map(record => record.id), promptId: 'refine', requestId: randomUUID(), wait: false };
-  const accepted = (await app.inject({ method: 'POST', url: '/work-items/quick-start', payload })).json<QuickStartResponse>();
+  const accepted = (await app.inject({ method: 'POST', url: '/work-items/quick-start', payload })).json<LaunchResponse>();
   await waitForLaunch(database, payload.requestId);
-  const failed = (await app.inject(`/launch-operations/${payload.requestId}`)).json<QuickStartResponse>();
-  assert.equal(failed.launch.phase, 'failed');
+  const failed = (await app.inject(`/launches/${payload.requestId}`)).json<LaunchResponse>();
+  assert.equal(failed.launch.state, 'failed');
   assert.equal(starts().length, 0);
-  const draft = attachmentsOfType(failed.details.attachments, 'prompt-draft').find(meta => meta.id === failed.details.launchOperations![0]!.draftMetaId)!.payload;
-  assert.equal(draft.prompt, payload.prompt);
-  assert.deepEqual(draft.repoIds, payload.repoIds);
-  assert.equal(draft.promptId, payload.promptId);
-  assert.equal((await app.inject('/dashboard')).json<DashboardResponse>().activeWorkItems[0]!.launchPhase, 'failed');
+  assert.equal(failed.launch.prompt, payload.prompt);
+  assert.deepEqual(failed.launch.repoIds, payload.repoIds);
+  assert.equal(failed.launch.promptId, payload.promptId);
+  assert.equal((await app.inject('/dashboard')).json<DashboardResponse>().activeWorkItems[0]!.launchState, 'failed');
   const paths = attachmentsOfType(failed.details.attachments, 'worktree').map(meta => meta.payload.worktreePath);
   setFailing(false);
-  const retryPayload = { ...payload, requestId: randomUUID() };
-  const retry = await app.inject({ method: 'POST', url: `/work-items/${accepted.details.workItem.id}/new-session`, payload: retryPayload });
+  const retry = await app.inject({ method: 'POST', url: `/launches/${payload.requestId}/retry` });
   assert.equal(retry.statusCode, 202);
-  await waitForLaunch(database, retryPayload.requestId);
+  await waitForLaunch(database, payload.requestId);
   const ready = (await app.inject(`/work-items/${accepted.details.workItem.id}`)).json<WorkItemDetails>();
-  assert.equal(ready.launchOperations!.at(-1)!.launch.ok, true);
+  assert.deepEqual(ready.launches.map(launch => launch.state), ['started']);
   assert.deepEqual(attachmentsOfType(ready.attachments, 'worktree').map(meta => meta.payload.worktreePath), paths);
   assert.equal(database.getWorkItemCount(), 1);
   assert.equal(calls.length, 3, 'ready sibling reused; only failed repository retried');
@@ -702,15 +700,15 @@ test('a lost acceptance reply is inspectable by UUID and never duplicates backgr
   await assert.rejects(client.quickStart('Lost acceptance', undefined, undefined, undefined, requestId, options),
     error => error instanceof DOMException && error.name === 'TimeoutError');
   assert.equal(posts, 1);
-  const lookup = await client.getLaunchOperation(requestId);
-  assert.equal(lookup.operation!.status, 'pending');
+  const lookup = await client.getLaunch(requestId);
+  assert.equal(lookup.launch.state, 'preparing');
   loseReply = false;
   const replay = await client.quickStart('Lost acceptance', undefined, undefined, undefined, requestId, options);
   assert.equal(replay.details.workItem.id, lookup.details.workItem.id);
   assert.equal(preparations, 1);
   gate.resolve();
   await waitForLaunch(database, requestId);
-  assert.equal((await client.getLaunchOperation(requestId)).launch.ok, true);
+  assert.equal((await client.getLaunch(requestId)).launch.state, 'started');
   assert.equal(starts().length, 1);
   assert.equal(database.getWorkItemCount(), 1);
 });
@@ -743,19 +741,21 @@ test('async launch transport validates wait without changing frozen identity and
     assert.equal((await app.inject({ method: 'POST', url: '/work-items/quick-start', payload: { prompt: 'Text', wait } })).statusCode, 400);
   }
   assert.equal(database.getWorkItemCount(), 0);
-  assert.equal((await app.inject('/launch-operations/invalid')).statusCode, 400);
-  assert.equal((await app.inject(`/launch-operations/${randomUUID()}`)).statusCode, 404);
+  assert.equal((await app.inject('/launches/invalid')).statusCode, 400);
+  assert.equal((await app.inject(`/launches/${randomUUID()}`)).statusCode, 404);
   const requestId = randomUUID();
   const payload = { prompt: 'Text', requestId };
   await app.inject({ method: 'POST', url: '/work-items/quick-start', payload });
   const workId = database.listWorkItems()[0]!.id;
   assert.equal((await app.inject({ method: 'POST', url: '/work-items/quick-start', payload: { ...payload, wait: false } })).statusCode, 200);
   assert.equal((await app.inject({ method: 'POST', url: `/work-items/${workId}/new-session`, payload: { prompt: 'Text', wait: 'false' } })).statusCode, 400);
-  database.db.prepare("update work_launch_operations set status = 'pending', outcome_json = null where request_id = ?").run(requestId);
-  const recovered = (await app.inject(`/launch-operations/${requestId}`)).json<QuickStartResponse>();
-  assert.equal(recovered.operation!.status, 'uncertain');
-  assert.equal(recovered.launch.phase, 'uncertain');
-  assert.equal((await app.inject(`/work-items/${workId}`)).json<WorkItemDetails>().launchOperations![0]!.status, 'uncertain');
+  interruptLaunch(database, requestId);
+  const recovered = (await app.inject(`/launches/${requestId}`)).json<LaunchResponse>();
+  assert.equal(recovered.launch.state, 'uncertain');
+  assert.equal((await app.inject(`/work-items/${workId}`)).json<WorkItemDetails>().launches[0]!.state, 'uncertain');
+  assert.equal((await app.inject({ method: 'POST', url: `/launches/${requestId}/retry` })).statusCode, 409);
+  assert.equal((await app.inject({ method: 'POST', url: '/launches/invalid/retry' })).statusCode, 400);
+  assert.equal((await app.inject({ method: 'POST', url: `/launches/${randomUUID()}/retry` })).statusCode, 404);
   assert.equal(starts().length, 1, 'lookup never replays an interrupted launch');
 });
 
@@ -769,13 +769,13 @@ test('cancelling accepted work during preparation never starts an agent or reset
   const accepted = (await app.inject({
     method: 'POST', url: '/work-items/quick-start',
     payload: { prompt: 'Do not start after cancellation', repoIds: [records[0]!.id], requestId, wait: false },
-  })).json<QuickStartResponse>();
+  })).json<LaunchResponse>();
   database.updateWorkItemState(accepted.details.workItem.id, 'cancelled');
   gate.resolve();
   await waitForLaunch(database, requestId);
-  const outcome = (await app.inject(`/launch-operations/${requestId}`)).json<QuickStartResponse>();
-  assert.equal(outcome.launch.phase, 'failed');
+  const outcome = (await app.inject(`/launches/${requestId}`)).json<LaunchResponse>();
+  assert.equal(outcome.launch.state, 'failed');
   assert.equal(outcome.details.workItem.state, 'cancelled');
   assert.equal(starts().length, 0);
-  assert.equal(attachmentsOfType(outcome.details.attachments, 'prompt-draft')[0]!.payload.status, 'pending');
+  assert.equal((await app.inject({ method: 'POST', url: `/launches/${requestId}/retry` })).statusCode, 409, 'cancelled work is not retried');
 });

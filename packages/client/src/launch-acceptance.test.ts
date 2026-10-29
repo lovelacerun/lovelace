@@ -2,9 +2,9 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { LovelaceClient } from './client.js';
 
-const accepted = { details: { workItem: { id: 'work' }, attachments: [] }, launch: { ok: false, error: null, phase: 'accepted' }, operation: { requestId: 'id', status: 'pending' } };
+const accepted = { details: { workItem: { id: 'work' }, attachments: [], launches: [] }, launch: { id: 'id', state: 'accepted', error: null } };
 
-test('launch wait:false submits once and returns acceptance; status lookup is a read using the exact UUID', async () => {
+test('launch wait:false submits once and returns acceptance; lookup reads and retry posts by the exact UUID', async () => {
   const requests: Array<{ path: string; method: string; body: unknown }> = [];
   const client = new LovelaceClient('http://localhost:27421', async (input, init) => {
     requests.push({ path: new URL(String(input)).pathname, method: init?.method ?? 'GET', body: init?.body ? JSON.parse(String(init.body)) : null });
@@ -12,11 +12,13 @@ test('launch wait:false submits once and returns acceptance; status lookup is a 
   });
   assert.deepEqual(await client.quickStart('  Exact\n', '42', 'claude', undefined, 'id', { repoIds: ['repo'], promptId: 'refine', wait: false }), accepted);
   assert.deepEqual(await client.newSession('work/1', 'Retry\n', 'pi', { pi: { thinkingLevel: 'high' } }, 'id2', { wait: false }), accepted);
-  assert.deepEqual(await client.getLaunchOperation('id/2'), accepted);
+  assert.deepEqual(await client.getLaunch('id/2'), accepted);
+  assert.deepEqual(await client.retryLaunch('id/3'), accepted);
   assert.deepEqual(requests, [
     { path: '/work-items/quick-start', method: 'POST', body: { prompt: '  Exact\n', jiraIssueId: '42', agentId: 'claude', requestId: 'id', repoIds: ['repo'], promptId: 'refine', wait: false } },
     { path: '/work-items/work%2F1/new-session', method: 'POST', body: { prompt: 'Retry\n', agentId: 'pi', options: { pi: { thinkingLevel: 'high' } }, requestId: 'id2', wait: false } },
-    { path: '/launch-operations/id%2F2', method: 'GET', body: null },
+    { path: '/launches/id%2F2', method: 'GET', body: null },
+    { path: '/launches/id%2F3/retry', method: 'POST', body: null },
   ]);
 });
 

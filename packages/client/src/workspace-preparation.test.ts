@@ -11,6 +11,7 @@ const workspace = (repoId: string, status: Worktree['status']): Worktree => ({
 });
 const details = (...workspaces: Worktree[]): WorkItemDetails => ({
   workItem: { id: 'work', title: 'Fixture', state: 'active', notes: null, createdAt: '', updatedAt: '', startedAt: null, completedAt: null },
+  launches: [],
   attachments: workspaces.map(payload => ({
     id: payload.repoId, workItemId: 'work', type: 'worktree' as const, payload, createdAt: '', updatedAt: '',
   })),

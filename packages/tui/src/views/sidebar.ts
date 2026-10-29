@@ -2,7 +2,7 @@ import type { AppState } from '../state.js';
 import { accent, muted, groupLabel, icons, reset } from '../theme.js';
 import { safeText, truncate } from '@lovelace/tui-components';
 import { clickable } from '../clickable.js';
-import { launchPhaseBadge } from './launch-progress.js';
+import { launchStateBadge } from './launch-progress.js';
 import { keyedTitle, selectableRow } from './common.js';
 
 const SECTIONS = [
@@ -29,10 +29,10 @@ export function renderSidebar(state: AppState, width: number): { lines: string[]
     const indexes = [...entries.keys()].filter(index => entries[index]!.kind === kind);
     lines.push('', inset + groupLabel(title, state.dashboardData ? indexes.length : ''), '');
     for (const index of indexes) {
-      const phase = kind === 'work' ? state.activeWorkItems.find(item => item.id === entries[index]!.id)?.launchPhase : undefined;
-      row(index, (phase && state.layout.compact ? launchPhaseBadge(phase, true) + ' ' : '') + keyedTitle(safeText(entries[index]!.label)));
-      if (phase && !state.layout.compact) {
-        lines.push(clickable(inset + '  ' + launchPhaseBadge(phase), { kind: 'nav', index }));
+      const launchState = kind === 'work' ? state.activeWorkItems.find(item => item.id === entries[index]!.id)?.launchState : undefined;
+      row(index, (launchState && state.layout.compact ? launchStateBadge(launchState, true) + ' ' : '') + keyedTitle(safeText(entries[index]!.label)));
+      if (launchState && !state.layout.compact) {
+        lines.push(clickable(inset + '  ' + launchStateBadge(launchState), { kind: 'nav', index }));
       }
     }
     if (!indexes.length) lines.push(inset + muted + (state.dashboardData ? empty : unavailable) + reset);

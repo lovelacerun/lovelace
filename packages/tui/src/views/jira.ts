@@ -21,7 +21,7 @@ export function renderJira(state: AppState, width: number): Document {
   b.line(url ? hyperlink(faint + safeText(issue.url) + reset, url) : faint + safeText(issue.url) + reset);
   b.line();
   gap();
-  if (state.draft.pendingLaunch) b.action(accent + icons.retry + reset + '  Retry exact saved launch', { kind: 'launch-retry' });
+  if (state.draft.requestId) b.action(accent + icons.retry + reset + '  Resend unanswered launch', { kind: 'launch-retry' });
   else b.action(accent + icons.start + reset + '  Start work', { kind: 'jira-setup' }, faint + 'Enter' + reset);
   if (url) b.action(accent + icons.link + reset + '  Open in browser', { kind: 'open-url', url });
   if (state.draft.promptId || state.draft.repoIds?.length) b.line();

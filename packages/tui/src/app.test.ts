@@ -6,8 +6,8 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 import type { TestContext } from 'node:test';
 import { ApiError, LovelaceClient, type QuickStartOptions } from '@lovelace/client';
 import {
-  CODING_HARNESSES, type AgentSession, type AvailableHarness, type DashboardResponse, type PullRequestPayload, type QuickStartResponse, type SessionOpenResponse,
-  type WorkItemDetails, type WorkItemState,
+  CODING_HARNESSES, type AgentSession, type AvailableHarness, type DashboardResponse, type PullRequestPayload, type LaunchResponse, type SessionOpenResponse,
+  type LaunchState, type WorkItemDetails, type WorkItemState,
 } from '@lovelace/core';
 import { AppRoot } from './app.js';
 import { JiraStartModal } from './jira-start-modal.js';
@@ -76,7 +76,7 @@ class FakeClient {
   readonly openCalls: OpenCall[] = [];
   readonly launchCalls: LaunchCall[] = [];
   openQueue: Array<SessionOpenResponse | Error> = [];
-  launchQueue: Array<QuickStartResponse | Error> = [];
+  launchQueue: Array<LaunchResponse | Error> = [];
 
   async getDashboard() { return this.dashboardResponse; }
   async getWorkItem(id: string): Promise<WorkItemDetails> {
@@ -92,14 +92,14 @@ class FakeClient {
     return next;
   }
   async setWorkItemState() { return {} as never; }
-  async quickStart(prompt: string, jiraIssueId?: string, _agentId?: unknown, _overrides?: unknown, requestId?: string, options?: QuickStartOptions): Promise<QuickStartResponse> {
+  async quickStart(prompt: string, jiraIssueId?: string, _agentId?: unknown, _overrides?: unknown, requestId?: string, options?: QuickStartOptions): Promise<LaunchResponse> {
     this.launchCalls.push({ endpoint: 'quickStart', jiraIssueId, prompt, requestId, ...(options?.reviewRequestId ? { reviewRequestId: options.reviewRequestId } : {}), ...(options?.repoIds ? { repoIds: options.repoIds } : {}), ...(options?.promptId ? { promptId: options.promptId } : {}) });
     const next = this.launchQueue.shift();
     if (!next) throw new Error('No queued launch response');
     if (next instanceof Error) throw next;
     return next;
   }
-  async newSession(id: string, prompt: string, _agentId?: unknown, _o?: unknown, requestId?: string): Promise<QuickStartResponse> {
+  async newSession(id: string, prompt: string, _agentId?: unknown, _o?: unknown, requestId?: string): Promise<LaunchResponse> {
     this.launchCalls.push({ endpoint: 'newSession', workItemId: id, prompt, requestId });
     const next = this.launchQueue.shift();
     if (!next) throw new Error('No queued launch response');
@@ -142,7 +142,13 @@ function detailsOf(id: string, state: WorkItemState = 'active'): WorkItemDetails
       createdAt: '', updatedAt: '', startedAt: null, completedAt: null,
     },
     attachments: [],
+    launches: [],
   };
+}
+
+function launched(id: string, state: LaunchState = 'accepted', error: string | null = null): LaunchResponse {
+  const launch = { id: 'launch', workItemId: id, state, error, harness: 'pi', repoIds: [], promptId: null, prompt: '', createdAt: '', updatedAt: '' };
+  return { details: { ...detailsOf(id), launches: [launch] }, launch };
 }
 
 function makeRoot(opts: { tui?: FakeTui; client?: LovelaceClient } = {}) {
@@ -182,7 +188,7 @@ describe('AppRoot review list', () => {
     assert.match(stripTerminalSequences(root.render(120).join('\n')), /Reviews  1[\s\S]*Retry uploads/, 'Home lists reviews too');
     root.state.navigate({ kind: 'review', id: review.id });
     assert.match(stripTerminalSequences(root.render(120).join('\n')), /Start review/);
-    asFake(client).launchQueue.push({ details: detailsOf('created'), launch: { ok: true, error: null } });
+    asFake(client).launchQueue.push(launched('created'));
     tui.feedInput('\r');
     await waitFor(() => asFake(client).launchCalls.length === 1 && !root.state.mutationInFlight);
     assert.deepEqual(rendered, [{ promptId: 'review', title: 'org/a#7: Retry uploads',
@@ -250,7 +256,7 @@ describe('AppRoot Jira start-work overlay', () => {
     tui.feedInput('\x1b[1;5F');
     tui.feedInput('Edited');
     const prompt = modal.editor.getExpandedText();
-    asFake(client).launchQueue.push({ details: detailsOf('created'), launch: { ok: false, error: 'fixture preparation failure' } });
+    asFake(client).launchQueue.push(new ApiError(400, 'fixture preparation failure'));
     tui.feedInput('\x13');
     await waitFor(() => !root.state.mutationInFlight);
     const launch = asFake(client).launchCalls[0]!;
@@ -258,8 +264,8 @@ describe('AppRoot Jira start-work overlay', () => {
     assert.deepEqual(launch.repoIds, ['0', '1']);
     assert.equal(launch.promptId, 'refine');
     assert.equal(launch.prompt, prompt);
-    assert.equal(root.state.draft.retryWorkId, 'created');
-    assert.equal(overlay.visible, true, 'failure stays in the same dialog');
+    assert.equal(root.state.draft.requestId, undefined);
+    assert.equal(overlay.visible, true, 'a rejection stays in the same dialog');
     assert.match(modal.render(100).join('\n'), /fixture preparation failure/);
     tui.feedInput('\x1b');
     assert.equal(overlay.visible, false);
@@ -290,15 +296,12 @@ describe('AppRoot Jira start-work overlay', () => {
     assert.equal(root.state.view, 'jira');
     assert.equal(root.state.draft.text, 'Keep prompt');
     assert.deepEqual(root.state.draft.repoIds, ['1']);
-    root.state.setDraft({
-      text: 'An edit must not replace the saved request',
-      pendingLaunch: { endpoint: 'quickStart', jiraIssueId: '42', prompt: 'Keep prompt', requestId: 'id', repoIds: ['1'] },
-    });
-    assert.match(root.render(80).join('\n'), /Retry exact saved launch/);
+    root.state.setDraft({ requestId: 'id' });
+    assert.match(root.render(80).join('\n'), /Resend unanswered launch/);
     asFake(client).launchQueue.push(new ApiError(503, 'Fixture retry failed'));
     tui.feedInput('\r');
     await waitFor(() => asFake(client).launchCalls.length === 1 && !root.state.mutationInFlight);
-    assert.equal(tui.overlays.length, 1, 'cannot change an unresolved intent');
+    assert.equal(tui.overlays.length, 1, 'cannot change an unanswered launch');
     assert.equal(asFake(client).launchCalls[0]!.prompt, 'Keep prompt');
     assert.equal(asFake(client).launchCalls[0]!.requestId, 'id');
     assert.deepEqual(asFake(client).launchCalls[0]!.repoIds, ['1']);
@@ -319,7 +322,7 @@ describe('AppRoot Jira start-work overlay', () => {
     tui.feedInput('\r');
     const modal = tui.overlays[0]!.component as JiraStartModal;
     await waitFor(() => !modal.loading);
-    asFake(client).launchQueue.push({ details: detailsOf('created'), launch: { ok: true, error: null } });
+    asFake(client).launchQueue.push(launched('created'));
     tui.feedInput('\x13');
     await waitFor(() => !tui.overlays[0]!.visible);
     assert.equal(root.state.view, 'work-item');
@@ -352,7 +355,7 @@ describe('AppRoot new-session overlay', () => {
     await waitFor(() => !root.state.mutationInFlight && !modal.launching);
     assert.equal(overlay.visible, true, 'a rejection stays in the dialog');
     assert.match(stripTerminalSequences(modal.render(76).join('\n')), /Work item not found/);
-    asFake(client).launchQueue.push({ details: withSession('w1'), launch: { ok: true, error: null } });
+    asFake(client).launchQueue.push({ ...launched('w1'), details: withSession('w1') });
     tui.feedInput('\x13');
     await waitFor(() => !overlay.visible);
     assert.deepEqual(asFake(client).launchCalls.map(call => [call.endpoint, call.workItemId, call.prompt]),
@@ -492,10 +495,10 @@ describe('AppRoot editor sync across drafts', () => {
 
   it('editor onChange from a keystroke does not clobber a retained requestId', async () => {
     const { root } = makeRoot();
-    root.state.setDraft({ text: '', pendingLaunch: { endpoint: 'quickStart', prompt: 'p', requestId: 'retained-uuid' } });
+    root.state.setDraft({ text: '', requestId: 'retained-uuid' });
     // Simulate the editor firing onChange from a plain character edit.
     root.editor.handleInput('x');
-    assert.equal(root.state.draft.pendingLaunch?.requestId, 'retained-uuid', 'requestId preserved by onChange');
+    assert.equal(root.state.draft.requestId, 'retained-uuid', 'requestId preserved by onChange');
     root.stop();
   });
 });
@@ -518,64 +521,42 @@ describe('AppRoot offline rendering', () => {
 });
 
 describe('AppRoot requestId lifecycle integration', () => {
-  it('confirmed completed failure → retry on same work item uses NEW uuid via newSession', async () => {
+  it('a failed launch is still an answer: the draft clears and its work item shows the failure', async () => {
     const { root, client } = makeRoot();
     const fake = asFake(client);
-    fake.launchQueue.push({
-      details: detailsOf('wi-new'),
-      launch: { ok: false, error: 'tool missing' },
-      operation: { requestId: 'U1', status: 'completed' },
-    });
-    fake.launchQueue.push({
-      details: detailsOf('wi-new'),
-      launch: { ok: true, error: null },
-      operation: { requestId: 'U2', status: 'completed' },
-    });
-    // Trigger via the launch helper directly to control prompts.
+    fake.launchQueue.push(launched('wi-new', 'failed', 'tool missing'));
     root.state.setDraft({ text: 'go' });
     await (root as unknown as { launchFromEditor: (p: string) => Promise<void> }).launchFromEditor('go');
     assert.equal(fake.launchCalls.length, 1);
-    assert.equal(fake.launchCalls[0]?.endpoint, 'quickStart');
-
-    // After confirmed failure the draft requestId was cleared.
-    assert.equal(root.state.draft.pendingLaunch?.requestId, undefined);
-    assert.equal(root.state.draft.retryWorkId, 'wi-new');
-
-    await (root as unknown as { launchFromEditor: (p: string) => Promise<void> }).launchFromEditor('go');
-    assert.equal(fake.launchCalls.length, 2);
-    assert.equal(fake.launchCalls[1]?.endpoint, 'newSession');
-    assert.equal(fake.launchCalls[1]?.workItemId, 'wi-new');
-    assert.notEqual(fake.launchCalls[0]?.requestId, fake.launchCalls[1]?.requestId);
+    assert.equal(root.state.view, 'work-item');
+    assert.equal(root.state.selectedWorkItemId, 'wi-new');
+    assert.match(stripTerminalSequences(root.render(80).join('\n')), /tool missing/);
+    root.state.navigateToDashboard();
+    assert.equal(root.state.draft.text, '');
+    assert.equal(root.state.draft.requestId, undefined);
     root.stop();
   });
 
-  it('uncertain outcome replays the exact pending body across navigation', async () => {
+  it('an unanswered launch resends its request ID across navigation', async () => {
     const { root, client } = makeRoot();
     const fake = asFake(client);
     fake.launchQueue.push(new ApiError(0, 'network'));
-    fake.launchQueue.push({
-      details: detailsOf('wi-ok'),
-      launch: { ok: true, error: null },
-      operation: { requestId: 'anything', status: 'completed' },
-    });
+    fake.launchQueue.push(launched('wi-ok'));
     root.state.setDraft({ text: 'risky' });
     await (root as unknown as { launchFromEditor: (p: string) => Promise<void> }).launchFromEditor('risky');
     const firstId = fake.launchCalls[0]?.requestId;
     assert.ok(firstId, 'requestId sent on first attempt');
-    assert.equal(fake.launchCalls[0]?.endpoint, 'quickStart');
-    assert.equal(root.state.draft.uncertain, true);
-    assert.ok(root.state.draft.pendingLaunch, 'pendingLaunch pinned');
+    assert.equal(root.state.draft.requestId, firstId);
 
-    // Navigate away: pending draft should survive on its original key (home).
+    // Navigate away: the request ID stays with its draft (home).
     root.state.navigateToWorkItem('wi-other');
     assert.equal(root.state.draft.text, '', 'different draft key');
     root.state.navigateToDashboard();
 
-    // Retry: same endpoint + same id.
     await (root as unknown as { launchFromEditor: (p: string) => Promise<void> }).launchFromEditor('risky');
     assert.equal(fake.launchCalls.length, 2);
-    assert.equal(fake.launchCalls[1]?.endpoint, 'quickStart', 'replays original endpoint');
-    assert.equal(fake.launchCalls[1]?.requestId, firstId, 'replays original UUID');
+    assert.equal(fake.launchCalls[1]?.endpoint, 'quickStart');
+    assert.equal(fake.launchCalls[1]?.requestId, firstId, 'resends the original request ID');
     assert.equal(fake.launchCalls[1]?.prompt, 'risky');
     root.stop();
   });
@@ -635,6 +616,7 @@ describe('AppRoot sizing + resize', () => {
         createdAt: '', updatedAt: '', startedAt: null, completedAt: null,
       },
       attachments: [],
+      launches: [],
     });
     const out = root.render(120);
     assertFits(out, 120, 36);
@@ -694,7 +676,7 @@ function reply(res: ServerResponse, status: number, body: unknown) {
 }
 
 describe('AppRoot real Editor submission over fixture HTTP', () => {
-  for (const failure of ['400', 'completed', 'timeout'] as const) {
+  for (const failure of ['400', 'timeout'] as const) {
     it(`preserves exact typed and pasted whitespace/buffer after ${failure}, then retries deliberately`, async t => {
       const requests: Array<{ path: string; body: { prompt: string; requestId: string } }> = [];
       const url = await httpFixture(t, (req, res) => {
@@ -709,15 +691,8 @@ describe('AppRoot real Editor submission over fixture HTTP', () => {
           requests.push({ path: req.url!, body });
           if (requests.length === 1) {
             if (failure === '400') reply(res, 400, { error: 'Rejected' });
-            else if (failure === 'timeout') { /* Deliberately withhold fixture reply. */ }
-            else reply(res, 200, {
-              details: detailsOf('created'), launch: { ok: false, error: 'Fixture launcher missing' },
-              operation: { requestId: body.requestId, status: 'completed' },
-            });
-          } else reply(res, 200, {
-            details: detailsOf('created'), launch: { ok: true, error: null },
-            operation: { requestId: body.requestId, status: 'completed' },
-          });
+            else { /* Deliberately withhold fixture reply. */ }
+          } else reply(res, 200, launched('created'));
         });
       });
       class DeadlineClient extends LovelaceClient {
@@ -745,9 +720,7 @@ describe('AppRoot real Editor submission over fixture HTTP', () => {
       assert.equal(root.state.draft.text, prompt);
       assert.equal(root.state.focus, 'editor');
       if (failure === 'timeout') {
-        assert.equal(root.state.draft.uncertain, true);
-        // Editing must not change an unresolved endpoint/body/UUID.
-        tui.feedInput('changed');
+        assert.ok(root.state.draft.requestId);
         root.state.navigateToWorkItem('other');
         root.render(80);
         assert.equal(root.editor.getExpandedText(), '');
@@ -758,8 +731,7 @@ describe('AppRoot real Editor submission over fixture HTTP', () => {
       tui.feedInput('\r');
       await waitFor(() => requests.length === 2 && !root.state.mutationInFlight);
       assert.equal(requests[1]!.body.prompt, prompt);
-      assert.equal(requests[1]!.path, failure === 'completed'
-        ? '/work-items/created/new-session' : '/work-items/quick-start');
+      assert.equal(requests[1]!.path, '/work-items/quick-start');
       if (failure === 'timeout') assert.equal(requests[1]!.body.requestId, requests[0]!.body.requestId);
       else assert.notEqual(requests[1]!.body.requestId, requests[0]!.body.requestId);
       assert.equal(root.state.view, 'work-item');
@@ -816,7 +788,7 @@ describe('AppRoot real Editor submission over fixture HTTP', () => {
   });
 
   it('late mutation reply updates only its originating draft, not a newly selected task', async t => {
-    let finish!: (value: QuickStartResponse) => void;
+    let finish!: (value: LaunchResponse) => void;
     const client = fakeClient();
     client.quickStart = () => new Promise(resolve => { finish = resolve; });
     const { root, tui } = makeRoot({ client });
@@ -828,14 +800,13 @@ describe('AppRoot real Editor submission over fixture HTTP', () => {
     root.state.navigateToWorkItem('different');
     root.state.setDraft({ text: 'different draft' });
     root.render(80);
-    finish({ details: detailsOf('created'), launch: { ok: false, error: 'failed' } });
+    finish(launched('created', 'failed', 'failed'));
     await waitFor(() => !root.state.mutationInFlight);
     assert.equal(root.state.selectedWorkItemId, 'different');
     assert.equal(root.state.draft.text, 'different draft');
-    assert.equal(root.state.draft.retryWorkId, undefined);
     root.state.navigateToDashboard();
-    assert.equal(root.state.draft.text, 'original');
-    assert.equal(root.state.draft.retryWorkId, 'created');
+    assert.equal(root.state.draft.text, '', 'the answered launch belongs to the server');
+    assert.equal(root.state.draft.requestId, undefined);
   });
 });
 
@@ -919,19 +890,16 @@ describe('AppRoot input/lifecycle integration', () => {
     const { root, tui, client } = makeRoot();
     const done = root.start();
     t.after(async () => { root.quit(); await done; });
-    root.state.setDraft({
-      text: 'original', uncertain: true,
-      pendingLaunch: { endpoint: 'quickStart', prompt: 'original', requestId: 'id' },
-    });
+    root.state.setDraft({ text: 'original', requestId: 'id' });
     tui.feedInput('x');
     assert.equal(root.state.pendingConfirm?.kind, 'launch-abandon');
-    assert.equal(root.state.draft.pendingLaunch?.requestId, 'id');
+    assert.equal(root.state.draft.requestId, 'id');
     tui.feedInput('\x1b');
     assert.equal(root.state.pendingConfirm, null);
-    assert.equal(root.state.draft.pendingLaunch?.requestId, 'id');
+    assert.equal(root.state.draft.requestId, 'id');
     tui.feedInput('x');
     tui.feedInput('y');
-    assert.equal(root.state.draft.pendingLaunch, undefined);
+    assert.equal(root.state.draft.requestId, undefined);
     assert.equal(root.editor.getExpandedText(), '');
     assert.equal(root.state.focus, 'editor');
     assert.equal(asFake(client).launchCalls.length, 0);

@@ -11,14 +11,16 @@ before(async () => { root = await mkdtemp(join(tmpdir(), 'lovelace-cli-fixture-'
 after(async () => { if (originalConfig === undefined) delete process.env.LOVELACE_CONFIG; else process.env.LOVELACE_CONFIG = originalConfig; await rm(root, { recursive: true, force: true }); });
 /** Exact file prompt: leading/trailing whitespace, astral, ZWJ, combining and CJK code points. */
 const filePrompt = '\n  λ 👩🏽‍💻 é 漢字\n\n  ';
-const details: WorkItemDetails = { workItem: { id: 'work', title: 'Fixture', state: 'active', notes: null, createdAt: '', updatedAt: '', startedAt: null, completedAt: null }, attachments: [] };
+const details: WorkItemDetails = { workItem: { id: 'work', title: 'Fixture', state: 'active', notes: null, createdAt: '', updatedAt: '', startedAt: null, completedAt: null }, attachments: [], launches: [] };
 function fixture() {
   const events: unknown[][] = [];
   const deps: AgentCommandDeps = {
     client: {
       newSession: async (id, prompt, agentId, options, requestId, ...rest) => {
         events.push(['newSession', { id, prompt, agentId, options, requestId }, rest]);
-        return { details, launch: { ok: true, error: null, phase: 'started' } };
+        return {
+          details, launch: { id: 'fixed-request-id', workItemId: id, state: 'started', error: null, harness: 'pi', repoIds: [], promptId: null, prompt, createdAt: '', updatedAt: '' },
+        };
       },
       openSession: async (id, sessionId) => { events.push(['open', id, sessionId]); return { action: 'focused', details }; },
     },
@@ -35,7 +37,7 @@ test('explicit CLI launch asks the server to start the session with exact prompt
   assert.equal(f.events[0]![1], '/fixture/prompt.txt');
   assert.deepEqual(f.events[1]![1], { id: 'work', prompt: filePrompt, agentId: 'pi', options: { pi: { model: 'chosen', thinkingLevel: 'high' } }, requestId: 'fixed-request-id' });
   assert.deepEqual(f.events[1]![2], [], 'no request options for a fresh launch');
-  assert.deepEqual(result, { details, launch: { ok: true, error: null, phase: 'started' } });
+  assert.equal((result as { launch: { state: string } }).launch.state, 'started');
 });
 
 test('CLI prompt argv whitespace stays exact and exactly one prompt source is required noninteractively', async () => {

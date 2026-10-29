@@ -84,8 +84,8 @@ worktrees. `Ctrl+S` starts; failures stay in the dialog.
 | Backslash + `Enter` | Newline on legacy terminals |
 | `Esc` | Cancel confirmation first; otherwise leave editor/back |
 | `d/a/c` | Confirm local done/active/cancelled state |
-| `y` | Confirm state change or intent discard |
-| `x` | Ask to discard an unresolved launch intent |
+| `y` | Confirm state change or launch discard |
+| `x` | Ask to discard an unanswered launch |
 
 Jira and PR attachments are borderless, padded cards. Tab through them (or use
 ↑/↓ in content); the selected card is highlighted. Enter opens its cached web
@@ -177,9 +177,9 @@ changes your selection or focuses Herdr. Read failures retain last-known state;
 quitting stops client polling, not server preparation/startup.
 
 Validation errors stay in the setup dialog. Later preparation/startup failures
-appear on the saved work item with **Retry saved prompt**. It uses the exact
-server-owned prompt, template/repositories and harness options, a fresh request
-UUID and the same work item; ready worktrees are reused. After a server restart,
+appear on the saved work item with **Retry saved prompt**, which asks the
+server to run that launch again with its saved prompt, template/repositories
+and harness options; ready worktrees are reused. After a server restart,
 uncertain launches require inspecting Herdr before deliberately starting another
 session. Progress is restored from server state when revisiting/reopening the TUI.
 
@@ -208,14 +208,14 @@ continued. Inactive work needs explicit reactivation first. Session states
   a cache.
 - Submission preserves Unicode, blank lines and boundary/pasted whitespace.
   Empty validation alone uses trim. Paste chunks never trigger commands.
-- Drafts are isolated by work/Jira/Home. Launch failures retain exact text.
-  Confirmed failure retries with a new UUID on the same work item.
-- Launch uncertainty freezes endpoint, body and request UUID, so an explicit
-  retry replays the same server operation instead of launching again. Lost
-  HTTP replies never retry automatically. After closing an uncertain Jira
-  launch dialog, **Retry exact saved launch** replays its frozen request;
-  changing templates/repositories first requires explicitly discarding it.
-- `Esc`, then `x`/`y` discards an unresolved local intent, not upstream work.
+- Drafts are isolated by work/Jira/Home. A draft keeps only its prompt,
+  selections and, while a launch got no answer, its request ID. Rejections
+  retain the exact text.
+- Resending an unanswered launch reuses its request ID, so the server replays
+  that launch instead of starting another. Lost HTTP replies never retry
+  automatically. On a Jira or review page, **Resend unanswered launch**
+  resends it; changing templates/repositories first requires discarding it.
+- `Esc`, then `x`/`y` discards an unanswered launch locally, not upstream work.
 
 ## Tests
 

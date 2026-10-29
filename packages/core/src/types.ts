@@ -129,7 +129,6 @@ export type WorkItemAttachment =
   /** Review request the work item was started from. */
   | LinkAttachment<'change-request', GitHubReviewRequest>
   | LinkAttachment<'pull-request', PullRequestPayload>
-  | AttachmentOfType<'prompt-draft', ToolLaunchDraftPayload>
   | AttachmentOfType<'herdr-workspace', HerdrWorkspacePayload>
   | AttachmentOfType<'worktree', Worktree>
   | AttachmentOfType<'session', AgentSession>;
@@ -152,20 +151,37 @@ export interface CreateManualWorkItemInput {
   notes?: string;
 }
 
-export type LaunchPhase = 'accepted' | 'preparing' | 'starting' | 'started' | 'failed' | 'uncertain';
+export type LaunchState = 'accepted' | 'preparing' | 'starting' | 'started' | 'failed' | 'uncertain';
 
-export interface LaunchOperationSummary {
-  requestId: string;
-  draftMetaId: string;
-  status: 'pending' | 'completed' | 'uncertain';
-  launch: { ok: boolean; error: string | null; phase?: LaunchPhase };
+/** Launches the server is still working on. */
+export function isLaunchInProgress(state: LaunchState): boolean {
+  return state === 'accepted' || state === 'preparing' || state === 'starting';
+}
+
+/**
+ * A launch request: the exact prompt and selections, identified by the
+ * client's request ID. `failed` launches can be retried; `uncertain` ones were
+ * interrupted by a restart and never are.
+ */
+export interface Launch {
+  id: string;
+  workItemId: string;
+  state: LaunchState;
+  error: string | null;
+  harness: string;
+  options?: ToolLaunchOptionsById;
+  repoIds: string[];
+  promptId: string | null;
+  prompt: string;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface WorkItemDetails {
   workItem: WorkItem;
   attachments: WorkItemAttachment[];
-  /** Server-owned launch progress, including drafts available for explicit retry. */
-  launchOperations?: LaunchOperationSummary[];
+  /** Oldest first. */
+  launches: Launch[];
 }
 
 export interface StartWorkSource {
@@ -183,19 +199,6 @@ export interface StartWorkRepositoryInput {
   branchName?: string | null;
   /** Branch a fresh worktree starts from; defaults to the repository's default branch. */
   baseBranch?: string | null;
-}
-
-export interface ToolLaunchDraftPayload {
-  revision: string;
-  requestId?: string;
-  toolIds: string[];
-  toolOptions?: ToolLaunchOptionsById;
-  repoIds: string[] | null;
-  promptId: string | null;
-  prompt: string | null;
-  status: 'pending' | 'launched';
-  createdAt: string;
-  updatedAt: string;
 }
 
 export interface StartWorkLaunchInput {

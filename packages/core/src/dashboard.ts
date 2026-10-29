@@ -1,5 +1,5 @@
 import type { CodingHarnessId, ToolLaunchOptionsById } from './harnesses.js';
-import type { LaunchPhase, WorkItemDetails, WorkItemState } from './types.js';
+import type { Launch, LaunchState, WorkItemDetails, WorkItemState } from './types.js';
 
 const SIDEBAR_SIDES = ['left', 'right'] as const;
 export type SidebarSide = (typeof SIDEBAR_SIDES)[number];
@@ -34,7 +34,7 @@ export interface WorkItemSummary {
   sessionCount: number;
   repositoryCount: number;
   /** Latest active or unsuccessful launch; absent once the latest launch succeeds. */
-  launchPhase?: LaunchPhase;
+  launchState?: LaunchState;
   trackerIssueKeys: string[];
   pullRequestRefs: Array<{ repoFullName: string; number: number }>;
 }
@@ -83,17 +83,9 @@ export interface DashboardResponse {
   freshness: DashboardFreshness;
 }
 
-export interface QuickStartLaunchOutcome {
-  /** Pending phases are not failures; `uncertain` requires inspecting Herdr. */
-  phase?: LaunchPhase;
-  ok: boolean;
-  error: string | null;
-}
-
-export interface QuickStartResponse {
+export interface LaunchResponse {
   details: WorkItemDetails;
-  launch: QuickStartLaunchOutcome;
-  operation?: { requestId: string; status: 'pending' | 'completed' | 'uncertain' };
+  launch: Launch;
 }
 
 export interface LaunchSelection {

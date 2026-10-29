@@ -1,5 +1,6 @@
 import {
   isJiraStatusTerminal,
+  isLaunchInProgress,
   type DashboardSettings,
   type DashboardFreshness,
   type DashboardJiraIssue,
@@ -11,8 +12,7 @@ import {
   type WorkItemSummary,
 } from '@lovelace/core';
 import groupBy from '@nkzw/core/groupBy.js';
-import { latestLaunchPhase } from '../repositories/launch-operation-repository.js';
-import type { DatabaseState, LaunchOperation, WorkActivityRow } from '../database.js';
+import type { DatabaseState, LaunchRecord, WorkActivityRow } from '../database.js';
 import type { CachedGitHub, CachedJira } from '../cached-providers.js';
 import { pendingReviewRequests } from './review-request-service.js';
 
@@ -30,7 +30,7 @@ export function buildDashboard(deps: DashboardDeps): DashboardResponse {
   const now = deps.now ?? new Date();
   const workItems = deps.database.listWorkItems();
   const attachmentsByWorkItemId = groupBy(deps.database.listAttachments(), (attachment) => attachment.workItemId);
-  const launchesByWorkItemId = groupBy(deps.database.listLaunchOperations(), operation => operation.workItemId);
+  const launchesByWorkItemId = groupBy(deps.database.listLaunches(), launch => launch.workItemId);
 
   const activeWorkItems = workItems
     .filter((item) => item.state === 'active')
@@ -111,7 +111,7 @@ function buildRecent(
   database: DatabaseState,
   workItems: WorkItem[],
   attachmentsByWorkItemId: Map<string, WorkItemAttachment[]>,
-  launchesByWorkItemId: Map<string, LaunchOperation[]>,
+  launchesByWorkItemId: Map<string, LaunchRecord[]>,
   now: Date,
 ): DashboardRecent {
   const since = startOfPreviousLocalDay(now).toISOString();
@@ -160,7 +160,7 @@ function isStale(fetchedAt: string | null, now: Date, staleAfter: number): boole
   return now.getTime() - parsed > staleAfter;
 }
 
-function toSummary(workItem: WorkItem, attachments: WorkItemAttachment[], launches: LaunchOperation[]): WorkItemSummary {
+function toSummary(workItem: WorkItem, attachments: WorkItemAttachment[], launches: LaunchRecord[]): WorkItemSummary {
   const trackerIssueKeys: string[] = [];
   const pullRequestRefs: Array<{ repoFullName: string; number: number }> = [];
   let sessionCount = 0;
@@ -176,7 +176,8 @@ function toSummary(workItem: WorkItem, attachments: WorkItemAttachment[], launch
       pullRequestRefs.push({ repoFullName: attachment.payload.repoFullName, number: attachment.payload.number });
     }
   }
-  const launchPhase = latestLaunchPhase(launches);
+  // A launch in progress takes priority; a later launch supersedes an old failure.
+  const launchState = (launches.findLast(launch => isLaunchInProgress(launch.state)) ?? launches.at(-1))?.state;
   return {
     id: workItem.id,
     title: workItem.title,
@@ -188,7 +189,7 @@ function toSummary(workItem: WorkItem, attachments: WorkItemAttachment[], launch
     completedAt: workItem.completedAt,
     sessionCount,
     repositoryCount,
-    ...(launchPhase ? { launchPhase } : {}),
+    ...(launchState && launchState !== 'started' ? { launchState } : {}),
     trackerIssueKeys,
     pullRequestRefs,
   };

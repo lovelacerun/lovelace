@@ -35,10 +35,10 @@ boundary.
 | Table | Holds |
 | --- | --- |
 | `work_items` | Title, notes, state (`active`, `done`, `cancelled`) and timestamps |
-| `work_item_attachments` | Jira issues, pull requests, review requests, prompt drafts and the Herdr workspace, by `type` (below) |
+| `work_item_attachments` | Jira issues, pull requests, review requests and the Herdr workspace, by `type` (below) |
 | `worktrees` | A work item's worktrees and their preparation status |
 | `sessions` | Agents started in Herdr |
-| `work_launch_operations` | One row per launch request ID |
+| `launches` | One row per launch request ID: the exact prompt, selections and state |
 | `work_activity` | Activity events; feeds the "yesterday and today" view |
 | `repos` | Repository catalog from the code host |
 | `cache_snapshots` | Persisted provider lists, loaded before the first sync |
@@ -47,8 +47,7 @@ boundary.
 Attachments are one discriminated union, `WorkItemAttachment` in
 `packages/core/src/types.ts`, keyed by `type`: `tracker-item` (Jira issue),
 `pull-request`, `change-request` (review request a work item was started
-from), `worktree`, `prompt-draft` (the exact prompt and selections of a
-launch), `session` (an agent in Herdr) and `herdr-workspace`.
+from), `worktree`, `session` (an agent in Herdr) and `herdr-workspace`.
 `server/src/attachments.ts` is the only place that maps them to and from
 rows; work item details carry them typed. Unique indexes allow one
 attachment per upstream record and work item, one Herdr workspace per work
@@ -84,22 +83,23 @@ only by an explicit `lovelace cleanup`.
 A launch (`POST /work-items/quick-start` or `/work-items/:id/new-session`)
 carries a client-generated request ID.
 
-1. The server records the work item (quick start), the exact prompt and
-   selections as a `prompt-draft`, and a launch operation, before anything
-   slow or fallible. This is what keeps user input safe.
-2. Selected repositories are prepared (see above).
-3. The server opens a tab in the work item's Herdr workspace (created on
-   first use and tagged `lovelace=<workItemId>`), runs `herdr agent start`
-   with native flags only, then `herdr agent prompt`. Nothing is focused.
+1. The server records the work item (quick start) and a `launches` row with
+   the exact prompt and selections, before anything slow or fallible. This
+   is what keeps user input safe.
+2. Selected repositories are prepared (see above); the launch is `preparing`.
+3. The launch is `starting`: the server opens a tab in the work item's Herdr
+   workspace (created on first use and tagged `lovelace=<workItemId>`), runs
+   `herdr agent start` with native flags only, then `herdr agent prompt`.
+   Nothing is focused.
 4. Once Herdr detects the agent, a `session` attachment is recorded and the
-   draft marked launched.
+   launch is `started`; any error makes it `failed`.
 
-Repeating a request ID joins or replays that operation instead of launching
-again. Operations still pending when the server stops become `uncertain` and
-are never replayed. A failure keeps the work item and the draft for an
-explicit retry on the same work item.
-
-This flow is due to be simplified; see [plan.md](../plan.md).
+Repeating a request ID joins or reads that launch instead of launching again.
+Each row records the boot ID of the server that ran it; on startup, launches
+still in progress under an earlier boot become `uncertain` and are never
+replayed. `POST /launches/:id/retry` runs a `failed` launch again in place
+with its saved prompt and selections. The TUI keeps only the prompt,
+selections and the request ID of a request that got no answer.
 
 ## Sessions
 
@@ -133,8 +133,8 @@ Free-text prompts get that block appended at launch.
 
 | Invariant | Enforced in |
 | --- | --- |
-| Never lose user input | Draft and operation written before side effects (`routes/dashboard.ts`, `services/launch-operation-service.ts`); preparation recovery (`services/work-start-service.ts`) |
-| Never launch twice by accident | Request-ID replay and startup recovery (`services/launch-operation-service.ts`) |
+| Never lose user input | Launch written before side effects (`routes/dashboard.ts`, `services/launch-service.ts`); preparation recovery (`services/work-start-service.ts`) |
+| Never launch twice by accident | Request-ID replay (`services/launch-service.ts`) and boot-ID recovery (`database.ts`) |
 | Open never starts fresh | `openSession` in `services/session-service.ts`, `tools/harness-arguments.ts` |
 | Lovelace is a guest in Herdr | `herdr/herdr-client.ts`, `herdr/work-item-workspace.ts` |
 | Only own clones and worktrees | Coriol (`packages/coriol`) |

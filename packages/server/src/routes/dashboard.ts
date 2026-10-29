@@ -1,13 +1,12 @@
 import {
-  isCodingHarnessId, isToolLaunchOptionsById, type CodingHarnessId, type DashboardResponse,
-  type NewSessionRequest, type QuickStartRequest, type QuickStartResponse, type SessionOpenResponse, type StartWorkLaunchInput,
+  isCodingHarnessId, isLaunchInProgress, isToolLaunchOptionsById, type CodingHarnessId, type DashboardResponse, type Launch,
+  type LaunchResponse, type NewSessionRequest, type QuickStartRequest, type SessionOpenResponse,
 } from '@lovelace/core';
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyReply } from 'fastify';
 import { buildDashboard } from '../services/dashboard-service.js';
-import { markToolLaunchDraftLaunched, saveToolLaunchDraft } from '../services/tool-launch-draft-service.js';
 import { launchSessions, openSession, SessionRequestError } from '../services/session-service.js';
 import { getWorkItemDetails, createActiveWorkItem } from '../repositories/work-item-repository.js';
-import { getLaunchOperationResponse, LaunchRequestError, performLaunchOperation } from '../services/launch-operation-service.js';
+import { getLaunchResponse, LaunchRequestError, retryLaunch, startLaunch } from '../services/launch-service.js';
 import { UUID } from '../helpers.js';
 import { refreshTools as discoverTools } from '../tools/tool-loader.js';
 import type { RouteDeps } from './deps.js';
@@ -25,27 +24,45 @@ export function registerDashboardRoutes(app: FastifyInstance, deps: RouteDeps) {
     }, syncIntervalMs: config.syncIntervalMs,
   }));
 
-  async function launchDraft(requestId: string, workItemId: string, draftMetaId: string, input: StartWorkLaunchInput): Promise<QuickStartResponse['launch']> {
-    if (input.repoIds?.length) {
-      database.updateLaunchOperationPhase(requestId, 'preparing');
-      const details = await attachRepositoriesToExistingWorkItem({ ...deps, logger: app.log }, workItemId,
-        input.repoIds.map((repoId, index) => {
+  async function runLaunch(launch: Launch): Promise<void> {
+    if (launch.repoIds.length) {
+      database.setLaunchState(launch.id, 'preparing');
+      const details = await attachRepositoriesToExistingWorkItem({ ...deps, logger: app.log }, launch.workItemId,
+        launch.repoIds.map((repoId, index) => {
           // A repository with an attached pull request is checked out at its branch.
-          const review = reviewSourceFor(workItemId, repoId);
+          const review = reviewSourceFor(launch.workItemId, repoId);
           return { repoId, role: index === 0 ? 'primary' : 'secondary', workspaceMode: review ? 'change-request' : 'fresh', sourceExternalId: review?.externalId ?? null };
         }));
       const failed = (details?.attachments ?? [])
-        .filter(attachment => attachment.type === 'worktree' && input.repoIds!.includes(attachment.payload.repoId) && attachment.payload.status !== 'ready');
-      if (failed.length) throw new Error('Repository preparation failed. Retry on this work item to prepare the selected repositories again.');
+        .filter(attachment => attachment.type === 'worktree' && launch.repoIds.includes(attachment.payload.repoId) && attachment.payload.status !== 'ready');
+      if (failed.length) throw new Error('Repository preparation failed. Retry to prepare the selected repositories again.');
     }
-    database.updateLaunchOperationPhase(requestId, 'starting');
+    database.setLaunchState(launch.id, 'starting');
     refreshTools(tools);
-    // Captured before launching: a prompt replaced meanwhile stays pending.
-    const draft = database.getAttachment('prompt-draft', draftMetaId);
-    const sessions = await launchSessions(sessionDeps, workItemId, input);
-    if (!sessions.length) return { ok: false, phase: 'failed', error: 'launch produced no sessions' };
-    if (draft) markToolLaunchDraftLaunched(database, draft);
-    return { ok: true, phase: 'started', error: null };
+    const sessions = await launchSessions(sessionDeps, launch.workItemId, {
+      toolIds: [launch.harness], toolOptions: launch.options, repoIds: launch.repoIds, promptId: launch.promptId, prompt: launch.prompt,
+    });
+    if (!sessions.length) throw new Error('launch produced no sessions');
+  }
+
+  const onError = (error: unknown) => app.log.error({ err: error }, 'Background launch failed');
+
+  function launchFields(intent: QuickStartRequest | NewSessionRequest) {
+    return {
+      harness: intent.agentId ?? config.defaultAgent, options: intent.options, repoIds: intent.repoIds ?? [],
+      promptId: intent.promptId ?? null, prompt: intent.prompt,
+    };
+  }
+
+  async function sendLaunch(reply: FastifyReply, launch: () => Promise<LaunchResponse> | LaunchResponse) {
+    try {
+      const response = await launch();
+      if (isLaunchInProgress(response.launch.state)) reply.code(202);
+      return response;
+    } catch (error) {
+      if (error instanceof LaunchRequestError) return reply.code(error.status).send({ ok: false, error: error.message });
+      throw error;
+    }
   }
 
   function reviewSourceFor(workItemId: string, repoId: string) {
@@ -68,38 +85,27 @@ export function registerDashboardRoutes(app: FastifyInstance, deps: RouteDeps) {
     const body = parseQuickStartRequest(request.body);
     if (!body.ok) return reply.code(400).send({ ok: false, error: body.error });
     const { requestId, wait, ...intent } = body.value;
-    const launchInput = { toolIds: [intent.agentId ?? config.defaultAgent], toolOptions: intent.options, prompt: intent.prompt, repoIds: intent.repoIds, promptId: intent.promptId };
-    try {
-      const response = await performLaunchOperation(database, {
-        requestId, wait, kind: 'quick-start', input: intent,
-        onError: error => app.log.error({ err: error, requestId }, 'Background launch operation failed'),
-        prepare(id) {
-          const issue = intent.jiraIssueId ? jira.peekAssignedIssues()?.value.find((entry) => entry.id === intent.jiraIssueId) : null;
-          if (intent.jiraIssueId && !issue) throw new LaunchRequestError(400, 'jiraIssueId not found in cached Jira issues');
-          const review = intent.reviewRequestId ? github.peekReviewRequests()?.value.find((entry) => entry.id === intent.reviewRequestId) : null;
-          if (intent.reviewRequestId && !review) throw new LaunchRequestError(400, 'reviewRequestId not found in cached review requests');
-          validateSelection(intent);
-          if (review && !database.listRepos().some(repo => intent.repoIds?.includes(repo.id) && repo.fullName.toLowerCase() === review.repoFullName.toLowerCase())) {
-            throw new LaunchRequestError(400, `Select ${review.repoFullName} to review its pull request`);
-          }
-          const work = createActiveWorkItem(database, {
-            title: issue ? `${issue.key}: ${issue.title}` : review ? `${review.repoFullName}#${review.number}: ${review.title}` : deriveTitleFromPrompt(intent.prompt),
-            attachments: [
-              ...issue ? [{ type: 'tracker-item' as const, provider: 'jira', externalId: issue.id, payload: issue }] : [],
-              ...review ? [{ type: 'change-request' as const, provider: 'github', externalId: review.id, payload: review }] : [],
-            ],
-          });
-          const draft = saveToolLaunchDraft(database, work.id, launchInput, id);
-          return { workItemId: work.id, draftMetaId: draft.id };
-        },
-        launch: (operation) => launchDraft(operation.requestId, operation.workItemId, operation.draftMetaId, launchInput),
-      });
-      if (response.operation?.status === 'pending') reply.code(202);
-      return response;
-    } catch (error) {
-      if (error instanceof LaunchRequestError) return reply.code(error.status).send({ ok: false, error: error.message });
-      throw error;
-    }
+    return sendLaunch(reply, () => startLaunch(database, {
+      id: requestId, wait, kind: 'quick-start', request: intent, run: runLaunch, onError,
+      prepare() {
+        const issue = intent.jiraIssueId ? jira.peekAssignedIssues()?.value.find((entry) => entry.id === intent.jiraIssueId) : null;
+        if (intent.jiraIssueId && !issue) throw new LaunchRequestError(400, 'jiraIssueId not found in cached Jira issues');
+        const review = intent.reviewRequestId ? github.peekReviewRequests()?.value.find((entry) => entry.id === intent.reviewRequestId) : null;
+        if (intent.reviewRequestId && !review) throw new LaunchRequestError(400, 'reviewRequestId not found in cached review requests');
+        validateSelection(intent);
+        if (review && !database.listRepos().some(repo => intent.repoIds?.includes(repo.id) && repo.fullName.toLowerCase() === review.repoFullName.toLowerCase())) {
+          throw new LaunchRequestError(400, `Select ${review.repoFullName} to review its pull request`);
+        }
+        const work = createActiveWorkItem(database, {
+          title: issue ? `${issue.key}: ${issue.title}` : review ? `${review.repoFullName}#${review.number}: ${review.title}` : deriveTitleFromPrompt(intent.prompt),
+          attachments: [
+            ...issue ? [{ type: 'tracker-item' as const, provider: 'jira', externalId: issue.id, payload: issue }] : [],
+            ...review ? [{ type: 'change-request' as const, provider: 'github', externalId: review.id, payload: review }] : [],
+          ],
+        });
+        return { workItemId: work.id, ...launchFields(intent) };
+      },
+    }));
   });
 
   app.post('/work-items/:id/new-session', async (request, reply) => {
@@ -107,35 +113,31 @@ export function registerDashboardRoutes(app: FastifyInstance, deps: RouteDeps) {
     const body = parseNewSessionRequest(request.body);
     if (!body.ok) return reply.code(400).send({ ok: false, error: body.error });
     const { requestId, wait, ...intent } = body.value;
-    const launchInput = { toolIds: [intent.agentId ?? config.defaultAgent], toolOptions: intent.options, prompt: intent.prompt, repoIds: intent.repoIds, promptId: intent.promptId };
-    try {
-      const response = await performLaunchOperation(database, {
-        requestId, wait, kind: 'new-session', input: { workItemId: params.id, ...intent },
-        onError: error => app.log.error({ err: error, requestId }, 'Background launch operation failed'),
-        prepare(id) {
-          const details = getWorkItemDetails(database, params.id);
-          if (!details) throw new LaunchRequestError(404, 'work item not found');
-          if (details.workItem.state !== 'active') throw new LaunchRequestError(409, 'work item not active');
-          validateSelection(intent);
-          const draft = saveToolLaunchDraft(database, params.id, launchInput, id);
-          return { workItemId: params.id, draftMetaId: draft.id };
-        },
-        launch: (operation) => launchDraft(operation.requestId, operation.workItemId, operation.draftMetaId, launchInput),
-      });
-      if (response.operation?.status === 'pending') reply.code(202);
-      return response;
-    } catch (error) {
-      if (error instanceof LaunchRequestError) return reply.code(error.status).send({ ok: false, error: error.message });
-      throw error;
-    }
+    return sendLaunch(reply, () => startLaunch(database, {
+      id: requestId, wait, kind: 'new-session', request: { workItemId: params.id, ...intent }, run: runLaunch, onError,
+      prepare() {
+        const details = getWorkItemDetails(database, params.id);
+        if (!details) throw new LaunchRequestError(404, 'work item not found');
+        if (details.workItem.state !== 'active') throw new LaunchRequestError(409, 'work item not active');
+        validateSelection(intent);
+        database.touchWorkItem(params.id);
+        return { workItemId: params.id, ...launchFields(intent) };
+      },
+    }));
   });
 
-  app.get('/launch-operations/:requestId', async (request, reply) => {
-    const { requestId } = request.params as { requestId: string };
-    if (!UUID.test(requestId)) return reply.code(400).send({ ok: false, error: 'requestId must be a UUID' });
-    const response = getLaunchOperationResponse(database, requestId.toLowerCase());
-    if (!response) return reply.code(404).send({ ok: false, error: 'launch operation not found' });
+  app.get('/launches/:id', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    if (!UUID.test(id)) return reply.code(400).send({ ok: false, error: 'launch ID must be a UUID' });
+    const response = getLaunchResponse(database, id.toLowerCase());
+    if (!response) return reply.code(404).send({ ok: false, error: 'launch not found' });
     return response;
+  });
+
+  app.post('/launches/:id/retry', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    if (!UUID.test(id)) return reply.code(400).send({ ok: false, error: 'launch ID must be a UUID' });
+    return sendLaunch(reply, () => retryLaunch(database, id.toLowerCase(), { run: runLaunch, onError }));
   });
 
   app.post('/work-items/:id/sessions/:sessionId/open', async (request, reply): Promise<SessionOpenResponse | void> => {

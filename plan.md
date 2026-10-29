@@ -12,10 +12,9 @@ In order:
 3. ~~Typed attachments: a discriminated union instead of `metaType` +
    `payloadJson`, parsed once at the database boundary and sent typed over
    HTTP; real tables for sessions and worktrees; unique indexes.~~ Done.
-4. Lighter launches, in the same migration as 3: one `launches` table with a
-   single state column and a boot ID, server-side retry, the TUI keeping only
-   the prompt, selections and in-flight request ID. Keep the invariants in
-   [agents.md](agents.md).
+4. ~~Lighter launches: one `launches` table with a single state column and a
+   boot ID, server-side retry, the TUI keeping only the prompt, selections
+   and in-flight request ID.~~ Done.
 5. Typed API: every route has a typed client method; no untyped requests
    from the CLI.
 6. Provider-neutral domain types (`Repository`, `TrackerIssue`,

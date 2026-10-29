@@ -21,7 +21,7 @@ export function renderReview(state: AppState, width: number): Document {
   b.line(url ? hyperlink(faint + safeText(review.url) + reset, url) : faint + safeText(review.url) + reset);
   b.line();
   gap();
-  if (state.draft.pendingLaunch) b.action(accent + icons.retry + reset + '  Retry exact saved launch', { kind: 'launch-retry' });
+  if (state.draft.requestId) b.action(accent + icons.retry + reset + '  Resend unanswered launch', { kind: 'launch-retry' });
   else if (review.repoId) b.action(accent + icons.start + reset + '  Start review', { kind: 'review-start' }, faint + 'Enter' + reset);
   else b.line(muted + '  ' + safeText(review.repoFullName) + ' is not in the repository catalog.' + reset);
   if (url) b.action(accent + icons.link + reset + '  Open in browser', { kind: 'open-url', url });

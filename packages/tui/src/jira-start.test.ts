@@ -41,8 +41,10 @@ test('repository name/topic filters combine and never exclude topic-free or arch
   assert.deepEqual(ids('topic:missing'), []);
 });
 
-test('launch retries freeze repositories/template and authoritative failure retries preparation on the same work', async () => {
+test('a lost reply resends the Jira request with its repositories and template; any answer hands it to the server', async () => {
   const state = stateForIssue();
+  const key = state.draftKey;
+  const jiraIssueId = state.selectedJira!.id;
   state.setDraft({ text: '  Edited\n', repoIds: ['1', '2'], promptId: 'refine' });
   const calls: unknown[] = [];
   let attempt = 0;
@@ -50,20 +52,16 @@ test('launch retries freeze repositories/template and authoritative failure retr
     quickStart: async (prompt, jiraIssueId, _agent, _overrides, requestId, options) => {
       calls.push({ prompt, jiraIssueId, requestId, repoIds: options?.repoIds, promptId: options?.promptId });
       if (++attempt === 1) throw new ApiError(0, 'lost reply');
-      return { details: { workItem: { id: 'work' }, attachments: [] }, launch: { ok: false, error: 'install failed' } } as never;
-    },
-    newSession: async (workItemId, prompt, _agent, _overrides, requestId, options) => {
-      calls.push({ workItemId, prompt, requestId, repoIds: options?.repoIds, promptId: options?.promptId });
-      return { details: { workItem: { id: 'work' }, attachments: [] }, launch: { ok: false, error: 'still failed' } } as never;
+      return { details: { workItem: { id: 'work' }, attachments: [], launches: [] }, launch: { state: 'failed', error: 'install failed' } } as never;
     },
   });
   const deps = { client: api, refreshDashboard() {}, newRequestId: () => String(attempt) };
   await submitLaunch(state, deps, state.draft.text);
-  state.setDraft({ text: 'Different', repoIds: ['3'], promptId: 'implement' });
+  assert.equal(state.draft.requestId, '0');
   await submitLaunch(state, deps, state.draft.text);
   assert.deepEqual(calls[1], calls[0]);
-  assert.equal(state.draft.retryWorkId, 'work');
-  assert.equal(state.draft.pendingLaunch, undefined);
-  await submitLaunch(state, deps, state.draft.text);
-  assert.deepEqual(calls[2], { workItemId: 'work', prompt: 'Different', requestId: '2', repoIds: ['3'], promptId: 'implement' });
+  assert.deepEqual(calls[0], { prompt: '  Edited\n', jiraIssueId, requestId: '0', repoIds: ['1', '2'], promptId: 'refine' });
+  assert.equal(state.view, 'work-item');
+  assert.equal(state.selectedWorkItemId, 'work');
+  assert.deepEqual(state.drafts.get(key), { text: '', repoIds: undefined, promptId: undefined, requestId: undefined });
 });

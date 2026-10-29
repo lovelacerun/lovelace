@@ -34,26 +34,27 @@ workspaces, tabs or panes.
   the pane it left or a new tab. Never the latest conversation or the initial
   prompt; sessions without a recorded identity are refused.
 
-Launch request IDs make lost replies safe to resend: a matching request joins
-or replays its operation, and an operation interrupted by a restart is reported
-uncertain instead of launching again. Exact drafts stay pending after failures.
+Each launch is one row in `launches`, keyed by the client's request ID, with
+the exact prompt, selections and a single state (`accepted`, `preparing`,
+`starting`, `started`, `failed`, `uncertain`). Resending a request ID joins or
+reads that launch instead of launching again; a different request under the
+same ID is rejected. Launches left in progress by an earlier server boot become
+`uncertain` on startup and are never replayed.
 Quick-start accepts `reviewRequestId` from the cached review requests: the
 work item gets the pull request as its `change-request`, and the pull request's
 repository, which must be among `repoIds`, is checked out at its branch.
 Explicit `repoIds` are prepared with Coriol before launching; preparation
 failures preserve the work, exact prompt and template/repository selection.
-Retry on the same work item reuses ready worktrees and retries failed ones.
+`POST /launches/:id/retry` runs a `failed` launch again in place: ready
+worktrees are reused and failed ones prepared again.
 The GitHub catalog includes authenticated repositories across organizations.
 
 Quick-start/new-session optionally accept `wait:false`: return 202 durable
 acceptance, then finish repository preparation and Herdr startup in the
-background. Default synchronous replies remain unchanged. Existing SQLite
-launch rows record `preparing`/`starting` progress in their outcome JSON;
-work details expose operation summaries and the dashboard a launch phase.
-`GET /launch-operations/:requestId` inspects the exact saved operation
-without launching it. Independent work items run concurrently; pane allocation
-alone is serialized per item to keep one Herdr workspace with distinct tabs.
-Server startup marks orphaned launches uncertain, never replays them.
+background. Work details include their launches and the dashboard the latest
+launch state. `GET /launches/:id` reads a launch without launching it.
+Independent work items run concurrently; pane allocation alone is serialized
+per item to keep one Herdr workspace with distinct tabs.
 
 Worktrees are persisted as `pending` before preparation starts. Coriol
 events expose `preparing` and the latest phase; each ready/failed result is

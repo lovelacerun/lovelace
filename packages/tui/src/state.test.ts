@@ -61,13 +61,13 @@ describe('AppState drafts', () => {
     assert.equal(state.draft.text, 'home draft');
   });
 
-  it('tracks retryWorkId separately per draft', () => {
+  it('tracks the unanswered request ID separately per draft', () => {
     const state = new AppState({ onInvalidate() {} });
     state.applyDashboardResponse(dashboard());
-    state.setDraft({ text: 'try', retryWorkId: 'wi-1' });
-    assert.equal(state.draft.retryWorkId, 'wi-1');
+    state.setDraft({ text: 'try', requestId: 'request-1' });
+    assert.equal(state.draft.requestId, 'request-1');
     state.navigateToWorkItem('wi-1');
-    assert.equal(state.draft.retryWorkId, undefined);
+    assert.equal(state.draft.requestId, undefined);
   });
 });
 

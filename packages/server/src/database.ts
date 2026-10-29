@@ -8,6 +8,8 @@ import type {
   AttachmentType,
   InboxMeta,
   InboxSourceType,
+  Launch,
+  LaunchState,
   LinkAttachmentType,
   LovelaceConfig,
   RepoRecord,
@@ -49,16 +51,15 @@ interface RecordWorkActivityInput {
   dedupeKey?: string;
 }
 
-export interface LaunchOperation {
-  requestId: string;
-  kind: 'quick-start' | 'new-session';
-  inputJson: string;
-  workItemId: string;
-  draftMetaId: string;
-  status: 'pending' | 'completed' | 'uncertain';
-  outcomeJson: string | null;
-  createdAt: string;
-  updatedAt: string;
+export type LaunchKind = 'quick-start' | 'new-session';
+
+/** A launch as stored, with the request it was created by. */
+export interface LaunchRecord extends Launch {
+  kind: LaunchKind;
+  /** Canonical request body; a request ID only ever replays this request. */
+  requestJson: string;
+  /** Server boot that last ran the launch. */
+  bootId: string;
 }
 
 const ATTACHED_ACTIVITY: Partial<Record<AttachmentType, WorkActivityKind>> = {
@@ -108,11 +109,16 @@ export interface DatabaseState {
   deleteInboxMeta(sourceType: InboxSourceType, provider: string | null, externalId: string): void;
   /** Durable backend of the provider cache. */
   cacheStorage: CacheStorage;
-  getLaunchOperation(requestId: string): LaunchOperation | null;
-  listLaunchOperations(workItemId?: string): LaunchOperation[];
-  updateLaunchOperationPhase(requestId: string, phase: 'preparing' | 'starting'): void;
-  createLaunchOperation(input: Pick<LaunchOperation, 'requestId' | 'kind' | 'inputJson' | 'workItemId' | 'draftMetaId'>): LaunchOperation;
-  finishLaunchOperation(requestId: string, status: LaunchOperation['status'], outcome: unknown): void;
+  /** Identifies this server process; launches of earlier boots are no longer running. */
+  bootId: string;
+  getLaunch(id: string): LaunchRecord | null;
+  /** Oldest first. */
+  listLaunches(workItemId?: string): LaunchRecord[];
+  createLaunch(launch: Omit<LaunchRecord, 'state' | 'error' | 'bootId' | 'createdAt' | 'updatedAt'>): LaunchRecord;
+  /** Moves a launch to `state`, claiming it for this boot. */
+  setLaunchState(id: string, state: LaunchState, error?: string | null): void;
+  /** Marks launches left in progress by an earlier boot uncertain. */
+  recoverInterruptedLaunches(): void;
   recordWorkActivityOnce(key: string, input: RecordWorkActivityInput): WorkActivityRow | null;
   recordWorkActivity(input: RecordWorkActivityInput): WorkActivityRow;
   listWorkActivity(input?: { workItemId?: string; sinceIso?: string; untilIso?: string }): WorkActivityRow[];
@@ -147,6 +153,8 @@ export function openDatabase(config: LovelaceConfig): DatabaseState {
     db.close();
     throw error;
   }
+
+  const bootId = randomUUID();
 
   const insertRepo = prepare(`
     insert into repos (id, provider, external_id, name, full_name, clone_url, default_branch, is_archived, topics_json, last_synced_at)
@@ -365,26 +373,29 @@ export function openDatabase(config: LovelaceConfig): DatabaseState {
       save: (snapshot) => { upsertCacheSnapshot.run(snapshot); },
       delete: (key) => { prepare('delete from cache_snapshots where key = ?').run(key); },
     },
-    getLaunchOperation(requestId) {
-      return prepare('select request_id as requestId, operation_kind as kind, input_json as inputJson, work_item_id as workItemId, draft_meta_id as draftMetaId, status, outcome_json as outcomeJson, created_at as createdAt, updated_at as updatedAt from work_launch_operations where request_id = ?').get(requestId) as LaunchOperation | undefined ?? null;
+    bootId,
+    getLaunch(id) {
+      const row = prepare(`select ${LAUNCH_COLUMNS} from launches where id = ?`).get(id);
+      return row ? fromLaunchRow(row as Record<string, unknown>) : null;
     },
-    listLaunchOperations(workItemId) {
-      const where = workItemId ? ' where work_item_id = ?' : '';
-      const query = prepare(`select request_id as requestId, operation_kind as kind, input_json as inputJson, work_item_id as workItemId, draft_meta_id as draftMetaId, status, outcome_json as outcomeJson, created_at as createdAt, updated_at as updatedAt from work_launch_operations${where} order by created_at asc, rowid asc`);
-      return (workItemId ? query.all(workItemId) : query.all()) as LaunchOperation[];
+    listLaunches(workItemId) {
+      const query = prepare(`select ${LAUNCH_COLUMNS} from launches${workItemId ? ' where work_item_id = ?' : ''} order by created_at asc, rowid asc`);
+      return (workItemId ? query.all(workItemId) : query.all()).map(row => fromLaunchRow(row as Record<string, unknown>));
     },
-    updateLaunchOperationPhase(requestId, phase) {
-      prepare("update work_launch_operations set outcome_json = ?, updated_at = ? where request_id = ? and status = 'pending'")
-        .run(JSON.stringify({ ok: false, error: null, phase }), new Date().toISOString(), requestId);
-    },
-    createLaunchOperation(input) {
+    createLaunch(input) {
       const now = new Date().toISOString();
-      const operation: LaunchOperation = { ...input, status: 'pending', outcomeJson: null, createdAt: now, updatedAt: now };
-      prepare('insert into work_launch_operations values (@requestId,@kind,@inputJson,@workItemId,@draftMetaId,@status,@outcomeJson,@createdAt,@updatedAt)').run(operation);
-      return operation;
+      const launch: LaunchRecord = { ...input, state: 'accepted', error: null, bootId, createdAt: now, updatedAt: now };
+      prepare(`insert into launches (id, work_item_id, kind, request_json, harness, options_json, repo_ids_json, prompt_id, prompt, state, error, boot_id, created_at, updated_at)
+        values (@id, @workItemId, @kind, @requestJson, @harness, @optionsJson, @repoIdsJson, @promptId, @prompt, @state, @error, @bootId, @createdAt, @updatedAt)`)
+        .run({ ...launch, optionsJson: launch.options ? JSON.stringify(launch.options) : null, repoIdsJson: JSON.stringify(launch.repoIds) });
+      return launch;
     },
-    finishLaunchOperation(requestId, status, outcome) {
-      prepare('update work_launch_operations set status = ?, outcome_json = ?, updated_at = ? where request_id = ?').run(status, JSON.stringify(outcome), new Date().toISOString(), requestId);
+    setLaunchState(id, state, error = null) {
+      prepare('update launches set state = ?, error = ?, boot_id = ?, updated_at = ? where id = ?').run(state, error, bootId, new Date().toISOString(), id);
+    },
+    recoverInterruptedLaunches() {
+      prepare(`update launches set state = 'uncertain', error = ?, updated_at = ? where state in ('accepted', 'preparing', 'starting') and boot_id != ?`)
+        .run('launch outcome uncertain after interruption; check Herdr before an explicit new launch', new Date().toISOString(), bootId);
     },
     recordWorkActivityOnce(key, input) {
       return transaction(() => {
@@ -404,6 +415,23 @@ export function openDatabase(config: LovelaceConfig): DatabaseState {
         `select id, work_item_id as workItemId, kind, payload_json as payloadJson, occurred_at as occurredAt from work_activity${where} order by occurred_at asc`,
       ).all(params) as WorkActivityRow[];
     },
+  };
+}
+
+/** The launch as clients see it. */
+export function toLaunch({ kind: _kind, requestJson: _request, bootId: _boot, ...launch }: LaunchRecord): Launch {
+  return launch;
+}
+
+const LAUNCH_COLUMNS = `id, work_item_id as workItemId, kind, request_json as requestJson, harness, options_json as optionsJson,
+  repo_ids_json as repoIdsJson, prompt_id as promptId, prompt, state, error, boot_id as bootId, created_at as createdAt, updated_at as updatedAt`;
+
+function fromLaunchRow(row: Record<string, unknown>): LaunchRecord {
+  const { optionsJson, repoIdsJson, ...launch } = row;
+  return {
+    ...launch as Omit<LaunchRecord, 'options' | 'repoIds'>,
+    ...optionsJson ? { options: JSON.parse(optionsJson as string) as LaunchRecord['options'] } : {},
+    repoIds: JSON.parse(repoIdsJson as string) as string[],
   };
 }
 
