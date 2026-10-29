@@ -130,12 +130,13 @@ prompt.
 
 ## Prompts
 
-Built-in templates (`implement`, `review`, `refine`) live in
+Built-in templates (`default`, `implement`, `review`, `refine`) live in
 `server/src/services/prompt-service.ts`; files in `<lovelaceDir>/prompts/`
-override or add to them. Templates render `{{title}}`, `{{tracker}}`,
-`{{changeRequests}}`, `{{workspaces}}` and `{{lovelace}}`, the block that
-tells the agent how to call back (overridable as `agent-context.md`).
-Free-text prompts get that block appended at launch.
+override or add to them. `default` is empty, so a prompt starts blank unless
+`default.md` overrides it. Templates render `{{title}}`, `{{tracker}}`,
+`{{changeRequests}}` and `{{workspaces}}`. Every launch prompt gets the block
+that tells the agent how to call back (overridable as `agent-context.md`)
+appended.
 
 ## Where the invariants live
 

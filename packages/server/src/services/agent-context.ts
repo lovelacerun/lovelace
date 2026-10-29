@@ -12,9 +12,8 @@ interface ContextConfig {
 }
 
 /**
- * Tells the agent how to call back into Lovelace. Built-in templates show it
- * as `{{lovelace}}` so the user sees and may remove it; free-text prompts get
- * it appended at launch.
+ * Tells the agent how to call back into Lovelace. Appended to every launch
+ * prompt, never part of the editable one.
  *
  * Users can override this template at `<lovelaceDir>/prompts/agent-context.md`.
  * Available variables: {{cli}}.
@@ -30,7 +29,7 @@ export function renderAgentContext(config: ContextConfig, logger: ContextLogger)
   return loadTemplate(config.lovelaceDir, logger).replaceAll('{{cli}}', cli.command).trim();
 }
 
-/** Appends the context block to a free-text launch prompt, keeping the prompt exact. */
+/** Appends the context block to a launch prompt, keeping the prompt exact. */
 export function appendAgentContext(prompt: string, config: ContextConfig, logger: ContextLogger): string {
   const context = renderAgentContext(config, logger);
   return context ? `${prompt}\n\n${context}` : prompt;

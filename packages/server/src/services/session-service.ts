@@ -67,8 +67,7 @@ export async function launchSessions(deps: SessionServiceDeps, workItemId: strin
     let paneId: string | undefined;
     try {
       emitActivity({ type: 'tool.launching', workItemId, message: `Launching ${title}` });
-      // Templates show the context in the editable prompt; free text gets it appended.
-      const prompt = !input.prompt ? null : input.promptId ? input.prompt : appendAgentContext(input.prompt, deps.config, logger);
+      const prompt = input.prompt ? appendAgentContext(input.prompt, deps.config, logger) : null;
       const options = input.toolOptions?.[toolId];
       const agentName = newAgentName();
       // Claude accepts a chosen conversation ID; the others report theirs through Herdr.

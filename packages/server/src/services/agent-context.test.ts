@@ -8,7 +8,7 @@ import { renderPrompt } from './prompt-service.js';
 
 const logger = { warn() {} };
 
-test('free-text prompts keep their exact text and gain the editable context block', async (t) => {
+test('launch prompts keep their exact text and gain the context block', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'lovelace-agent-context-'));
   await mkdir(join(root, 'prompts'));
   await writeFile(join(root, 'prompts', 'agent-context.md'), '\nRun {{cli}} work show\n');
@@ -19,12 +19,14 @@ test('free-text prompts keep their exact text and gain the editable context bloc
   assert.equal(appendAgentContext(prompt, { lovelaceDir: root }, logger), prompt);
 });
 
-test('built-in templates show the context block where the user can edit it', async (t) => {
+test('templates render without the context block; the default starts empty', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'lovelace-agent-context-'));
   t.after(() => rm(root, { recursive: true, force: true }));
-  const input = { promptId: 'implement', title: 'Fixture' };
-  const rendered = renderPrompt({ lovelaceDir: root, agentCli: { command: '/opt/lovelace' } }, input, logger)!.content;
+  const rendered = renderPrompt(root, { promptId: 'implement', title: 'Fixture' })!.content;
   assert.match(rendered, /^Implement: Fixture/);
-  assert.match(rendered, /## Lovelace\n\n.*`\/opt\/lovelace agent-guide`.*`\/opt\/lovelace work show`/);
-  assert.doesNotMatch(renderPrompt({ lovelaceDir: root }, input, logger)!.content, /Lovelace|{{/);
+  assert.doesNotMatch(rendered, /Lovelace|{{/);
+  assert.equal(renderPrompt(root, { promptId: 'default', title: 'Fixture' })!.content, '');
+  await mkdir(join(root, 'prompts'));
+  await writeFile(join(root, 'prompts', 'default.md'), 'Mine: {{title}}');
+  assert.equal(renderPrompt(root, { promptId: 'default', title: 'Fixture' })!.content, 'Mine: Fixture');
 });

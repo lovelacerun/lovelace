@@ -12,5 +12,5 @@ export const promptsRouter = router({
       promptId: nonEmpty, title: nonEmpty,
       sources: z.array(startWorkSource).optional(), workspacePaths: z.array(nonEmpty).optional(),
     }))
-    .mutation(({ ctx, input }) => renderPrompt(ctx.config, input, ctx.logger) ?? notFound('prompt not found')),
+    .mutation(({ ctx, input }) => renderPrompt(ctx.config.lovelaceDir, input) ?? notFound('prompt not found')),
 });

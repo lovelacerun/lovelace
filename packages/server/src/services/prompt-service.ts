@@ -1,19 +1,11 @@
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
-import type { AgentCli, PromptTemplate, RenderPromptInput, RenderedPrompt, StartWorkSource } from '@lovelace/core';
+import type { PromptTemplate, RenderPromptInput, RenderedPrompt, StartWorkSource } from '@lovelace/core';
 import { asRecord, isNonEmptyString } from '../helpers.js';
-import { renderAgentContext } from './agent-context.js';
-
-interface PromptConfig {
-  lovelaceDir: string;
-  agentCli?: AgentCli;
-}
-
-interface PromptLogger {
-  warn(...args: unknown[]): void;
-}
 
 const BUILT_IN_PROMPTS: Array<Pick<PromptTemplate, 'id' | 'title' | 'content'>> = [
+  // Empty, so a prompt starts blank unless `prompts/default.md` overrides it.
+  { id: 'default', title: 'Default', content: '' },
   {
     id: 'implement',
     title: 'Implement',
@@ -21,9 +13,7 @@ const BUILT_IN_PROMPTS: Array<Pick<PromptTemplate, 'id' | 'title' | 'content'>> 
 {{tracker}}
 {{workspaces}}
 
-Summarize the task and identify the relevant code first. If the task is ambiguous or touches more than a few areas, propose a plan and wait for my confirmation; otherwise implement it, run the relevant checks and summarize what changed.
-
-{{lovelace}}`,
+Summarize the task and identify the relevant code first. If the task is ambiguous or touches more than a few areas, propose a plan and wait for my confirmation; otherwise implement it, run the relevant checks and summarize what changed.`,
   },
   {
     id: 'review',
@@ -34,9 +24,7 @@ Summarize the task and identify the relevant code first. If the task is ambiguou
 
 Review the selected changes in the prepared local workspaces. Report risks, likely impact, anything suspicious and your recommended outcome to me. Do not push commits, comment on the pull requests or change their state.
 
-Find the tracker issues these changes belong to, for example issue keys in the pull request title, branch or description, and attach any that are not attached yet to this Lovelace work item (\`work attach-jira\`). Attaching only changes local Lovelace state.
-
-{{lovelace}}`,
+Find the tracker issues these changes belong to, for example issue keys in the pull request title, branch or description, and attach any that are not attached yet to this Lovelace work item (\`work attach-jira\`). Attaching only changes local Lovelace state.`,
   },
   {
     id: 'refine',
@@ -45,9 +33,7 @@ Find the tracker issues these changes belong to, for example issue keys in the p
 {{tracker}}
 {{workspaces}}
 
-Analyze the problem, extract the key requirements and open questions, and propose a refined plan or technical approach. Do not change code.
-
-{{lovelace}}`,
+Analyze the problem, extract the key requirements and open questions, and propose a refined plan or technical approach. Do not change code.`,
   },
 ];
 
@@ -87,8 +73,9 @@ export function listPromptTemplates(lovelaceDir: string): PromptTemplate[] {
   return templates;
 }
 
-export function renderPrompt(config: PromptConfig, input: RenderPromptInput, logger: PromptLogger): RenderedPrompt | null {
-  const template = listPromptTemplates(config.lovelaceDir).find((entry) => entry.id === input.promptId);
+/** Fills a template's placeholders; the agent context is appended at launch, not here. */
+export function renderPrompt(lovelaceDir: string, input: RenderPromptInput): RenderedPrompt | null {
+  const template = listPromptTemplates(lovelaceDir).find((entry) => entry.id === input.promptId);
   if (!template) return null;
 
   const variables: Record<string, string> = {
@@ -96,9 +83,8 @@ export function renderPrompt(config: PromptConfig, input: RenderPromptInput, log
     tracker: renderTracker(input.sources ?? []),
     changeRequests: renderChangeRequests(input.sources ?? []),
     workspaces: renderWorkspaces(input.workspacePaths ?? []),
-    lovelace: renderAgentContext(config, logger),
   };
-  const content = template.content.replace(/{{\s*(title|tracker|changeRequests|workspaces|lovelace)\s*}}/g, (_, key: string) => variables[key] ?? '');
+  const content = template.content.replace(/{{\s*(title|tracker|changeRequests|workspaces)\s*}}/g, (_, key: string) => variables[key] ?? '');
   return { promptId: template.id, content: content.replace(/\n{3,}/g, '\n\n').trim() };
 }
 
