@@ -1,7 +1,8 @@
 # @lovelace/client
 
 Typed HTTP access to the local Lovelace server. No provider calls and no
-automatic mutation retries. Launch identity semantics: [API contract](../../docs/v4-api.md).
+automatic mutation retries. Launch identity semantics:
+[architecture](../../docs/architecture.md#launching).
 
 Methods accept `{ signal, timeoutMs }`; the default 15-second deadline covers
 fetch **and JSON body consumption**. Caller cancellation preserves its reason;

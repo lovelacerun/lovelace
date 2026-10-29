@@ -20,8 +20,8 @@ type SidebarEntry = NavigationEntry & { label: string };
 /**
  * Snapshot of the last launch attempt whose outcome is unresolved
  * (uncertain / pending). Used to replay the exact same request body + endpoint
- * on an explicit retry, even across navigation. See docs/v4-api.md:
- * reusing a UUID with a different body / endpoint
+ * on an explicit retry, even across navigation. Reusing a UUID with a
+ * different body / endpoint
  * returns 409, so we pin the whole tuple.
  */
 export interface PendingLaunch extends LaunchSelection {
