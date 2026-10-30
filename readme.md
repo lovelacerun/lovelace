@@ -98,6 +98,11 @@ background; `lovelace server start|stop|restart|status` manage it.
 `XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `XDG_STATE_HOME` and `XDG_CACHE_HOME`
 move these, on macOS too.
 
+Worktrees live outside your own checkouts, so they don't inherit a
+parent-directory `.envrc` (e.g. `~/projects/.envrc` with tokens). To share it,
+add `~/.local/share/lovelace/workspaces/.envrc` containing
+`source_env ~/projects/.envrc` and run `direnv allow` on it.
+
 ## Packages
 
 | Package | Purpose |
