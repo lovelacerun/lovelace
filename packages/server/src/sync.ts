@@ -1,7 +1,9 @@
 import type { CachedCodeHost, CachedTracker } from './cached-providers.js';
 import type { DatabaseState } from './database.js';
 import { describeActivityError, emitActivity } from './services/activity-bus.js';
+import type { ReleaseCheckPlugin } from './plugins/release-checks.js';
 import { refreshOpenChangeRequests } from './services/change-request-service.js';
+import { refreshReleaseChecks as refreshAttachedReleaseChecks } from './services/release-check-service.js';
 
 type SyncLogger = Pick<Console, 'info' | 'error' | 'warn'>;
 
@@ -112,6 +114,34 @@ export async function refreshRepoCache(deps: {
       const repos = await codeHost.refreshRepositories();
       database.replaceRepos(repos);
       return { message: `Synced ${repos.length} ${codeHost.name} repositories`, data: { repositoryCount: repos.length }, log: { repoCount: repos.length } };
+    },
+  });
+}
+
+export async function refreshReleaseChecks(deps: {
+  plugin: ReleaseCheckPlugin;
+  database: DatabaseState;
+  logger: SyncLogger;
+}) {
+  const { plugin, database, logger } = deps;
+  await runSync(logger, {
+    type: 'sync.plugins.release-checks',
+    provider: 'Release checks',
+    name: 'release check',
+    logName: 'release check sync',
+    configured: true,
+    startMessage: 'Checking releases of merged change requests',
+    data: { provider: 'Release checks', resource: 'merged change requests on active work items' },
+    async run() {
+      const result = await refreshAttachedReleaseChecks(database, plugin, logger);
+      const partial = result.failed > 0;
+      return {
+        partial,
+        message: partial
+          ? `Checked ${result.attempted} merged change request(s); ${result.failed} failed`
+          : `Checked ${result.attempted} merged change request(s)`,
+        data: result,
+      };
     },
   });
 }

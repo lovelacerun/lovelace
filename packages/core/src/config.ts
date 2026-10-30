@@ -40,6 +40,12 @@ const configFile = z.strictObject({
     email: z.string().optional(),
     apiToken: z.string().optional(),
   }).prefault({}),
+  plugins: z.strictObject({
+    releaseChecks: z.strictObject({
+      command: z.array(z.string().min(1).transform(expandHome)).min(1),
+      timeoutMs: z.int().positive().default(30_000),
+    }).optional(),
+  }).prefault({}),
 });
 
 /** Everything the server needs; only the server and the CLI that manages it load this. */

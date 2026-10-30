@@ -7,6 +7,7 @@ import {
   parseChangeRequestRef,
   refreshChangeRequestsForWorkItem,
 } from '../services/change-request-service.js';
+import { refreshReleaseChecks } from '../services/release-check-service.js';
 import { attachTrackerIssueToWorkItem, detachTrackerIssueFromWorkItem } from '../services/tracker-item-service.js';
 import { workItemIdForPath } from '../services/task-workspace-service.js';
 import { beginRepositoryPreparation } from '../services/work-start-service.js';
@@ -100,12 +101,15 @@ export const workItemsRouter = router({
       return { ok: true as const };
     }),
 
-  /** Re-reads every attached change request from the code host. */
+  /** Re-reads every attached change request from the code host, then checks releases of merged ones. */
   refreshChangeRequests: procedure
     .input(workItemId)
     .mutation(async ({ ctx, input: { id } }) => {
       try {
-        return await refreshChangeRequestsForWorkItem(ctx.database, ctx.codeHost, id) ?? notFound('work item not found');
+        const updated = await refreshChangeRequestsForWorkItem(ctx.database, ctx.codeHost, id) ?? notFound('work item not found');
+        if (!ctx.releaseChecks) return updated;
+        await refreshReleaseChecks(ctx.database, ctx.releaseChecks, ctx.logger, id);
+        return updated.map(attachment => ctx.database.getAttachment('pull-request', attachment.id) ?? attachment);
       } catch (error) {
         ctx.logger.error({ err: error, workItemId: id }, 'Failed to refresh change requests for work item');
         throw rejected(error, 'failed to refresh change requests');

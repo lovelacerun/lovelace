@@ -59,6 +59,16 @@ clones, creates worktrees on fresh branches and reuses `node_modules`
 copy-on-write (`@openclaw/fs-safe`) when the lockfile matches. It knows
 nothing about work items, so it can be published separately or replaced.
 
+## Plugins are executables with a JSON contract
+
+Release semantics differ per company (tags, deploy tools, environments), so
+they stay out of core code. A plugin is any executable that answers one JSON
+request on stdout. It runs in its own process with a timeout, can be
+written in any language, wraps existing tools such as a deploy CLI, and
+imports nothing from Lovelace. In-process JavaScript modules were
+considered; they would share the server's process and couple plugins to
+Lovelace's types.
+
 ## Repositories are chosen explicitly
 
 Lovelace never infers repositories from a prompt and never works in

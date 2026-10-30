@@ -4,6 +4,7 @@ import type { ServerConfig } from '@lovelace/core';
 import type { CachedCodeHost, CachedTracker, ModelLister } from '../cached-providers.js';
 import type { DatabaseState } from '../database.js';
 import type { HerdrClient } from '../herdr/herdr-client.js';
+import type { ReleaseCheckPlugin } from '../plugins/release-checks.js';
 import type { LoadedTool } from '../tools/tool-loader.js';
 
 export interface RouteDeps {
@@ -20,4 +21,6 @@ export interface RouteDeps {
   cache: CacheStore;
   codeHost: CachedCodeHost;
   tracker: CachedTracker;
+  /** Absent when no release-checks plugin is configured. */
+  releaseChecks?: ReleaseCheckPlugin;
 }

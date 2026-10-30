@@ -14,7 +14,8 @@ import { createLogger } from './logger.js';
 import { resolveProviderSecrets } from './secrets.js';
 import { startSessionSync } from './services/session-sync.js';
 import { refreshAttachedTrackerIssues } from './services/tracker-item-service.js';
-import { refreshAssignedIssues, refreshRepoCache, refreshReviewRequests } from './sync.js';
+import { createReleaseCheckPlugin } from './plugins/release-checks.js';
+import { refreshAssignedIssues, refreshReleaseChecks, refreshRepoCache, refreshReviewRequests } from './sync.js';
 import { loadTools } from './tools/tool-loader.js';
 
 export { resolveMacOSSystemProxy } from './macos-system-proxy.js';
@@ -48,7 +49,8 @@ export async function startServer(options: StartServerOptions = {}): Promise<voi
   const tools = loadTools(logger);
   const workspaceManager = new WorkspaceManager({ root: config.lovelaceDir, logger });
   const herdr = createHerdrClient(config.herdr);
-  const app = buildServer({ config, tools, listModels: createCachedModels(cache), workspaceManager, herdr, database, cache, codeHost, tracker }, logger);
+  const releaseChecks = config.plugins?.releaseChecks && createReleaseCheckPlugin(config.plugins.releaseChecks, config.lovelaceDir);
+  const app = buildServer({ config, tools, listModels: createCachedModels(cache), workspaceManager, herdr, database, cache, codeHost, tracker, releaseChecks }, logger);
   const shutdown = () => {
     void app.close().then(() => process.exit(0), () => process.exit(1));
   };
@@ -57,7 +59,14 @@ export async function startServer(options: StartServerOptions = {}): Promise<voi
 
   const refreshRepos = () => void refreshRepoCache({ codeHost, database, logger })
     .catch((error) => logger.error({ err: error }, 'Repository catalog sync failed'));
-  const refreshReviews = () => void refreshReviewRequests({ codeHost, database, logger }).catch(() => undefined);
+  const refreshReviews = () => {
+    void refreshReviewRequests({ codeHost, database, logger })
+      .catch(() => undefined)
+      .finally(() => {
+        // Runs after the change request refresh so a merge seen there is checked in the same round.
+        if (releaseChecks) void refreshReleaseChecks({ plugin: releaseChecks, database, logger }).catch(() => undefined);
+      });
+  };
   const refreshIssues = () => {
     void refreshAssignedIssues({ tracker, logger })
       .catch(() => undefined)

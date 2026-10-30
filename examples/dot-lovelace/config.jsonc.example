@@ -35,5 +35,10 @@
     // Or: "apiToken": "op://Private/Lovelace Jira/credential"
   }
 
+  // Optional plugins: executables with a JSON contract (see the server README).
+  // "plugins": {
+  //   "releaseChecks": { "command": ["~/projects/.lovelace/plugins/dpl-release-checks.mjs", "/path/to/dpl"] }
+  // },
+
   // Agent executables (pi/claude/codex) are auto-detected by the server.
 }

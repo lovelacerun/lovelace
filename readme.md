@@ -17,7 +17,8 @@ context so you don't have to.
 - **Tracker issue**: a ticket attached to a work item (currently Jira).
   Assigned open issues show up as pending work.
 - **Pull request**: a change attached to a work item (currently GitHub), with
-  review, build and merge status.
+  review, build and merge status. An optional release-checks plugin reports
+  where merged ones have been released.
 - **Review request**: an open pull request awaiting your review (bots
   excluded). Starting a review checks out its branch in a worktree and starts
   an agent with the `review` template.

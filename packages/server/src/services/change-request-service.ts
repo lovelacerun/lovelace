@@ -95,6 +95,7 @@ function upsertChangeRequest(
     ...changeRequest,
     attachedAt: current?.payload.attachedAt ?? now,
     lastSyncedAt: now,
+    ...current?.payload.releaseChecks && { releaseChecks: current.payload.releaseChecks },
   };
   if (current) {
     const updated = database.updateAttachment('pull-request', current.id, payload);

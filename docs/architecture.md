@@ -65,6 +65,16 @@ on startup, so the TUI has data before the first sync. A scheduled sync
 (about every five minutes) refreshes them; request-time reads use the TTL or
 peek without network. Failures keep the last good value.
 
+## Plugins
+
+Company-specific checks run as plugins: executables configured under
+`plugins` that read one JSON request on stdin and write one JSON reply on
+stdout. The only plugin today is `releaseChecks`
+(`server/src/plugins/release-checks.ts`). After each change request sync it
+is asked about every merged pull request on an active work item until it
+reports the pull request `complete`; the reply is stored as the attachment's
+`releaseChecks`, and a failed run keeps the last reply and records the error.
+
 ## Worktrees
 
 A work item's worktrees live under `<lovelaceDir>/workspaces/<task-dir>/`,

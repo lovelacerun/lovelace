@@ -75,6 +75,27 @@ export interface ChangeRequest {
 export interface TrackedChangeRequest extends ChangeRequest {
   attachedAt: string;
   lastSyncedAt: string;
+  /** Set by the release-checks plugin once the change request is merged. */
+  releaseChecks?: ReleaseChecks;
+}
+
+export type ReleaseCheckState = 'done' | 'pending' | 'unknown';
+
+/** One target a merged change request should reach, e.g. an environment. */
+export interface ReleaseCheck {
+  name: string;
+  state: ReleaseCheckState;
+  detail: string | null;
+  url: string | null;
+}
+
+/** The plugin's last good answer; a failed run keeps it and only sets `error`. */
+export interface ReleaseChecks {
+  /** No further checks are needed. */
+  complete: boolean;
+  checks: ReleaseCheck[];
+  checkedAt: string;
+  error: string | null;
 }
 
 type InboxMetaState = 'dismissed';
@@ -107,6 +128,18 @@ interface JiraConfig {
   apiToken?: string;
 }
 
+/** A plugin is an executable that reads one JSON request on stdin and writes one JSON reply on stdout. */
+export interface PluginCommand {
+  /** Executable and its arguments; not run through a shell, but a leading `~/` is expanded. */
+  command: string[];
+  timeoutMs: number;
+}
+
+interface PluginsConfig {
+  /** Reports how far merged change requests on active work items have been released. */
+  releaseChecks?: PluginCommand;
+}
+
 export type TuiThemeMode = 'dark' | 'light';
 
 /** The server's configuration; `loadServerConfig` fills every default. */
@@ -120,6 +153,7 @@ export interface ServerConfig {
   herdr?: HerdrConfig;
   github?: GitHubConfig;
   jira?: JiraConfig;
+  plugins?: PluginsConfig;
   /** Set by the process that starts the server, never read from the file. */
   agentCli?: AgentCli;
   version?: string;

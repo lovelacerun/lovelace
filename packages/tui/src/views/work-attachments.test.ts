@@ -66,6 +66,25 @@ it('stacks providers on narrow terminals and keeps empty states honest', () => {
   assert.match(unknown, /Build unknown/);
 });
 
+it('shows release targets of merged pull requests with unknown reasons and failures', () => {
+  const merged = meta('pull-request', {
+    ...pr.payload, status: 'merged',
+    releaseChecks: {
+      complete: false, checkedAt: '', error: 'dpl timed out',
+      checks: [
+        { name: 'main', state: 'done', detail: null, url: null },
+        { name: 'stage', state: 'pending', detail: null, url: null },
+        { name: 'prod', state: 'unknown', detail: 'No prod tag.', url: null },
+      ],
+    },
+  });
+  const text = plain(renderAttachments([merged], 100));
+  assert.match(text, /✓ main  ○ stage  \? prod/);
+  assert.match(text, /prod: No prod tag\./);
+  assert.match(text, /Release check failed: dpl timed out/);
+  assert.doesNotMatch(plain(renderAttachments([pr], 100)), /Release/);
+});
+
 it('normalizes provider status casing without treating unknown as a warning', () => {
   const lines = renderAttachments([meta('pull-request', { ...pr.payload, review: 'APPROVED', build: 'SUCCESS' })], 100);
   assert.match(plain(lines), /✓ Approved  ✓ Build passed/);

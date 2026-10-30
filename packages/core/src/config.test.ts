@@ -27,7 +27,7 @@ test('a missing file yields the defaults', async (t) => {
   assert.deepEqual(loadServerConfig(), {
     domainRoot: join(homedir(), 'projects'), lovelaceDir: join(homedir(), 'projects', '.lovelace'),
     port: 27421, logLevel: 'info', syncIntervalMs: 300_000, defaultAgent: 'pi', herdr: {},
-    github: { repositoryTopics: [], apiBaseUrl: undefined }, jira: { siteUrl: undefined },
+    github: { repositoryTopics: [], apiBaseUrl: undefined }, jira: { siteUrl: undefined }, plugins: {},
   });
   assert.deepEqual(loadClientSettings(), {
     port: 27421, tui: { sidebarSide: 'right', icons: 'nerd', theme: 'dark', colors: {} },
@@ -43,6 +43,7 @@ test('one file feeds the server config and the client settings', async (t) => {
     "tui": { "sidebarSide": "left", "theme": "light", "colors": { "light": { "accent": "#123ABC", "background": "none" } } },
     "github": { "host": "github.example.com", "account": "  ", "repositoryTopics": ["infra"] },
     "jira": { "baseUrl": "https://jira.example.com" },
+    "plugins": { "releaseChecks": { "command": ["~/bin/release-checks", "--json"] } },
   }`);
   const server = loadServerConfig();
   assert.equal(server.lovelaceDir, join(homedir(), 'work', '.lovelace'));
@@ -50,6 +51,7 @@ test('one file feeds the server config and the client settings', async (t) => {
   assert.equal(server.defaultAgent, 'claude');
   assert.deepEqual(server.github, { host: 'github.example.com', account: undefined, repositoryTopics: ['infra'], apiBaseUrl: 'https://github.example.com/api/v3' });
   assert.equal(server.jira?.siteUrl, 'https://jira.example.com');
+  assert.deepEqual(server.plugins?.releaseChecks, { command: [join(homedir(), 'bin', 'release-checks'), '--json'], timeoutMs: 30_000 });
   assert.equal('tui' in server, false);
   assert.deepEqual(loadClientSettings(), {
     port: 4747, tui: { sidebarSide: 'left', icons: 'nerd', theme: 'light', colors: { light: { accent: '#123ABC', background: 'none' } } },
@@ -65,6 +67,7 @@ test('invalid values and unknown keys fail with the file and the offending path'
     [{ tui: { colors: { light: { accent: 'red' } } } }, /#rrggbb or none[\s\S]*tui\.colors\.light\.accent/],
     [{ herdr: { executable: 'herdr' } }, /absolute path[\s\S]*herdr\.executable/],
     [{ pullRequestReleases: {} }, /pullRequestReleases/],
+    [{ plugins: { releaseChecks: { command: [] } } }, /plugins\.releaseChecks\.command/],
     [{ github: { topics: [] } }, /topics/],
     ['{ "port": ', /Invalid config/],
   ];

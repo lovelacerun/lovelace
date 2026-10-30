@@ -35,7 +35,7 @@ harness/tool/agent.
   beyond GitHub (GitLab, Bitbucket).
 - Decide whether Coriol is published on its own or replaced by an existing
   tool.
-- Release checks as a plugin.
+- ~~Release checks as a plugin.~~ Done.
 
 ## Not doing
 

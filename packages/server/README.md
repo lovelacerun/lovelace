@@ -88,6 +88,27 @@ procedures use only these accessors.
   `fetch*` (TTL) or `peek*` (no network). Failures keep the last-good value;
   `GET /cache/snapshots` lists the in-memory entries.
 
+## Plugins
+
+`plugins.releaseChecks` in the config names an executable and its arguments
+(not run through a shell; a leading `~/` is expanded) and an optional
+`timeoutMs` (default 30 s). It runs in `<lovelaceDir>` with the server's
+environment, reads `{ "schemaVersion": 1, "repository", "number", "url" }` on
+stdin and prints:
+
+```json
+{ "schemaVersion": 1, "complete": false,
+  "checks": [{ "name": "prod", "state": "pending", "detail": null, "url": null }] }
+```
+
+`state` is `done`, `pending` or `unknown`; `detail` and `url` are optional.
+After every change request sync, and on `workItems.refreshChangeRequests`,
+`src/services/release-check-service.ts` asks the plugin about each merged pull
+request on an active work item, one at a time, until it replies
+`complete: true`. The reply is stored on the attachment as `releaseChecks`.
+A non-zero exit, timeout or invalid reply keeps the last reply and sets its
+`error`.
+
 Tests use temporary SQLite and an in-memory fake Herdr
 (`src/test-support/fake-herdr.ts`). No live agents, models, providers, secrets
 or user panes are used.

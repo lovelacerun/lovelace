@@ -1,4 +1,4 @@
-import { attachmentsOfType, type WorkItemDetails } from '@lovelace/core';
+import { attachmentsOfType, type ReleaseChecks, type WorkItemDetails } from '@lovelace/core';
 import { visibleWidth } from '@earendil-works/pi-tui';
 import { Card, columns, columnWidths, COLUMNS_MIN_WIDTH, LinkCard, safeText, type LinkCardTheme } from '@lovelace/tui-components';
 import { warning, bold, accent, muted, success, heading, icons, jiraCardTheme, prCardTheme, danger, reset, special } from '../theme.js';
@@ -21,6 +21,9 @@ const buildStatus = (): Record<string, Status> => ({
   success: [icons.check, 'Build passed', success], failure: [icons.cross, 'Build failed', danger], error: [icons.cross, 'Build failed', danger],
   pending: [icons.waiting, 'Build pending', warning],
 });
+const releaseStatus = (): Record<string, [glyph: string, color: string]> => ({
+  done: [icons.check, success], pending: [icons.waiting, warning], unknown: [icons.unknown, muted],
+});
 const JIRA_DONE = ['done', 'closed', 'resolved'];
 const JIRA_ACTIVE = ['in progress', 'in review'];
 
@@ -33,6 +36,22 @@ function jiraStatus(value: unknown): string {
   const label = safeText(value) || 'Unknown';
   const status = label.toLowerCase();
   return indicator(JIRA_DONE.includes(status) ? [icons.done, label, success] : JIRA_ACTIVE.includes(status) ? [icons.active, label, accent] : [icons.todo, label, muted]);
+}
+
+/** One line of release targets, then why any is unknown and why the last check failed. */
+function releaseLines(releaseChecks: ReleaseChecks | undefined): string[] {
+  if (!releaseChecks) return [];
+  const table = releaseStatus();
+  const targets = releaseChecks.checks.map(({ name, state }) => {
+    const [glyph, color] = table[state] ?? table.unknown!;
+    return color + glyph + ' ' + safeText(name) + reset;
+  });
+  return [
+    ...targets.length ? [targets.join('  ')] : [],
+    ...releaseChecks.checks.filter(check => check.state === 'unknown' && check.detail)
+      .map(check => muted + safeText(check.name) + ': ' + safeText(check.detail) + reset),
+    ...releaseChecks.error ? [danger + 'Release check failed: ' + safeText(releaseChecks.error) + reset] : [],
+  ];
 }
 
 /** A card is selectable only when its cached URL is safe to open; `row` is its top padding row. */
@@ -76,6 +95,7 @@ export function renderAttachments(attachments: WorkItemDetails['attachments'], w
       bold + '#' + safeText(String(data.number ?? request.externalId)) + reset + '  ' + lookup(prStatus(), status, status || 'Unknown'),
       muted + safeText(data.repository) + reset,
       ...(visibleWidth(checks) <= Card.contentWidth(rightWidth) ? [checks] : [reviewLabel, buildLabel]),
+      ...releaseLines('releaseChecks' in data ? data.releaseChecks : undefined),
     ], rightWidth, prCardTheme, data.url, prStartRow + prs.length, document));
   }
   if (!requests.length) prs.push(muted + '  None attached.' + reset);

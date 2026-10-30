@@ -5,6 +5,8 @@ examples into `<domainRoot>/.lovelace`:
 
 - `config.jsonc.example`: state root, terminal dashboard/provider settings (no secrets).
 - `prompts/`: user-owned launch templates.
+- `plugins/`: plugin examples, e.g. `dpl-release-checks.mjs`, which reports
+  release status from `dpl status --json`.
 
 Users install and run Herdr and its agent integrations; Lovelace never starts
 it. The server opens a Herdr workspace per work item and starts agents there.
