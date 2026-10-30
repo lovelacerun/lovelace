@@ -8,18 +8,18 @@ import { backgroundEnvironment, claimPidFile, ensureServer, serverCommand, serve
 import { version } from './self.js';
 
 async function fixture(t: TestContext, initial: { version: string | null } | null) {
-  const lovelaceDir = await mkdtemp(join(tmpdir(), 'lovelace-background-'));
-  t.after(() => rm(lovelaceDir, { recursive: true, force: true }));
+  const stateDir = await mkdtemp(join(tmpdir(), 'lovelace-background-'));
+  t.after(() => rm(stateDir, { recursive: true, force: true }));
   let running = initial ? { ...initial, pid: 1 } : null;
   const alive = new Set<number>();
   const events: string[] = [];
   const deps: BackgroundDeps = {
-    port: 48999, lovelaceDir,
+    port: 48999, stateDir,
     fetchStatus: async () => running,
     launch: () => {
       events.push('launch');
       alive.add(4242);
-      writeFileSync(join(lovelaceDir, 'server.pid'), '4242');
+      writeFileSync(join(stateDir, 'server.pid'), '4242');
       running = { version, pid: 2 };
     },
     isAlive: pid => alive.has(pid),
@@ -27,7 +27,7 @@ async function fixture(t: TestContext, initial: { version: string | null } | nul
     sleep: async () => undefined,
     log: message => events.push(message),
   };
-  return { deps, events, lovelaceDir, adopt: async (pid: number) => { alive.add(pid); await writeFile(join(lovelaceDir, 'server.pid'), String(pid)); } };
+  return { deps, events, stateDir, adopt: async (pid: number) => { alive.add(pid); await writeFile(join(stateDir, 'server.pid'), String(pid)); } };
 }
 
 test('commands start a missing server in the background and reuse a running one', async t => {
@@ -51,12 +51,12 @@ test('a background server from another version is replaced, a foreground one is 
 });
 
 test('server status, stop and restart act on the background supervisor only', async t => {
-  const { deps, events, lovelaceDir } = await fixture(t, null);
+  const { deps, events, stateDir } = await fixture(t, null);
   assert.deepEqual(await serverCommand('stop', deps), { stopped: false });
   await serverCommand('start', deps);
-  assert.equal(await readFile(join(lovelaceDir, 'server.pid'), 'utf8'), '4242');
+  assert.equal(await readFile(join(stateDir, 'server.pid'), 'utf8'), '4242');
   assert.deepEqual(await serverCommand('status', deps), {
-    running: true, port: 48999, version, pid: 2, background: true, log: join(lovelaceDir, 'logs', 'server-process.log'),
+    running: true, port: 48999, version, pid: 2, background: true, log: join(stateDir, 'logs', 'server-process.log'),
   });
   await serverCommand('restart', deps);
   assert.deepEqual(events.filter(event => !event.startsWith('Starting')), ['launch', 'kill 4242', 'launch']);
@@ -64,12 +64,12 @@ test('server status, stop and restart act on the background supervisor only', as
 });
 
 test('one supervisor holds the pid file; a stale one is replaced', async t => {
-  const lovelaceDir = await mkdtemp(join(tmpdir(), 'lovelace-pid-'));
-  t.after(() => rm(lovelaceDir, { recursive: true, force: true }));
-  await writeFile(join(lovelaceDir, 'server.pid'), '999999');
-  assert.equal(claimPidFile(lovelaceDir, () => true), false);
-  assert.equal(claimPidFile(lovelaceDir, () => false), true);
-  assert.equal(await readFile(join(lovelaceDir, 'server.pid'), 'utf8'), String(process.pid));
+  const stateDir = await mkdtemp(join(tmpdir(), 'lovelace-pid-'));
+  t.after(() => rm(stateDir, { recursive: true, force: true }));
+  await writeFile(join(stateDir, 'server.pid'), '999999');
+  assert.equal(claimPidFile(stateDir, () => true), false);
+  assert.equal(claimPidFile(stateDir, () => false), true);
+  assert.equal(await readFile(join(stateDir, 'server.pid'), 'utf8'), String(process.pid));
 });
 
 test('the background server inherits only tool, locale and Lovelace location settings', () => {

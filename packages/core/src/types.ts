@@ -1,6 +1,7 @@
 import type { HerdrConfig, HerdrPaneRef } from './herdr.js';
 import type { SidebarSide } from './dashboard.js';
 import type { CodingHarnessId, ToolLaunchOptions, ToolLaunchOptionsById } from './harnesses.js';
+import type { LovelaceDirs } from './paths.js';
 
 export const WORK_ITEM_STATES = ['active', 'done', 'cancelled'] as const;
 export type WorkItemState = (typeof WORK_ITEM_STATES)[number];
@@ -143,9 +144,7 @@ interface PluginsConfig {
 export type TuiThemeMode = 'dark' | 'light';
 
 /** The server's configuration; `loadServerConfig` fills every default. */
-export interface ServerConfig {
-  domainRoot: string;
-  lovelaceDir: string;
+export interface ServerConfig extends LovelaceDirs {
   port: number;
   logLevel: 'debug' | 'info' | 'warn' | 'error';
   syncIntervalMs: number;

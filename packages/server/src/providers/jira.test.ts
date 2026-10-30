@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { ServerConfig } from '@lovelace/core';
 import { createJiraTracker } from './jira.js';
+import { testDirs } from '../test-support/dirs.js';
 
 test('assigned issue sync uses fetch with the Jira search endpoint', async () => {
   let requestUrl = '';
@@ -74,8 +75,7 @@ test('assigned issue sync reports non-successful Jira responses', async () => {
 
 function config(): ServerConfig {
   return {
-    domainRoot: '/tmp/lovelace-test',
-    lovelaceDir: '/tmp/lovelace-test/.lovelace',
+    ...testDirs('/tmp/lovelace-test/.lovelace'),
     port: 27421,
     logLevel: 'info',
     syncIntervalMs: 300_000,

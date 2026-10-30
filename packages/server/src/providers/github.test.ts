@@ -3,6 +3,7 @@ import test from 'node:test';
 import type { ServerConfig } from '@lovelace/core';
 import { resolveGitHubCloneUrl } from '@lovelace/github-client';
 import { createGitHubCodeHost } from './github.js';
+import { testDirs } from '../test-support/dirs.js';
 
 test('uses the provider HTTPS URL for cloning', () => {
   assert.equal(
@@ -54,8 +55,7 @@ test('only pull request URLs name change requests', () => {
 
 function config(): ServerConfig {
   return {
-    domainRoot: '/tmp/lovelace-provider-fixture-no-user-state',
-    lovelaceDir: '/tmp/lovelace-provider-fixture-no-user-state/.lovelace',
+    ...testDirs('/tmp/lovelace-provider-fixture-no-user-state/.lovelace'),
     port: 27421, logLevel: 'info', syncIntervalMs: 300_000,
     defaultAgent: 'pi',
     github: { org: 'example', token: 'fixture-only' },

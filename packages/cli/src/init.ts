@@ -1,6 +1,5 @@
 import { spawnSync } from 'node:child_process';
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { createInterface } from 'node:readline/promises';
 import { CODING_HARNESSES, configPath, loadServerConfig } from '@lovelace/core';
@@ -61,9 +60,6 @@ export async function init(): Promise<void> {
     const defaults = loadServerConfig();
     console.log(`\n${text ? 'Updating' : 'Creating'} ${path}`);
     const edits: ConfigEdits = [];
-
-    const root = await ask('Where should Lovelace keep clones, worktrees and state?', tildePath(defaults.domainRoot));
-    edits.push([['domainRoot'], root]);
 
     console.log('\nGitHub');
     const gh = found.get('gh');
@@ -127,9 +123,4 @@ export async function init(): Promise<void> {
     const result = run('/usr/bin/security', ['add-generic-password', '-U', '-s', KEYCHAIN_SERVICE, '-a', account, '-w'], true);
     if (result.status !== 0) console.log('  The token was not stored; rerun lovelace init to try again.');
   }
-}
-
-function tildePath(path: string): string {
-  const home = homedir();
-  return path === home ? '~' : path.startsWith(`${home}/`) ? join('~', path.slice(home.length + 1)) : path;
 }

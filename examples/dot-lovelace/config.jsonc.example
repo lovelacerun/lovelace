@@ -4,8 +4,6 @@
   // jira-api-token) first, then op:// references, then plaintext; GitHub
   // falls back to the GitHub CLI login of github.account. See readme.
   // Unknown keys and invalid values stop Lovelace with the offending path.
-  // Where Lovelace keeps clones, worktrees and state.
-  "domainRoot": "~/projects",
   "port": 27421,
   "logLevel": "info",
   "syncIntervalMs": 300000,
@@ -37,7 +35,7 @@
 
   // Optional plugins: executables with a JSON contract (see the server README).
   // "plugins": {
-  //   "releaseChecks": { "command": ["~/projects/.lovelace/plugins/dpl-release-checks.mjs", "/path/to/dpl"] }
+  //   "releaseChecks": { "command": ["~/.config/lovelace/plugins/dpl-release-checks.mjs", "/path/to/dpl"] }
   // },
 
   // Agent executables (pi/claude/codex) are auto-detected by the server.

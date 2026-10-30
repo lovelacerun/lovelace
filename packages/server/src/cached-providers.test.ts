@@ -8,12 +8,13 @@ import type { ServerConfig } from '@lovelace/core';
 import { createCachedCodeHost, createCachedTracker } from './cached-providers.js';
 import { openDatabase } from './database.js';
 import { changeRequest, fixtureCodeHost, fixtureTracker, trackerIssue } from './test-support/providers.js';
+import { testDirs } from './test-support/dirs.js';
 
 const issue = trackerIssue({ id: '1' });
 
 async function fixture(t: TestContext) {
   const root = await mkdtemp(join(tmpdir(), 'lovelace-cached-providers-'));
-  const config: ServerConfig = { domainRoot: root, lovelaceDir: join(root, '.lovelace'), port: 27421, logLevel: 'info', syncIntervalMs: 300_000, defaultAgent: 'pi' };
+  const config: ServerConfig = { ...testDirs(join(root, '.lovelace')), port: 27421, logLevel: 'info', syncIntervalMs: 300_000, defaultAgent: 'pi' };
   const database = openDatabase(config);
   t.after(async () => { database.db.close(); await rm(root, { recursive: true, force: true }); });
   return database;

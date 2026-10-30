@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Release-checks plugin backed by `dpl status --json` (@technik-sde/online-deploy-cli).
 // Usage in config.jsonc:
-//   "plugins": { "releaseChecks": { "command": ["~/projects/.lovelace/plugins/dpl-release-checks.mjs", "/path/to/dpl"] } }
+//   "plugins": { "releaseChecks": { "command": ["~/.config/lovelace/plugins/dpl-release-checks.mjs", "/path/to/dpl"] } }
 // The optional argument is the dpl executable; it defaults to `dpl` on PATH.
 // dpl reads GITHUB_PAT; without it the GitHub CLI login is used.
 import { execFile, execFileSync } from 'node:child_process';

@@ -89,11 +89,14 @@ background; `lovelace server start|stop|restart|status` manage it.
 | Path | Contents |
 | --- | --- |
 | `~/.config/lovelace/config.jsonc` | Configuration (`LOVELACE_CONFIG` selects another file) |
-| `~/projects/.lovelace/` | State root (`domainRoot` moves `~/projects`) |
-| `…/.lovelace/state.db` | Work items, attachments, sessions |
-| `…/.lovelace/repos/`, `workspaces/` | Seed clones and per-work-item worktrees |
-| `…/.lovelace/prompts/` | Your prompt templates and overrides |
-| `…/.lovelace/logs/server.log` | Server log |
+| `~/.config/lovelace/prompts/`, `plugins/` | Your prompt templates, overrides and plugins, next to the config file |
+| `~/.local/share/lovelace/state.db`, `backups/` | Work items, attachments, sessions and pre-migration backups |
+| `~/.local/share/lovelace/repos/`, `workspaces/` | Seed clones and per-work-item worktrees |
+| `~/.local/state/lovelace/logs/`, `server.pid` | Server logs and the background supervisor |
+| `~/.cache/lovelace/toolchains/` | Warm-toolchain fingerprints |
+
+`XDG_CONFIG_HOME`, `XDG_DATA_HOME`, `XDG_STATE_HOME` and `XDG_CACHE_HOME`
+move these, on macOS too.
 
 ## Packages
 

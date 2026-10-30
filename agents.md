@@ -70,12 +70,12 @@ attaches the tarball to a GitHub release. Then update the formula in
 
 ## Data
 
-SQLite at `<lovelaceDir>/state.db`, defined in
+SQLite at `<dataDir>/state.db`, defined in
 `packages/server/src/database.ts`. Other people run Lovelace, so schema and
 stored-data changes must upgrade existing databases in place without losing
 data: add a new migration to `packages/server/src/migrations.ts`, never edit a
 released one. Never ask users to edit or reset their database. Never delete user-local
-state (`.lovelace`, worktrees, logs) while changing code.
+state (config, data, state and cache directories, worktrees, logs) while changing code.
 
 ## Tests
 

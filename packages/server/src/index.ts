@@ -34,7 +34,7 @@ export async function startServer(options: StartServerOptions = {}): Promise<voi
   const config = loadServerConfig();
   config.agentCli = options.agentCli;
   config.version = options.version;
-  mkdirSync(join(config.lovelaceDir, 'prompts'), { recursive: true });
+  mkdirSync(join(config.configDir, 'prompts'), { recursive: true });
 
   const logger = createLogger(config);
   await resolveProviderSecrets(config, logger);
@@ -47,9 +47,9 @@ export async function startServer(options: StartServerOptions = {}): Promise<voi
   const codeHost = createCachedCodeHost(cache, createGitHubCodeHost(config));
   const tracker = createCachedTracker(cache, createJiraTracker(config));
   const tools = loadTools(logger);
-  const workspaceManager = new WorkspaceManager({ root: config.lovelaceDir, logger });
+  const workspaceManager = new WorkspaceManager({ root: config.dataDir, toolchainsDirectory: join(config.cacheDir, 'toolchains'), logger });
   const herdr = createHerdrClient(config.herdr);
-  const releaseChecks = config.plugins?.releaseChecks && createReleaseCheckPlugin(config.plugins.releaseChecks, config.lovelaceDir);
+  const releaseChecks = config.plugins?.releaseChecks && createReleaseCheckPlugin(config.plugins.releaseChecks, config.configDir);
   const app = buildServer({ config, tools, listModels: createCachedModels(cache), workspaceManager, herdr, database, cache, codeHost, tracker, releaseChecks }, logger);
   const shutdown = () => {
     void app.close().then(() => process.exit(0), () => process.exit(1));

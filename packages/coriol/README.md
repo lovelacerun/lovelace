@@ -44,7 +44,7 @@ Coriol owns the following entries below its configured root:
 root/
   repos/        # managed seed clones
   workspaces/   # direct worktrees grouped by workspace id
-  toolchains/   # warm-toolchain fingerprints
+  toolchains/   # warm-toolchain fingerprints, unless `toolchainsDirectory` moves them
 ```
 
 Coriol keeps no registry: paths derive from repository and workspace ids, and

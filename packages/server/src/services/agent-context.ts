@@ -7,7 +7,7 @@ interface ContextLogger {
 }
 
 interface ContextConfig {
-  lovelaceDir: string;
+  configDir: string;
   agentCli?: AgentCli;
 }
 
@@ -15,7 +15,7 @@ interface ContextConfig {
  * Tells the agent how to call back into Lovelace. Appended to every launch
  * prompt, never part of the editable one.
  *
- * Users can override this template at `<lovelaceDir>/prompts/agent-context.md`.
+ * Users can override this template at `<configDir>/prompts/agent-context.md`.
  * Available variables: {{cli}}.
  */
 const DEFAULT_TEMPLATE = `## Lovelace
@@ -26,7 +26,7 @@ This session belongs to a Lovelace work item. Run \`{{cli}} agent-guide\` before
 export function renderAgentContext(config: ContextConfig, logger: ContextLogger): string {
   const cli = config.agentCli;
   if (!cli) return '';
-  return loadTemplate(config.lovelaceDir, logger).replaceAll('{{cli}}', cli.command).trim();
+  return loadTemplate(config.configDir, logger).replaceAll('{{cli}}', cli.command).trim();
 }
 
 /** Appends the context block to a launch prompt, keeping the prompt exact. */
@@ -35,8 +35,8 @@ export function appendAgentContext(prompt: string, config: ContextConfig, logger
   return context ? `${prompt}\n\n${context}` : prompt;
 }
 
-function loadTemplate(lovelaceDir: string, logger: ContextLogger): string {
-  const overridePath = join(lovelaceDir, 'prompts', 'agent-context.md');
+function loadTemplate(configDir: string, logger: ContextLogger): string {
+  const overridePath = join(configDir, 'prompts', 'agent-context.md');
   try {
     return readFileSync(overridePath, 'utf8');
   } catch (error) {

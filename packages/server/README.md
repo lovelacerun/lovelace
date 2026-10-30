@@ -92,7 +92,7 @@ procedures use only these accessors.
 
 `plugins.releaseChecks` in the config names an executable and its arguments
 (not run through a shell; a leading `~/` is expanded) and an optional
-`timeoutMs` (default 30 s). It runs in `<lovelaceDir>` with the server's
+`timeoutMs` (default 30 s). It runs in `<configDir>` with the server's
 environment, reads `{ "schemaVersion": 1, "repository", "number", "url" }` on
 stdin and prints:
 

@@ -4,7 +4,7 @@ import { pino } from 'pino';
 import type { ServerConfig } from '@lovelace/core';
 
 export function createLogger(config: ServerConfig) {
-  const logDir = join(config.lovelaceDir, 'logs');
+  const logDir = join(config.stateDir, 'logs');
   mkdirSync(logDir, { recursive: true });
 
   return pino(

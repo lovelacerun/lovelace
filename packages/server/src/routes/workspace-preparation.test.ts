@@ -15,11 +15,12 @@ import { fixtureProviders } from '../test-support/providers.js';
 import { callerFor, rejectsWith } from '../test-support/trpc.js';
 import { recoverInterruptedRepositoryPreparations } from '../services/work-start-service.js';
 import type { RouteDeps } from './deps.js';
+import { testDirs } from '../test-support/dirs.js';
 
 async function fixture(t: TestContext) {
   const root = await mkdtemp(join(tmpdir(), 'lovelace-workspace-preparation-'));
   const config: ServerConfig = {
-    domainRoot: root, lovelaceDir: join(root, '.lovelace'), port: 27421, logLevel: 'info',
+    ...testDirs(join(root, '.lovelace')), port: 27421, logLevel: 'info',
     syncIntervalMs: 300_000, defaultAgent: 'pi',
   };
   const database = openDatabase(config);
@@ -34,10 +35,10 @@ async function fixture(t: TestContext) {
   database.replaceRepos(records);
   const calls: CreateWorkspaceRequest[] = [];
   const pending = new Map<CreateWorkspaceRequest, { resolve: (value: PreparedRepositoryWorkspace) => void; reject: (error: Error) => void }>();
-  const workspacesDirectory = join(config.lovelaceDir, 'workspaces');
+  const workspacesDirectory = join(config.dataDir, 'workspaces');
   const workspaceManager = {
     workspacesDirectory,
-    repositoryPath: (id: string) => join(config.lovelaceDir, 'repos', id),
+    repositoryPath: (id: string) => join(config.dataDir, 'repos', id),
     createWorkspace(request: CreateWorkspaceRequest): Promise<PreparedRepositoryWorkspace> {
       calls.push(request);
       assert.equal(database.listAttachmentsOfType('worktree', work.id).find(entry => basename(entry.payload.worktreePath) === request.directoryName)?.payload.status, 'pending');

@@ -3,11 +3,11 @@ import test from 'node:test';
 import { editConfigText, jiraCloudId, normalizeJiraSite, parseIntegrationStatus, parseTopics, readConfigText } from './init-config.js';
 
 test('config edits keep comments and unrelated settings', () => {
-  const text = '{\n  // Where state lives.\n  "domainRoot": "~/old",\n  "tui": { "sidebarSide": "left" }\n}\n';
-  const next = editConfigText(text, [[['domainRoot'], '~/projects'], [['github', 'account'], 'octocat'], [['github', 'repositoryTopics'], ['infra']]]);
-  assert.match(next, /\/\/ Where state lives\./);
+  const text = '{\n  // How much to log.\n  "logLevel": "debug",\n  "tui": { "sidebarSide": "left" }\n}\n';
+  const next = editConfigText(text, [[['logLevel'], 'warn'], [['github', 'account'], 'octocat'], [['github', 'repositoryTopics'], ['infra']]]);
+  assert.match(next, /\/\/ How much to log\./);
   assert.deepEqual(readConfigText(next), {
-    domainRoot: '~/projects', tui: { sidebarSide: 'left' }, github: { account: 'octocat', repositoryTopics: ['infra'] },
+    logLevel: 'warn', tui: { sidebarSide: 'left' }, github: { account: 'octocat', repositoryTopics: ['infra'] },
   });
   assert.deepEqual(readConfigText(editConfigText('', [[['defaultAgent'], 'codex']])), { defaultAgent: 'codex' });
   assert.deepEqual(readConfigText('[]'), {});

@@ -77,7 +77,7 @@ reports the pull request `complete`; the reply is stored as the attachment's
 
 ## Worktrees
 
-A work item's worktrees live under `<lovelaceDir>/workspaces/<task-dir>/`,
+A work item's worktrees live under `<dataDir>/workspaces/<task-dir>/`,
 where the task directory is derived from the work item. Coriol keeps a seed
 clone per repository under `repos/`, fetches it to the latest default branch,
 adds a worktree on a fresh branch (or a review request's branch) and prepares
@@ -141,7 +141,7 @@ prompt.
 ## Prompts
 
 Built-in templates (`default`, `implement`, `review`, `refine`) live in
-`server/src/services/prompt-service.ts`; files in `<lovelaceDir>/prompts/`
+`server/src/services/prompt-service.ts`; files in `<configDir>/prompts/`
 override or add to them. `default` is empty, so a prompt starts blank unless
 `default.md` overrides it. Templates render `{{title}}`, `{{tracker}}`,
 `{{changeRequests}}` and `{{workspaces}}`. Every launch prompt gets the block

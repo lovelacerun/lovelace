@@ -86,6 +86,8 @@ export interface WorkspaceToolchain {
 
 export interface WorkspaceManagerOptions {
   root: string;
+  /** Warm-toolchain fingerprints; losing them only costs a reinstall. Defaults to `<root>/toolchains`. */
+  toolchainsDirectory?: string;
   logger?: WorkspaceManagerLogger;
   toolchains?: WorkspaceToolchain[];
   /** Manager-wide limit for concurrent repository preparation. Defaults to 3. */

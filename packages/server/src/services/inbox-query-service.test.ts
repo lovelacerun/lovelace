@@ -7,12 +7,13 @@ import type { ServerConfig } from '@lovelace/core';
 import { openDatabase } from '../database.js';
 import { changeRequest, fixtureProviders, storedSnapshot } from '../test-support/providers.js';
 import { buildInbox } from './inbox-query-service.js';
+import { testDirs } from '../test-support/dirs.js';
 
 const review = changeRequest({ repository: 'org/repo', number: 1, title: 'fix: PROJ-7 retry uploads', author: 'human' });
 
 test('inbox lists pending review requests one by one', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'lovelace-inbox-'));
-  const config: ServerConfig = { domainRoot: root, lovelaceDir: join(root, '.lovelace'), port: 27421, logLevel: 'info', syncIntervalMs: 300_000, defaultAgent: 'pi' };
+  const config: ServerConfig = { ...testDirs(join(root, '.lovelace')), port: 27421, logLevel: 'info', syncIntervalMs: 300_000, defaultAgent: 'pi' };
   const database = openDatabase(config);
   t.after(async () => { database.db.close(); await rm(root, { recursive: true, force: true }); });
   const { codeHost, tracker } = fixtureProviders([storedSnapshot('codeHost.github.reviewRequests', [review])]);

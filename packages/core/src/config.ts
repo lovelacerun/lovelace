@@ -1,11 +1,11 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { join } from 'node:path';
 import { parse, printParseErrorCode, type ParseError } from 'jsonc-parser';
 import { z } from 'zod';
 import { CODING_HARNESSES, type CodingHarnessId } from './harnesses.js';
 import { SIDEBAR_SIDES } from './dashboard.js';
-import { configPath } from './paths.js';
+import { configPath, lovelaceDirs } from './paths.js';
 import type { ClientSettings, ServerConfig } from './types.js';
 
 const absolutePath = z.string().regex(/^\/[^\x00-\x1f]*$/, 'must be an absolute path');
@@ -14,7 +14,6 @@ const colors = z.record(z.string(), color).optional();
 
 /** The operator's config file. Unknown keys are errors so typos and retired settings surface. */
 const configFile = z.strictObject({
-  domainRoot: z.string().default('~/projects'),
   port: z.int().min(1).max(65_535).default(27_421),
   logLevel: z.enum(['debug', 'info', 'warn', 'error']).default('info'),
   syncIntervalMs: z.int().positive().default(5 * 60 * 1000),
@@ -50,12 +49,10 @@ const configFile = z.strictObject({
 
 /** Everything the server needs; only the server and the CLI that manages it load this. */
 export function loadServerConfig(): ServerConfig {
-  const { tui: _, domainRoot, github, jira, ...file } = readConfigFile();
-  const root = resolve(expandHome(domainRoot));
+  const { tui: _, github, jira, ...file } = readConfigFile();
   return {
     ...file,
-    domainRoot: root,
-    lovelaceDir: join(root, '.lovelace'),
+    ...lovelaceDirs(),
     github: { ...github, apiBaseUrl: github.apiBaseUrl ?? gitHubApiBaseUrl(github.host) },
     jira: { ...jira, siteUrl: jira.siteUrl ?? jira.baseUrl },
   };

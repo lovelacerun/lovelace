@@ -11,10 +11,11 @@ import { addAttachments, createManualWorkItem } from '../repositories/work-item-
 import { FakeHerdr } from '../test-support/fake-herdr.js';
 import { trackerIssue } from '../test-support/providers.js';
 import { syncSessions } from './session-service.js';
+import { testDirs } from '../test-support/dirs.js';
 
 async function fixture(t: TestContext) {
   const root = await mkdtemp(join(tmpdir(), 'lovelace-work-activity-'));
-  const config: ServerConfig = { domainRoot: root, lovelaceDir: join(root, '.lovelace'), port: 27421, logLevel: 'info', syncIntervalMs: 300_000, defaultAgent: 'pi' };
+  const config: ServerConfig = { ...testDirs(join(root, '.lovelace')), port: 27421, logLevel: 'info', syncIntervalMs: 300_000, defaultAgent: 'pi' };
   const database = openDatabase(config);
   t.after(async () => { if (database.db.isOpen) database.db.close(); await rm(root, { recursive: true, force: true }); });
   return { config, database };
@@ -57,7 +58,7 @@ test('additive activity schema preserves legacy work/metas and invents no v3 his
   const { database, config } = await fixture(t);
   database.db.close();
   // Simulate an unversioned v3 database that had no activity table. This is temporary fixture state only.
-  const legacy = new DatabaseSync(join(config.lovelaceDir, 'state.db'));
+  const legacy = new DatabaseSync(join(config.dataDir, 'state.db'));
   legacy.exec('drop table work_activity; drop table launches; drop table work_item_attachments; drop table worktrees; drop table sessions');
   migrations[0]!(legacy);
   legacy.exec(`

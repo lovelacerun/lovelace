@@ -12,7 +12,7 @@ const loader = import.meta.resolve('tsx');
 test('work-items add-worktree polls after submission and preserves final JSON including failed siblings', async t => {
   const root = await mkdtemp(join(tmpdir(), 'lovelace-cli-workspaces-'));
   t.after(() => rm(root, { recursive: true, force: true }));
-  await writeFile(join(root, 'config.jsonc'), JSON.stringify({ domainRoot: root, port: 48999 }));
+  await writeFile(join(root, 'config.jsonc'), JSON.stringify({ port: 48999 }));
   const preload = join(root, 'fake-http.mjs');
   await writeFile(preload, `
     let posts = 0;
@@ -56,7 +56,7 @@ test('work-items add-worktree polls after submission and preserves final JSON in
 test('Ctrl-C during workspace preparation emits a JSON interruption error with an inspection command', async t => {
   const root = await mkdtemp(join(tmpdir(), 'lovelace-cli-workspace-interrupt-'));
   t.after(() => rm(root, { recursive: true, force: true }));
-  await writeFile(join(root, 'config.jsonc'), JSON.stringify({ domainRoot: root, port: 48999 }));
+  await writeFile(join(root, 'config.jsonc'), JSON.stringify({ port: 48999 }));
   const preload = join(root, 'fake-http.mjs');
   await writeFile(preload, `globalThis.fetch = async (url, init) => {
     if (!String(url).startsWith('http://127.0.0.1:48999/trpc/')) throw new Error('Nonlocal fixture request');

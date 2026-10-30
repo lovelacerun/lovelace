@@ -32,7 +32,7 @@ export class WorkspaceManager {
     this.root = resolve(options.root);
     this.repositoriesDirectory = join(this.root, 'repos');
     this.workspacesDirectory = join(this.root, 'workspaces');
-    const toolchainStateDirectory = join(this.root, 'toolchains');
+    const toolchainStateDirectory = resolve(options.toolchainsDirectory ?? join(this.root, 'toolchains'));
     this.#toolchains = new ToolchainManager(
       toolchainStateDirectory,
       options.toolchains ?? [npmToolchain()],

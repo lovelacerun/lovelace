@@ -6,13 +6,18 @@ import test, { type TestContext } from 'node:test';
 import { loadClientSettings, loadServerConfig } from './config.js';
 import { isCodingHarnessId } from './harnesses.js';
 
+const XDG_VARIABLES = ['XDG_DATA_HOME', 'XDG_STATE_HOME', 'XDG_CACHE_HOME'];
+
 async function fixture(t: TestContext, config?: unknown) {
   const root = await mkdtemp(join(tmpdir(), 'lovelace-config-'));
-  const original = process.env.LOVELACE_CONFIG;
+  const original = { ...process.env };
   process.env.LOVELACE_CONFIG = join(root, 'config.jsonc');
+  for (const variable of XDG_VARIABLES) delete process.env[variable];
   t.after(async () => {
-    if (original === undefined) delete process.env.LOVELACE_CONFIG;
-    else process.env.LOVELACE_CONFIG = original;
+    for (const variable of ['LOVELACE_CONFIG', ...XDG_VARIABLES]) {
+      if (original[variable] === undefined) delete process.env[variable];
+      else process.env[variable] = original[variable];
+    }
     await rm(root, { recursive: true, force: true });
   });
   if (config !== undefined) await write(root, config);
@@ -23,9 +28,10 @@ const write = (root: string, config: unknown) =>
   writeFile(join(root, 'config.jsonc'), typeof config === 'string' ? config : JSON.stringify(config));
 
 test('a missing file yields the defaults', async (t) => {
-  await fixture(t);
+  const root = await fixture(t);
   assert.deepEqual(loadServerConfig(), {
-    domainRoot: join(homedir(), 'projects'), lovelaceDir: join(homedir(), 'projects', '.lovelace'),
+    configDir: root, dataDir: join(homedir(), '.local/share/lovelace'),
+    stateDir: join(homedir(), '.local/state/lovelace'), cacheDir: join(homedir(), '.cache/lovelace'),
     port: 27421, logLevel: 'info', syncIntervalMs: 300_000, defaultAgent: 'pi', herdr: {},
     github: { repositoryTopics: [], apiBaseUrl: undefined }, jira: { siteUrl: undefined }, plugins: {},
   });
@@ -37,7 +43,6 @@ test('a missing file yields the defaults', async (t) => {
 test('one file feeds the server config and the client settings', async (t) => {
   await fixture(t, `{
     // Comments and trailing commas are fine.
-    "domainRoot": "~/work",
     "port": 4747,
     "defaultAgent": "claude",
     "tui": { "sidebarSide": "left", "theme": "light", "colors": { "light": { "accent": "#123ABC", "background": "none" } } },
@@ -46,7 +51,6 @@ test('one file feeds the server config and the client settings', async (t) => {
     "plugins": { "releaseChecks": { "command": ["~/bin/release-checks", "--json"] } },
   }`);
   const server = loadServerConfig();
-  assert.equal(server.lovelaceDir, join(homedir(), 'work', '.lovelace'));
   assert.equal(server.port, 4747);
   assert.equal(server.defaultAgent, 'claude');
   assert.deepEqual(server.github, { host: 'github.example.com', account: undefined, repositoryTopics: ['infra'], apiBaseUrl: 'https://github.example.com/api/v3' });
@@ -55,6 +59,17 @@ test('one file feeds the server config and the client settings', async (t) => {
   assert.equal('tui' in server, false);
   assert.deepEqual(loadClientSettings(), {
     port: 4747, tui: { sidebarSide: 'left', icons: 'nerd', theme: 'light', colors: { light: { accent: '#123ABC', background: 'none' } } },
+  });
+});
+
+test('XDG variables move the data, state and cache directories; relative values are ignored', async (t) => {
+  await fixture(t);
+  process.env.XDG_DATA_HOME = '/xdg/data';
+  process.env.XDG_STATE_HOME = '/xdg/state';
+  process.env.XDG_CACHE_HOME = 'relative';
+  const { dataDir, stateDir, cacheDir } = loadServerConfig();
+  assert.deepEqual({ dataDir, stateDir, cacheDir }, {
+    dataDir: '/xdg/data/lovelace', stateDir: '/xdg/state/lovelace', cacheDir: join(homedir(), '.cache/lovelace'),
   });
 });
 
@@ -67,6 +82,7 @@ test('invalid values and unknown keys fail with the file and the offending path'
     [{ tui: { colors: { light: { accent: 'red' } } } }, /#rrggbb or none[\s\S]*tui\.colors\.light\.accent/],
     [{ herdr: { executable: 'herdr' } }, /absolute path[\s\S]*herdr\.executable/],
     [{ pullRequestReleases: {} }, /pullRequestReleases/],
+    [{ domainRoot: '~/projects' }, /domainRoot/],
     [{ plugins: { releaseChecks: { command: [] } } }, /plugins\.releaseChecks\.command/],
     [{ github: { topics: [] } }, /topics/],
     ['{ "port": ', /Invalid config/],

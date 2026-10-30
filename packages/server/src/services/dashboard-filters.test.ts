@@ -8,6 +8,7 @@ import { openDatabase } from '../database.js';
 import { createActiveWorkItem, createManualWorkItem } from '../repositories/work-item-repository.js';
 import { fixtureProviders, storedSnapshot, trackerIssue } from '../test-support/providers.js';
 import { buildDashboard, startOfPreviousLocalDay } from './dashboard-service.js';
+import { testDirs } from '../test-support/dirs.js';
 
 function jiraIssue(id: string): TrackerIssue {
   return trackerIssue({ id, title: `Issue ${id}`, status: 'In Progress', author: 'fixture', updatedAt: '2026-01-01T10:00:00.000Z' });
@@ -15,7 +16,7 @@ function jiraIssue(id: string): TrackerIssue {
 
 async function fixture(t: TestContext) {
   const root = await mkdtemp(join(tmpdir(), 'lovelace-dashboard-filter-'));
-  const config: ServerConfig = { domainRoot: root, lovelaceDir: join(root, '.lovelace'), port: 27421, logLevel: 'info', syncIntervalMs: 300_000, defaultAgent: 'pi' };
+  const config: ServerConfig = { ...testDirs(join(root, '.lovelace')), port: 27421, logLevel: 'info', syncIntervalMs: 300_000, defaultAgent: 'pi' };
   const database = openDatabase(config);
   const providers = fixtureProviders();
   const now = new Date();

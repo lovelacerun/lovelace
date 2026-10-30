@@ -9,6 +9,7 @@ import type { CachedTracker } from '../cached-providers.js';
 import { createActiveWorkItem } from '../repositories/work-item-repository.js';
 import { trackerIssue } from '../test-support/providers.js';
 import { attachTrackerIssueToWorkItem, detachTrackerIssueFromWorkItem, refreshAttachedTrackerIssues } from './tracker-item-service.js';
+import { testDirs } from '../test-support/dirs.js';
 
 const logger = { info() {}, warn() {}, error() {} };
 function issue(id: string): TrackerIssue {
@@ -16,7 +17,7 @@ function issue(id: string): TrackerIssue {
 }
 async function fixture(t: TestContext) {
   const root = await mkdtemp(join(tmpdir(), 'lovelace-tracker-sync-'));
-  const config: ServerConfig = { domainRoot: root, lovelaceDir: join(root, '.lovelace'), port: 27421, logLevel: 'info', syncIntervalMs: 300_000, defaultAgent: 'pi' };
+  const config: ServerConfig = { ...testDirs(join(root, '.lovelace')), port: 27421, logLevel: 'info', syncIntervalMs: 300_000, defaultAgent: 'pi' };
   const database = openDatabase(config);
   t.after(async () => { database.db.close(); await rm(root, { recursive: true, force: true }); });
   return database;

@@ -8,8 +8,10 @@ export function serverStatus({ config, database }: Pick<RouteDeps, 'config' | 'd
     version: config.version ?? null,
     pid: process.pid,
     config: {
-      domainRoot: config.domainRoot,
-      lovelaceDir: config.lovelaceDir,
+      configDir: config.configDir,
+      dataDir: config.dataDir,
+      stateDir: config.stateDir,
+      cacheDir: config.cacheDir,
       port: config.port,
       syncIntervalMs: config.syncIntervalMs,
     },

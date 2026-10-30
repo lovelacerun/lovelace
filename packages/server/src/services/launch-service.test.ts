@@ -8,10 +8,11 @@ import type { ServerConfig } from '@lovelace/core';
 import { openDatabase } from '../database.js';
 import { createActiveWorkItem } from '../repositories/work-item-repository.js';
 import { retryLaunch, startLaunch } from './launch-service.js';
+import { testDirs } from '../test-support/dirs.js';
 
 async function fixture(t: test.TestContext) {
   const root = await mkdtemp(join(tmpdir(), 'lovelace-launch-'));
-  const config: ServerConfig = { domainRoot: root, lovelaceDir: join(root, '.lovelace'), port: 27421, logLevel: 'info', syncIntervalMs: 300_000, defaultAgent: 'pi' };
+  const config: ServerConfig = { ...testDirs(join(root, '.lovelace')), port: 27421, logLevel: 'info', syncIntervalMs: 300_000, defaultAgent: 'pi' };
   const state = { database: openDatabase(config) };
   t.after(async () => { state.database.db.close(); await rm(root, { recursive: true, force: true }); });
   return { state, reopen: () => { state.database.db.close(); state.database = openDatabase(config); state.database.recoverInterruptedLaunches(); } };

@@ -37,8 +37,8 @@ Analyze the problem, extract the key requirements and open questions, and propos
   },
 ];
 
-export function listPromptTemplates(lovelaceDir: string): PromptTemplate[] {
-  const promptDir = join(lovelaceDir, 'prompts');
+export function listPromptTemplates(configDir: string): PromptTemplate[] {
+  const promptDir = join(configDir, 'prompts');
   const files = existsSync(promptDir)
     ? readdirSync(promptDir, { withFileTypes: true })
         .filter((entry) => entry.isFile() && entry.name.endsWith('.md') && entry.name !== 'agent-context.md')
@@ -74,8 +74,8 @@ export function listPromptTemplates(lovelaceDir: string): PromptTemplate[] {
 }
 
 /** Fills a template's placeholders; the agent context is appended at launch, not here. */
-export function renderPrompt(lovelaceDir: string, input: RenderPromptInput): RenderedPrompt | null {
-  const template = listPromptTemplates(lovelaceDir).find((entry) => entry.id === input.promptId);
+export function renderPrompt(configDir: string, input: RenderPromptInput): RenderedPrompt | null {
+  const template = listPromptTemplates(configDir).find((entry) => entry.id === input.promptId);
   if (!template) return null;
 
   const variables: Record<string, string> = {

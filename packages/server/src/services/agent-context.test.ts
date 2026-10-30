@@ -14,9 +14,9 @@ test('launch prompts keep their exact text and gain the context block', async (t
   await writeFile(join(root, 'prompts', 'agent-context.md'), '\nRun {{cli}} work show\n');
   t.after(() => rm(root, { recursive: true, force: true }));
   const prompt = '  Exact user prompt\n\n   ';
-  const config = { lovelaceDir: root, agentCli: { command: 'lovelace' } };
+  const config = { configDir: root, agentCli: { command: 'lovelace' } };
   assert.equal(appendAgentContext(prompt, config, logger), prompt + '\n\nRun lovelace work show');
-  assert.equal(appendAgentContext(prompt, { lovelaceDir: root }, logger), prompt);
+  assert.equal(appendAgentContext(prompt, { configDir: root }, logger), prompt);
 });
 
 test('templates render without the context block; the default starts empty', async (t) => {

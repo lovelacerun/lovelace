@@ -8,11 +8,11 @@ import { fixtureProviders, storedSnapshot, trackerIssue } from '../test-support/
 import { openDatabase } from '../database.js';
 import { createActiveWorkItem, createManualWorkItem } from '../repositories/work-item-repository.js';
 import { buildDashboard, startOfPreviousLocalDay } from './dashboard-service.js';
+import { testDirs } from '../test-support/dirs.js';
 
 function configForRoot(root: string): ServerConfig {
   return {
-    domainRoot: root,
-    lovelaceDir: join(root, '.lovelace'),
+    ...testDirs(join(root, '.lovelace')),
     port: 27421,
     logLevel: 'info',
     syncIntervalMs: 300_000,

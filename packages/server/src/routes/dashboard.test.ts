@@ -18,6 +18,7 @@ import { FakeHerdr } from '../test-support/fake-herdr.js';
 import { changeRequest, fixtureProviders, storedSnapshot, trackerIssue } from '../test-support/providers.js';
 import { callerFor, rejectsWith } from '../test-support/trpc.js';
 import { syncSessions } from '../services/session-service.js';
+import { testDirs } from '../test-support/dirs.js';
 
 const tools = (): LoadedTool[] => (['pi', 'claude', 'codex'] as const).map((id, index) => ({
   id, title: id, thinkingLevels: [], executablePath: `/fixture/${id}`, defaultSelected: index === 0,
@@ -26,7 +27,7 @@ const tools = (): LoadedTool[] => (['pi', 'claude', 'codex'] as const).map((id, 
 async function fixture(t: TestContext, fail = false, providers = fixtureProviders()) {
   const root = await mkdtemp(join(tmpdir(), 'lovelace-dashboard-route-'));
   const config: ServerConfig = {
-    domainRoot: root, lovelaceDir: join(root, '.lovelace'), port: 27421, logLevel: 'info',
+    ...testDirs(join(root, '.lovelace')), port: 27421, logLevel: 'info',
     syncIntervalMs: 300_000, defaultAgent: 'pi',
   };
   const database = openDatabase(config);
@@ -253,10 +254,10 @@ function repositoryFixture(deps: RouteDeps) {
   deps.database.replaceRepos(records);
   const calls: CreateWorkspaceRequest[] = [];
   let failing = false;
-  const workspacesDirectory = join(deps.config.lovelaceDir, 'workspaces');
+  const workspacesDirectory = join(deps.config.dataDir, 'workspaces');
   deps.workspaceManager = {
     workspacesDirectory,
-    repositoryPath: (id: string) => join(deps.config.lovelaceDir, 'repos', id),
+    repositoryPath: (id: string) => join(deps.config.dataDir, 'repos', id),
     async createWorkspace(request: CreateWorkspaceRequest) {
       calls.push(request);
       assert.ok(deps.database.listLaunches().length > 0, 'prompt persisted before preparation');
@@ -264,7 +265,7 @@ function repositoryFixture(deps: RouteDeps) {
       const path = join(workspacesDirectory, request.workspaceId, request.directoryName!);
       await mkdir(path, { recursive: true });
       return {
-        repository: { ...request.repository, path: join(deps.config.lovelaceDir, 'repos', request.repository.id) },
+        repository: { ...request.repository, path: join(deps.config.dataDir, 'repos', request.repository.id) },
         workspaceId: request.workspaceId, path, branchName: request.branchName, baseBranch: 'main', remoteBranch: null, preparations: [],
       };
     },

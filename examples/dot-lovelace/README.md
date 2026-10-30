@@ -1,9 +1,9 @@
 # Example Lovelace home
 
 Copy `config.jsonc.example` to `~/.config/lovelace/config.jsonc` and the other
-examples into `<domainRoot>/.lovelace`:
+examples next to it into `~/.config/lovelace/`:
 
-- `config.jsonc.example`: state root, terminal dashboard/provider settings (no secrets).
+- `config.jsonc.example`: terminal dashboard/provider settings (no secrets).
 - `prompts/`: user-owned launch templates.
 - `plugins/`: plugin examples, e.g. `dpl-release-checks.mjs`, which reports
   release status from `dpl status --json`.

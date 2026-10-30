@@ -12,10 +12,10 @@ interface ServerStatus { version: string | null; pid: number | null }
 
 export interface BackgroundDeps {
   port: number;
-  lovelaceDir: string;
+  stateDir: string;
   fetchStatus: (port: number) => Promise<ServerStatus | null>;
   /** Starts the detached supervisor. */
-  launch: (lovelaceDir: string) => void;
+  launch: (stateDir: string) => void;
   isAlive: (pid: number) => boolean;
   kill: (pid: number) => void;
   sleep: (ms: number) => Promise<void>;
@@ -26,7 +26,7 @@ export function backgroundDeps(overrides: Partial<BackgroundDeps> = {}): Backgro
   const config = loadServerConfig();
   return {
     port: config.port,
-    lovelaceDir: config.lovelaceDir,
+    stateDir: config.stateDir,
     fetchStatus,
     launch: launchSupervisor,
     isAlive,
@@ -79,12 +79,12 @@ async function startServerInBackground(deps: BackgroundDeps): Promise<void> {
   // A foreground server keeps its port; a second one could never bind it.
   if (await deps.fetchStatus(deps.port)) return;
   deps.log('Starting the Lovelace server…');
-  deps.launch(deps.lovelaceDir);
+  deps.launch(deps.stateDir);
   for (let waited = 0; waited < START_TIMEOUT_MS; waited += 250) {
     if (await deps.fetchStatus(deps.port)) return;
     await deps.sleep(250);
   }
-  throw new Error(`The Lovelace server did not start on port ${deps.port}; see ${serverLogPath(deps.lovelaceDir)}`);
+  throw new Error(`The Lovelace server did not start on port ${deps.port}; see ${serverLogPath(deps.stateDir)}`);
 }
 
 async function stopServer(deps: BackgroundDeps): Promise<boolean> {
@@ -102,17 +102,17 @@ async function status(deps: BackgroundDeps) {
   const current = await deps.fetchStatus(deps.port);
   return {
     running: Boolean(current), port: deps.port, version: current?.version ?? null, pid: current?.pid ?? null,
-    background: supervisorPid(deps) !== null, log: serverLogPath(deps.lovelaceDir),
+    background: supervisorPid(deps) !== null, log: serverLogPath(deps.stateDir),
   };
 }
 
-const pidPath = (lovelaceDir: string) => join(lovelaceDir, 'server.pid');
-export const serverLogPath = (lovelaceDir: string) => join(lovelaceDir, 'logs', 'server-process.log');
+const pidPath = (stateDir: string) => join(stateDir, 'server.pid');
+export const serverLogPath = (stateDir: string) => join(stateDir, 'logs', 'server-process.log');
 
 /** The background supervisor's pid when it is alive. */
-function supervisorPid(deps: Pick<BackgroundDeps, 'lovelaceDir' | 'isAlive'>): number | null {
+function supervisorPid(deps: Pick<BackgroundDeps, 'stateDir' | 'isAlive'>): number | null {
   try {
-    const pid = Number.parseInt(readFileSync(pidPath(deps.lovelaceDir), 'utf8'), 10);
+    const pid = Number.parseInt(readFileSync(pidPath(deps.stateDir), 'utf8'), 10);
     return Number.isInteger(pid) && pid > 0 && deps.isAlive(pid) ? pid : null;
   } catch {
     return null;
@@ -120,18 +120,18 @@ function supervisorPid(deps: Pick<BackgroundDeps, 'lovelaceDir' | 'isAlive'>): n
 }
 
 /** Claims the pid file for this process; false when another live supervisor holds it. */
-export function claimPidFile(lovelaceDir: string, alive = isAlive): boolean {
-  mkdirSync(lovelaceDir, { recursive: true });
+export function claimPidFile(stateDir: string, alive = isAlive): boolean {
+  mkdirSync(stateDir, { recursive: true });
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
-      const fd = openSync(pidPath(lovelaceDir), 'wx');
+      const fd = openSync(pidPath(stateDir), 'wx');
       writeSync(fd, String(process.pid));
       closeSync(fd);
       return true;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
-      if (supervisorPid({ lovelaceDir, isAlive: alive })) return false;
-      rmSync(pidPath(lovelaceDir), { force: true });
+      if (supervisorPid({ stateDir, isAlive: alive })) return false;
+      rmSync(pidPath(stateDir), { force: true });
     }
   }
   return false;
@@ -168,16 +168,16 @@ export function backgroundEnvironment(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv
   return Object.fromEntries(Object.entries(env).filter(([key]) => INHERITED.test(key)));
 }
 
-function launchSupervisor(lovelaceDir: string): void {
-  mkdirSync(join(lovelaceDir, 'logs'), { recursive: true });
-  const log = openSync(serverLogPath(lovelaceDir), 'a');
+function launchSupervisor(stateDir: string): void {
+  mkdirSync(join(stateDir, 'logs'), { recursive: true });
+  const log = openSync(serverLogPath(stateDir), 'a');
   const [command, ...prefix] = selfInvocation();
   // Its own session, so closing the terminal or Herdr pane that started it does not stop it.
   const child = spawn(command!, [...prefix, 'server', 'supervise'], {
-    detached: true, stdio: ['ignore', log, log], cwd: lovelaceDir, env: backgroundEnvironment(process.env),
+    detached: true, stdio: ['ignore', log, log], cwd: stateDir, env: backgroundEnvironment(process.env),
   });
   // The caller's wait for /status reports the failure and points at the log.
-  child.once('error', error => appendFileSync(serverLogPath(lovelaceDir), `Could not start the server: ${error.message}\n`));
+  child.once('error', error => appendFileSync(serverLogPath(stateDir), `Could not start the server: ${error.message}\n`));
   child.unref();
   closeSync(log);
 }
@@ -196,8 +196,8 @@ export function serverEnvironment(env: NodeJS.ProcessEnv, proxy: string | null):
  * stops it on SIGTERM.
  */
 export async function superviseServer(env: NodeJS.ProcessEnv = process.env): Promise<void> {
-  const { lovelaceDir } = loadServerConfig();
-  if (!claimPidFile(lovelaceDir)) {
+  const { stateDir } = loadServerConfig();
+  if (!claimPidFile(stateDir)) {
     console.log('Another Lovelace server supervisor is running');
     return;
   }
@@ -218,7 +218,7 @@ export async function superviseServer(env: NodeJS.ProcessEnv = process.env): Pro
   // Exit only once the server has released its port, so a restart can bind it again.
   const stop = () => {
     const done = () => {
-      rmSync(pidPath(lovelaceDir), { force: true });
+      rmSync(pidPath(stateDir), { force: true });
       process.exit(0);
     };
     if (!child || child.exitCode !== null || child.signalCode !== null) return done();

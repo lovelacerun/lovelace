@@ -12,7 +12,7 @@ const loader = import.meta.resolve('tsx');
 test('no-argument CLI prints help; JSON agent/server commands never open TUI; explicit tui requires TTY', async t => {
   const root = await mkdtemp(join(tmpdir(), 'lovelace-cli-entry-'));
   t.after(() => rm(root, { recursive: true, force: true }));
-  await writeFile(join(root, 'config.jsonc'), JSON.stringify({ domainRoot: root, port: 48999 }));
+  await writeFile(join(root, 'config.jsonc'), JSON.stringify({ port: 48999 }));
   const preload = join(root, 'fake-http.mjs');
   await writeFile(preload, `globalThis.fetch = async (url, init) => {
     if (!String(url).startsWith('http://127.0.0.1:48999/trpc/')) throw new Error('Nonlocal fixture request');
@@ -58,7 +58,7 @@ test('no-argument CLI prints help; JSON agent/server commands never open TUI; ex
 test('work-items update sends only passed fields', async t => {
   const root = await mkdtemp(join(tmpdir(), 'lovelace-cli-update-'));
   t.after(() => rm(root, { recursive: true, force: true }));
-  await writeFile(join(root, 'config.jsonc'), JSON.stringify({ domainRoot: root, port: 48999 }));
+  await writeFile(join(root, 'config.jsonc'), JSON.stringify({ port: 48999 }));
   const preload = join(root, 'fake-http.mjs');
   await writeFile(preload, `globalThis.fetch = async (url, init) => {
     if (!String(url).startsWith('http://127.0.0.1:48999/trpc/')) throw new Error('Nonlocal fixture request');

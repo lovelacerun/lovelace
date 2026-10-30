@@ -28,7 +28,7 @@ interface SessionServiceDeps {
   herdr: HerdrClient;
   tools: LoadedTool[];
   logger: Logger;
-  config: { lovelaceDir: string; port: number; agentCli?: AgentCli };
+  config: { configDir: string; dataDir: string; port: number; agentCli?: AgentCli };
 }
 
 export class SessionRequestError extends Error {
@@ -56,7 +56,7 @@ export async function launchSessions(deps: SessionServiceDeps, workItemId: strin
   });
   if (harnesses.length === 0) return [];
   const workItem = details.workItem;
-  const cwd = launchCwd(selected) ?? ensureTaskWorkspacePath(resolve(deps.config.lovelaceDir, 'workspaces'), workItemId, attachmentSources(details.attachments), workItem.title);
+  const cwd = launchCwd(selected) ?? ensureTaskWorkspacePath(resolve(deps.config.dataDir, 'workspaces'), workItemId, attachmentSources(details.attachments), workItem.title);
 
   const created: Array<Attachment<'session'>> = [];
   const failures: string[] = [];

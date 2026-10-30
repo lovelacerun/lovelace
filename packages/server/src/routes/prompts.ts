@@ -4,7 +4,7 @@ import { notFound, procedure, router } from '../trpc.js';
 import { nonEmpty, startWorkSource } from './schemas.js';
 
 export const promptsRouter = router({
-  list: procedure.query(({ ctx }) => listPromptTemplates(ctx.config.lovelaceDir)),
+  list: procedure.query(({ ctx }) => listPromptTemplates(ctx.config.configDir)),
 
   /** Renders a template before user editing; a mutation only so provider text travels in the body, not the URL. */
   render: procedure
@@ -12,5 +12,5 @@ export const promptsRouter = router({
       promptId: nonEmpty, title: nonEmpty,
       sources: z.array(startWorkSource).optional(), workspacePaths: z.array(nonEmpty).optional(),
     }))
-    .mutation(({ ctx, input }) => renderPrompt(ctx.config.lovelaceDir, input) ?? notFound('prompt not found')),
+    .mutation(({ ctx, input }) => renderPrompt(ctx.config.configDir, input) ?? notFound('prompt not found')),
 });

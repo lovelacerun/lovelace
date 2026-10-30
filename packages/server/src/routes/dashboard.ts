@@ -64,7 +64,7 @@ function validateSelection({ database, config }: Context, input: QuickStartReque
   for (const id of input.repoIds ?? []) {
     if (!repositoryIds.has(id)) throw new LaunchRequestError(400, `Unknown repository: ${id}`);
   }
-  if (input.promptId && !listPromptTemplates(config.lovelaceDir).some(prompt => prompt.id === input.promptId)) {
+  if (input.promptId && !listPromptTemplates(config.configDir).some(prompt => prompt.id === input.promptId)) {
     throw new LaunchRequestError(400, 'Unknown prompt template');
   }
 }

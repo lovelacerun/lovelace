@@ -125,9 +125,9 @@ export interface DatabaseState {
 }
 
 export function openDatabase(config: ServerConfig): DatabaseState {
-  mkdirSync(config.lovelaceDir, { recursive: true });
+  mkdirSync(config.dataDir, { recursive: true });
   // Statements bind spread records; columns the SQL does not name are ignored.
-  const db = new DatabaseSync(join(config.lovelaceDir, 'state.db'), { allowUnknownNamedParameters: true });
+  const db = new DatabaseSync(join(config.dataDir, 'state.db'), { allowUnknownNamedParameters: true });
   db.exec('pragma journal_mode = WAL');
   // Records bind by name and rows are cast to their record types at each call site.
   const prepare = (sql: string) => db.prepare(sql) as unknown as Statement;
@@ -147,7 +147,7 @@ export function openDatabase(config: ServerConfig): DatabaseState {
   }
 
   try {
-    migrateDatabase(db, join(config.lovelaceDir, 'backups'));
+    migrateDatabase(db, join(config.dataDir, 'backups'));
     db.exec('pragma foreign_keys = ON');
   } catch (error) {
     db.close();
