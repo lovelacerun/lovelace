@@ -14,7 +14,6 @@ export interface JiraClientOptions {
   fetch?: typeof fetch;
   /** Per-request budget, including JSON body parsing (default 15000). */
   requestTimeoutMs?: number;
-  now?: () => number;
 }
 export interface RequestOptions { signal?: AbortSignal }
 export interface JiraClient {
@@ -26,13 +25,12 @@ export interface JiraClient {
 
 type ErrorPayload = { errorMessages?: string[]; errors?: Record<string, unknown> };
 type CallConfig = { baseURL: string; signal: AbortSignal; client: Client };
-const ISSUE_FIELDS = ['summary', 'status', 'issuetype', 'description', 'project', 'reporter', 'updated'] as const;
+const ISSUE_FIELDS = ['summary', 'status', 'issuetype', 'description', 'project', 'reporter', 'created', 'updated'] as const;
 
 export function createJiraClient(options: JiraClientOptions): JiraClient {
   options = { ...options };
   const requestTimeoutMs = options.requestTimeoutMs ?? 15_000;
   if (!Number.isInteger(requestTimeoutMs) || requestTimeoutMs < 1) throw new Error('requestTimeoutMs must be a positive integer');
-  const now = options.now ?? Date.now;
   const fetchRequest = options.fetch ?? globalThis.fetch;
   const baseUrl = options.baseUrl?.replace(/\/$/, '') ?? '';
   const browseBaseUrl = (options.siteUrl ?? baseUrl).replace(/\/$/, '');
@@ -84,7 +82,7 @@ export function createJiraClient(options: JiraClientOptions): JiraClient {
         } }, config)) as ErrorPayload & SearchAndReconcileResults;
         if (payload.errorMessages?.length || Object.keys(payload.errors ?? {}).length) throw new Error('Partial Jira assigned issue response');
         if (!Array.isArray(payload.issues)) throw new Error('Incomplete Jira assigned issue response');
-        issues.push(...payload.issues.map((issue) => toIssueSummary(issue, browseBaseUrl, now)));
+        issues.push(...payload.issues.map((issue) => toIssueSummary(issue, browseBaseUrl)));
         if (payload.isLast === true || !payload.nextPageToken) {
           if (payload.isLast === false) throw new Error('Invalid Jira issue pagination');
           return issues;
@@ -100,7 +98,7 @@ export function createJiraClient(options: JiraClientOptions): JiraClient {
       const payload = await request('issue fetch', fetchOptions?.signal, (config) => getIssue({
         issueIdOrKey: encodeURIComponent(keyOrId), params: { fields: [...ISSUE_FIELDS] },
       }, config), true);
-      return payload === null ? null : toIssueSummary(payload, browseBaseUrl, now);
+      return payload === null ? null : toIssueSummary(payload, browseBaseUrl);
     },
     async fetchProjects(fetchOptions) {
       const signal = fetchOptions?.signal;
@@ -129,7 +127,7 @@ export function createJiraClient(options: JiraClientOptions): JiraClient {
   };
 }
 
-function toIssueSummary(issue: IssueBean, browseBaseUrl: string, now: () => number): JiraIssueSummary {
+function toIssueSummary(issue: IssueBean, browseBaseUrl: string): JiraIssueSummary {
   if (!issue || !readString(issue.id) || !readString(issue.key) || !issue.fields || !readString(issue.fields.summary)) {
     throw new Error('Invalid Jira issue response');
   }
@@ -142,7 +140,8 @@ function toIssueSummary(issue: IssueBean, browseBaseUrl: string, now: () => numb
     url: `${browseBaseUrl}/browse/${encodeURIComponent(issue.key!)}`, project,
     status: readNestedString(fields.status, 'name'), statusCategory: readNestedString(status?.statusCategory, 'key'), issueType, type: issueType,
     author: readNestedString(fields.reporter, 'displayName') ?? readNestedString(fields.reporter, 'emailAddress'),
-    descriptionText: toDescriptionText(fields.description), updatedAt: readString(fields.updated) ?? new Date(now()).toISOString(),
+    createdAt: readString(fields.created),
+    descriptionText: toDescriptionText(fields.description), updatedAt: readString(fields.updated) ?? '',
   };
 }
 function readString(value: unknown): string | null { return typeof value === 'string' && value.trim() ? value : null; }

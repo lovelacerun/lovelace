@@ -2,7 +2,7 @@ import { createJiraClient, type JiraClientOptions, type JiraIssueSummary } from 
 import type { ServerConfig, TrackerIssue } from '@lovelace/core';
 import type { Tracker } from './types.js';
 
-type JiraTrackerOptions = Pick<JiraClientOptions, 'fetch' | 'now' | 'requestTimeoutMs'>;
+type JiraTrackerOptions = Pick<JiraClientOptions, 'fetch' | 'requestTimeoutMs'>;
 
 const ISSUE_KEY_PATTERN = /^[A-Za-z][A-Za-z0-9_]*-\d+$/;
 const ISSUE_ID_PATTERN = /^\d+$/;
@@ -38,6 +38,7 @@ function toTrackerIssue(issue: JiraIssueSummary): TrackerIssue {
     issueType: issue.issueType,
     author: issue.author,
     description: issue.descriptionText,
+    createdAt: issue.createdAt,
     updatedAt: issue.updatedAt,
   };
 }

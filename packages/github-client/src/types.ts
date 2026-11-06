@@ -25,5 +25,6 @@ export interface GitHubPullRequest {
   status: PullRequestStatus;
   reviewDecision: ReviewDecision;
   buildStatus: PullRequestBuildStatus | null;
+  createdAt: string;
   updatedAt: string;
 }

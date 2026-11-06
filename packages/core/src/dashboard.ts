@@ -34,11 +34,11 @@ export interface WorkItemSummary {
   changeRequestRefs: Array<Pick<ChangeRequest, 'repository' | 'number'>>;
 }
 
-export type DashboardIssue = Pick<TrackerIssue, 'id' | 'key' | 'title' | 'url' | 'status' | 'issueType' | 'updatedAt'>;
+export type DashboardIssue = Pick<TrackerIssue, 'id' | 'key' | 'title' | 'url' | 'status' | 'issueType' | 'createdAt' | 'updatedAt'>;
 
 /** A change request awaiting the user's review, with its catalog repository when known. */
 export interface DashboardReview extends Pick<ChangeRequest,
-  'id' | 'number' | 'title' | 'url' | 'repository' | 'author' | 'sourceBranch' | 'targetBranch' | 'updatedAt'> {
+  'id' | 'number' | 'title' | 'url' | 'repository' | 'author' | 'sourceBranch' | 'targetBranch' | 'createdAt' | 'updatedAt'> {
   repoId: string | null;
 }
 

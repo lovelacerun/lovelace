@@ -47,6 +47,8 @@ export interface TrackerIssue {
   issueType: string | null;
   author: string | null;
   description: string | null;
+  /** Upstream creation time, when available. */
+  createdAt?: string | null;
   updatedAt: string;
 }
 
@@ -69,6 +71,8 @@ export interface ChangeRequest {
   status: ChangeRequestStatus;
   review: ChangeRequestReview | null;
   build: ChangeRequestBuild | null;
+  /** Upstream creation time, when available. */
+  createdAt?: string | null;
   updatedAt: string;
 }
 

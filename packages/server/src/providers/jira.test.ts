@@ -22,6 +22,7 @@ test('assigned issue sync uses fetch with the Jira search endpoint', async () =>
               issuetype: { name: 'Task' },
               project: { key: 'TEST' },
               reporter: { displayName: 'Test User' },
+              created: '2026-08-01T10:00:00.000Z',
               updated: '2026-08-10T08:00:00.000Z',
             },
           },
@@ -38,13 +39,14 @@ test('assigned issue sync uses fetch with the Jira search endpoint', async () =>
   assert.deepEqual(JSON.parse(String(requestInit?.body)), {
     jql: 'assignee = currentUser() AND statusCategory != Done ORDER BY updated DESC',
     maxResults: 100,
-    fields: ['summary', 'status', 'issuetype', 'description', 'project', 'reporter', 'updated'],
+    fields: ['summary', 'status', 'issuetype', 'description', 'project', 'reporter', 'created', 'updated'],
     expand: 'names,schema',
   });
   assert.equal(issues.length, 1);
   assert.equal(issues[0]?.key, 'TEST-1');
   assert.equal(issues[0]?.url, 'https://jira.atlassian.test/browse/TEST-1');
   assert.equal(issues[0]?.done, false);
+  assert.equal(issues[0]?.createdAt, '2026-08-01T10:00:00.000Z');
 });
 
 test('issues are done by status category, or by status name without one', async () => {

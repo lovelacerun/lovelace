@@ -76,6 +76,7 @@ function toChangeRequest(pullRequest: GitHubPullRequest): ChangeRequest {
     status: pullRequest.status,
     review: pullRequest.reviewDecision ? REVIEWS[pullRequest.reviewDecision] : null,
     build: pullRequest.buildStatus,
+    createdAt: pullRequest.createdAt,
     updatedAt: pullRequest.updatedAt,
   };
 }

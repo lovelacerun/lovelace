@@ -33,6 +33,6 @@ if (github.isConfigured()) {
   catalog; organization configuration is still required for review search.
 - Catalog and review pages are sequential, cursor-cycle checked and capped at 100 pages; exceeding the limit rejects instead of silently truncating. Native Octokit retry/throttling behavior is retained.
 - Review search matches open non-archived org PRs requesting review from the authenticated user. Drafts and authors matching `renovate|dependabot|bot` are omitted. This bot filter is heuristic, not an upstream human identity guarantee.
-- `fetchPullRequest` accepts `repoFullName,number`; invalid references and upstream not-found return null. Review requests and single pull requests share one shape with review/build state and head/base branches.
+- `fetchPullRequest` accepts `repoFullName,number`; invalid references and upstream not-found return null. Review requests and single pull requests share one shape with review/build state, head/base branches and upstream creation/update timestamps.
 
 Data interfaces (`GitHubRepository`, `GitHubPullRequest`) are exported locally. There are no repository-dashboard/security scans or repository-insight file/tag APIs.

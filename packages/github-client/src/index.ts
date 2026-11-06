@@ -115,7 +115,7 @@ async function fetchPullRequestInternal(octokit: GitHubTransport, repoFullName: 
     const pullRequest = response.repository?.pullRequest;
     if (!pullRequest) return null;
     if (!['OPEN', 'MERGED', 'CLOSED'].includes(pullRequest.state) || typeof pullRequest.isDraft !== 'boolean'
-      || !hasStrings(pullRequest, ['title', 'url', 'updatedAt'])) {
+      || !hasStrings(pullRequest, ['title', 'url', 'createdAt', 'updatedAt'])) {
       throw new Error('Invalid GitHub pull request status response');
     }
     const buildStatus = mapStatusCheckRollupState(
@@ -143,7 +143,7 @@ async function fetchAllReviewSearchResults(octokit: GitHubTransport, q: string):
     for (const node of response.search.nodes) {
       if (!isPullRequestSearchNode(node)) continue;
       if (!['OPEN', 'MERGED', 'CLOSED'].includes(node.state) || typeof node.isDraft !== 'boolean'
-        || !hasStrings(node, ['id', 'title', 'url', 'updatedAt']) || !hasStrings(node.repository, ['nameWithOwner'])) {
+        || !hasStrings(node, ['id', 'title', 'url', 'createdAt', 'updatedAt']) || !hasStrings(node.repository, ['nameWithOwner'])) {
         throw new Error('Invalid GitHub review response');
       }
       const buildStatus = mapStatusCheckRollupState(node.commits.nodes.at(0)?.commit.statusCheckRollup?.state ?? null);
@@ -181,6 +181,7 @@ const GITHUB_PULL_REQUEST_STATUS_QUERY = `
         number
         title
         url
+        createdAt
         updatedAt
         state
         isDraft
@@ -211,6 +212,7 @@ const GITHUB_REVIEW_SEARCH_QUERY = `
           number
           title
           url
+          createdAt
           updatedAt
           state
           isDraft
@@ -255,6 +257,7 @@ interface GitHubPullRequestStatusResponse {
       number: number;
       title: string;
       url: string;
+      createdAt: string;
       updatedAt: string;
       state: 'OPEN' | 'MERGED' | 'CLOSED';
       isDraft: boolean;
@@ -284,6 +287,7 @@ interface PullRequestSearchNode {
   number: number;
   title: string;
   url: string;
+  createdAt: string;
   updatedAt: string;
   state: 'OPEN' | 'MERGED' | 'CLOSED';
   isDraft: boolean;
@@ -311,6 +315,7 @@ function toPullRequest(repoFullName: string, node: PullRequestNode, buildStatus:
     status: derivePullRequestStatus({ state: node.state, isDraft: node.isDraft, reviewDecision }),
     reviewDecision,
     buildStatus,
+    createdAt: node.createdAt,
     updatedAt: node.updatedAt,
   };
 }

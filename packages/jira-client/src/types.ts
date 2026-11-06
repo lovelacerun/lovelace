@@ -11,6 +11,7 @@ export interface JiraIssueSummary {
   type: string | null;
   author: string | null;
   descriptionText: string | null;
+  createdAt: string | null;
   updatedAt: string;
 }
 

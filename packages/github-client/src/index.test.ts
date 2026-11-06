@@ -6,7 +6,7 @@ import { createGitHubClient, type GitHubTransport } from './index.js';
 
 const repo = (id: number) => ({ databaseId: id, name: `repo-${id}`, nameWithOwner: `org/repo-${id}`, url: `https://github.test/org/repo-${id}`, isArchived: false, defaultBranchRef: { name: 'main' }, repositoryTopics: { nodes: [{ topic: { name: 'INFRA' } }] } });
 const catalog = (nodes = [repo(1)], endCursor: string | null = null) => ({ viewer: { repositories: { nodes, pageInfo: { hasNextPage: Boolean(endCursor), endCursor } } } });
-const pr = (id: number, author: string, isDraft = false) => ({ __typename: 'PullRequest', id: String(id), databaseId: id, number: id, title: 'fix: Example', url: `https://github.test/org/repo/pull/${id}`, updatedAt: '2026-10-01T00:00:00Z', state: 'OPEN', isDraft, reviewDecision: 'APPROVED', headRefName: 'fix', baseRefName: 'main', commits: { nodes: [{ commit: { statusCheckRollup: { state: 'SUCCESS' } } }] }, repository: { nameWithOwner: 'org/repo' }, author: { login: author } });
+const pr = (id: number, author: string, isDraft = false) => ({ __typename: 'PullRequest', id: String(id), databaseId: id, number: id, title: 'fix: Example', url: `https://github.test/org/repo/pull/${id}`, createdAt: '2026-09-01T10:00:00Z', updatedAt: '2026-10-01T00:00:00Z', state: 'OPEN', isDraft, reviewDecision: 'APPROVED', headRefName: 'fix', baseRefName: 'main', commits: { nodes: [{ commit: { statusCheckRollup: { state: 'SUCCESS' } } }] }, repository: { nameWithOwner: 'org/repo' }, author: { login: author } });
 function transport(graphql: (query: string, variables: Record<string, unknown>) => Promise<unknown>): GitHubTransport {
   return { graphql } as unknown as GitHubTransport;
 }
@@ -54,7 +54,8 @@ test('real Octokit request injection honors enterprise host and token without ex
 });
 
 test('review searches paginate atomically and omit drafts and bots', async () => {
-  const github = createGitHubClient({ ...credentials, octokit: transport(async (_, args) => {
+  const github = createGitHubClient({ ...credentials, octokit: transport(async (query, args) => {
+    assert.match(query, /createdAt/);
     assert.match(String(args.q), /org:org.*review-requested:@me/);
     return { search: { nodes: args.cursor ? [pr(3, 'dependabot[bot]')] : [pr(1, 'human'), pr(2, 'renovate', true), null, { __typename: 'Issue' }], pageInfo: { hasNextPage: !args.cursor, endCursor: args.cursor ? null : 'next' } } };
   }) });
@@ -63,6 +64,7 @@ test('review searches paginate atomically and omit drafts and bots', async () =>
   assert.equal(result[0]?.status, 'approved');
   assert.equal(result[0]?.buildStatus, 'success');
   assert.equal(result[0]?.headRefName, 'fix');
+  assert.equal(result[0]?.createdAt, '2026-09-01T10:00:00Z');
 });
 
 test('failure on a later page or an incomplete response rejects instead of returning a partial catalog', async () => {
@@ -92,12 +94,14 @@ test('missing auth rejects without calling the transport', async () => {
 
 test('pull requests retain branches, merge, approval and build metadata; not found is null', async () => {
   let missing = false;
-  const github = createGitHubClient({ ...credentials, octokit: transport(async () => {
+  const github = createGitHubClient({ ...credentials, octokit: transport(async (query) => {
+    assert.match(query, /createdAt/);
     if (missing) throw { errors: [{ type: 'NOT_FOUND' }] };
     return { repository: { pullRequest: { ...pr(1, 'human'), state: 'MERGED' } } };
   }) });
   const pullRequest = await github.fetchPullRequest('org/repo', 1);
   assert.equal(pullRequest?.status, 'merged');
+  assert.equal(pullRequest?.createdAt, '2026-09-01T10:00:00Z');
   assert.equal(pullRequest?.buildStatus, 'success');
   assert.deepEqual([pullRequest?.headRefName, pullRequest?.baseRefName, pullRequest?.updatedAt], ['fix', 'main', '2026-10-01T00:00:00Z']);
   missing = true;

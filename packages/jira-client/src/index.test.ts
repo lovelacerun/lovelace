@@ -3,7 +3,7 @@ import test from 'node:test';
 import { createJiraClient } from './index.js';
 
 const credentials = { baseUrl: 'https://api.atlassian.test/ex/jira/cloud-id', siteUrl: 'https://jira.test', email: 'fixture@example.test', apiToken: 'fixture-only-token' };
-const issue = (id = '1') => ({ id, key: `TEST-${id}`, fields: { summary: 'Test issue', status: { name: 'In Progress', statusCategory: { key: 'indeterminate' } }, project: { key: 'TEST' }, issuetype: { name: 'Task' }, reporter: { displayName: 'Fixture User' }, updated: '2026-10-01T00:00:00Z', description: { type: 'doc', version: 1, content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Example description' }] }] } } });
+const issue = (id = '1') => ({ id, key: `TEST-${id}`, fields: { summary: 'Test issue', status: { name: 'In Progress', statusCategory: { key: 'indeterminate' } }, project: { key: 'TEST' }, issuetype: { name: 'Task' }, reporter: { displayName: 'Fixture User' }, created: '2026-09-01T10:00:00+0200', updated: '2026-10-01T00:00:00Z', description: { type: 'doc', version: 1, content: [{ type: 'paragraph', content: [{ type: 'text', text: 'Example description' }] }] } } });
 
 test('assigned search paginates with nextPageToken, injects auth, converts ADF and preserves cloud URL paths', async () => {
   const bodies: Record<string, unknown>[] = [];
@@ -19,6 +19,8 @@ test('assigned search paginates with nextPageToken, injects auth, converts ADF a
   assert.equal(issues[0]?.descriptionText, 'Example description');
   assert.equal(issues[0]?.author, 'Fixture User');
   assert.equal(issues[0]?.statusCategory, 'indeterminate');
+  assert.equal(issues[0]?.createdAt, '2026-09-01T10:00:00+0200');
+  assert.ok((bodies[0]?.fields as string[]).includes('created'));
   assert.equal(bodies[0]?.nextPageToken, undefined);
   assert.equal(bodies[1]?.nextPageToken, 'next');
   assert.match(String(bodies[0]?.jql), /statusCategory != Done/);
@@ -43,9 +45,12 @@ test('individual issue fetch encodes path, selects fields and treats 404 as null
     urls.push(String(input));
     return urls.length === 1 ? Response.json(issue()) : new Response(null, { status: 404 });
   } });
-  assert.equal((await jira.fetchIssue('TEST/1'))?.key, 'TEST-1');
+  const result = await jira.fetchIssue('TEST/1');
+  assert.equal(result?.key, 'TEST-1');
+  assert.equal(result?.createdAt, '2026-09-01T10:00:00+0200');
   assert.equal(new URL(urls[0]!).pathname, '/ex/jira/cloud-id/rest/api/3/issue/TEST%2F1');
   assert.match(new URL(urls[0]!).searchParams.get('fields')!, /summary,status/);
+  assert.match(new URL(urls[0]!).searchParams.get('fields')!, /created/);
   assert.equal(await jira.fetchIssue('missing'), null);
   assert.equal(await jira.fetchIssue('missing'), null);
   assert.equal(urls.length, 3);
@@ -104,6 +109,15 @@ test('caller cancellation reaches every request', async () => {
   await jira.fetchAssignedIssues({ signal: controller.signal });
   controller.abort();
   assert.equal(signals[0]?.aborted, true);
+});
+
+test('missing upstream timestamps are not replaced with the fetch time', async () => {
+  const jira = createJiraClient({ ...credentials, fetch: async () => Response.json({
+    id: '1', key: 'TEST-1', fields: { summary: 'No timestamps' },
+  }) });
+  const result = await jira.fetchIssue('TEST-1');
+  assert.equal(result?.createdAt, null);
+  assert.equal(result?.updatedAt, '');
 });
 
 test('Jira validates the request timeout before any transport work', () => {

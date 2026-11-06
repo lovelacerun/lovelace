@@ -35,14 +35,14 @@ test('server facade follows token changes made by the auth routes', async () => 
 
 test('pull requests become change requests keyed by repository and number', async () => {
   const github = createGitHubCodeHost(config(), { octokit: { graphql: async () => ({ repository: { pullRequest: {
-    number: 7, title: 'Fix', url: 'https://github.com/example/service/pull/7', updatedAt: '2026-10-01T00:00:00Z', state: 'OPEN', isDraft: false,
+    number: 7, title: 'Fix', url: 'https://github.com/example/service/pull/7', createdAt: '2026-09-01T10:00:00Z', updatedAt: '2026-10-01T00:00:00Z', state: 'OPEN', isDraft: false,
     reviewDecision: 'CHANGES_REQUESTED', headRefName: 'fix', baseRefName: 'main', author: { login: 'ann' },
     commits: { nodes: [{ commit: { statusCheckRollup: { state: 'PENDING' } } }] },
   } } }) } as never });
   assert.deepEqual(await github.fetchChangeRequest({ repository: 'example/service', number: 7 }), {
     id: 'example/service#7', repository: 'example/service', number: 7, title: 'Fix', url: 'https://github.com/example/service/pull/7',
     author: 'ann', sourceBranch: 'fix', targetBranch: 'main', status: 'changes-requested', review: 'changes-requested', build: 'pending',
-    updatedAt: '2026-10-01T00:00:00Z',
+    createdAt: '2026-09-01T10:00:00Z', updatedAt: '2026-10-01T00:00:00Z',
   });
 });
 

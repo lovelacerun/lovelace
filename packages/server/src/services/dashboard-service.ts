@@ -86,6 +86,7 @@ function buildPendingIssues(
       url: issue.url,
       status: issue.status,
       issueType: issue.issueType,
+      createdAt: issue.createdAt,
       updatedAt: issue.updatedAt,
     }));
 }
@@ -102,6 +103,7 @@ function buildPendingReviews(database: DatabaseState, codeHost: DashboardDeps['c
     author: review.author,
     sourceBranch: review.sourceBranch,
     targetBranch: review.targetBranch,
+    createdAt: review.createdAt,
     updatedAt: review.updatedAt,
   }));
 }
