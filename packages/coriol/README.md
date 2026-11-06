@@ -97,3 +97,20 @@ preparation, and stay isolated across concurrent managers without changing
 Additional ecosystems can implement `WorkspaceToolchain` and be supplied in the
 manager options. User-owned ignored files such as `.env` should eventually be
 handled by a separate explicit artifact policy rather than being inferred.
+
+## Package
+
+ESM on Node 24 or newer. The public entry point exports `WorkspaceManager`,
+`npmToolchain` and their types, including `CommandEnvironmentPolicy` and
+`WorkspaceCommand`. There are no Lovelace workspace dependencies.
+
+Build and pack from the repository root:
+
+```sh
+pnpm --filter @lovelace/coriol build
+pnpm --filter @lovelace/coriol pack --pack-destination /tmp/coriol-pack
+```
+
+The clean tarball contains JavaScript, declarations, source maps, sources,
+README and MIT license; tests are excluded. Packing does not publish it.
+Whether Coriol is released separately remains a product decision.

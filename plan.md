@@ -25,8 +25,10 @@ In order:
    Done.
 9. ~~Detail/start timestamps for work items, Jira and reviews; native relative
    formatting through seven days, then local date and time.~~ Done.
-10. Coriol: inject environment policy (direnv, Volta, PATH); prepare it for
-   publishing.
+10. ~~Coriol: inject environment policy (direnv, Volta, PATH); prepare it for
+   publishing.~~ Done. Server-owned policy, isolated per manager; clean
+   standalone tarball with declarations, sources and license. Publication
+   remains undecided.
 
 Naming throughout: Herdr workspace, worktree, task directory; one word for
 harness/tool/agent.

@@ -1,19 +1,34 @@
 {
   "name": "@lovelace/coriol",
   "version": "0.1.0",
+  "description": "Managed Git worktrees with dependency-warm seed clones",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/lovelacerun/lovelace.git",
+    "directory": "packages/coriol"
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "type": "module",
   "files": [
     "dist",
-    "!dist/**/*.test.*"
+    "src",
+    "!**/*.test.*"
   ],
   "exports": {
     ".": {
-      "import": "./dist/index.js",
-      "types": "./dist/index.d.ts"
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
     }
   },
   "scripts": {
-    "build": "tsc",
+    "build": "rm -rf dist && tsc",
+    "prepack": "pnpm build",
     "dev": "tsc --watch",
     "test": "pnpm build && node --test dist/**/*.test.js"
   },
