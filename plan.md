@@ -23,7 +23,9 @@ In order:
    environment overrides.~~ Done.
 8. ~~TUI: a route union for navigation, split `app.ts`, one launch dialog.~~
    Done.
-9. Coriol: inject environment policy (direnv, Volta, PATH); prepare it for
+9. ~~Detail/start timestamps for work items, Jira and reviews; native relative
+   formatting through seven days, then local date and time.~~ Done.
+10. Coriol: inject environment policy (direnv, Volta, PATH); prepare it for
    publishing.
 
 Naming throughout: Herdr workspace, worktree, task directory; one word for

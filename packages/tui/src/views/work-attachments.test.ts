@@ -23,7 +23,7 @@ it('uses separate padded provider surfaces and space between entries', () => {
   assert.match(plain(lines), /✓ Approved  ✓ Build passed/);
   assert.ok(!plain(lines).includes('Status:'));
   const bands = lines.filter(line => line.includes(jiraCardBg));
-  assert.equal(bands.length, 10);
+  assert.equal(bands.length, 14);
   for (const band of bands) {
     assert.ok(band.includes(prCardBg));
     assert.ok(band.endsWith(reset + ' '), 'outside margin must use the terminal background');
@@ -53,7 +53,7 @@ it('keeps the padded square surfaces without any outlines', () => {
   const lines = renderAttachments([jira], 50).map(stripTerminalSequences);
   assert.equal(lines[2], ' '.repeat(50));
   assert.equal(lines[3], '   PROJ-1471' + ' '.repeat(38));
-  assert.equal(lines[6], ' '.repeat(50));
+  assert.equal(lines[8], ' '.repeat(50));
   assert.ok(!plain(lines).match(/[╭╮╰╯│─]/));
 });
 
@@ -117,6 +117,21 @@ it('does not register missing or unsafe provider URLs', () => {
   const builder = new DocumentBuilder(new AppState({ onInvalidate() {} }), 80);
   renderAttachments([jira, meta('pull-request', { url: 'javascript:alert(1)' })], 80, builder);
   assert.deepEqual(builder.actions, []);
+});
+
+it('uses upstream timestamps for attached Jira and both PR kinds, not attachment timestamps', () => {
+  const createdAt = '2026-09-01T10:00:00Z';
+  const updatedAt = '2026-09-02T11:00:00Z';
+  const absolute = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+  for (const type of ['tracker-item', 'pull-request', 'change-request'] as const) {
+    const item = meta(type, { ...jira.payload, ...pr.payload, createdAt, updatedAt });
+    item.createdAt = '2000-01-01T00:00:00Z';
+    item.updatedAt = item.createdAt;
+    const text = plain(renderAttachments([item], 80)).replace(/\s+/g, ' ');
+    assert.ok(text.includes('Created ' + absolute.format(Date.parse(createdAt))));
+    assert.ok(text.includes('Updated ' + absolute.format(Date.parse(updatedAt))));
+    assert.ok(!text.includes('2000'));
+  }
 });
 
 it('sanitizes provider text before applying styling', () => {

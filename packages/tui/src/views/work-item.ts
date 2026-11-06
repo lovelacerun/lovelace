@@ -1,5 +1,6 @@
 import { attachmentsOfType } from '@lovelace/core';
 import type { AppState, Route } from '../state.js';
+import { timestampLines } from './timestamps.js';
 import { keyColor, warning, bold, accent, muted, faint, success, heading, icons, reset, special } from '../theme.js';
 import { safeText, wrap } from '@lovelace/tui-components';
 import { renderLaunchProgress } from './launch-progress.js';
@@ -26,6 +27,7 @@ export function renderWorkItem(state: AppState, { details }: Extract<Route, { ki
   for (const line of wrap(title, width)) b.line(bold + line + reset);
   b.line(muted + meta([stateBadge(workItem.state) + muted, sessions.length && plural(sessions.length, 'session'),
     repositories && plural(repositories, 'repo')]) + reset);
+  for (const line of timestampLines(workItem, width)) b.line(line);
   b.line();
   gap();
 

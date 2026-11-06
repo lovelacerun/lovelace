@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { visibleWidth } from '@earendil-works/pi-tui';
+import { stripTerminalSequences, visibleWidth } from '@earendil-works/pi-tui';
 import type { AgentSession, DashboardResponse, TrackerIssue, TrackedChangeRequest, WorkItemDetails } from '@lovelace/core';
 import { renderPage } from './views/page.js';
 import { AppState } from './state.js';
 import { renderDashboard } from './views/dashboard.js';
+import { renderSidebar } from './views/sidebar.js';
+import { timestampLines } from './views/timestamps.js';
 
 function makeDashboard(overrides: Partial<DashboardResponse> = {}): DashboardResponse {
   return {
@@ -130,6 +132,53 @@ describe('renderJira', () => {
     state.setDraft({ text: 'saved prompt', requestId: 'retry-id' });
     assert.deepEqual(renderPage(state, 80).actions, [{ kind: 'launch-retry' }, { kind: 'open-url', url: 'https://x/' }]);
     checkWidth(doc.lines, 80);
+  });
+});
+
+describe('detail timestamps', () => {
+  it('shows work, Jira and review timestamps only on detail/start pages in every layout', t => {
+    const now = Date.parse('2026-10-07T12:00:00Z');
+    t.mock.timers.enable({ apis: ['Date'], now });
+    const timestamps = { createdAt: '2026-09-01T10:00:00Z', updatedAt: '2026-10-07T10:00:00Z' };
+    const data = makeDashboard();
+    Object.assign(data.activeWorkItems[0]!, timestamps);
+    Object.assign(data.pendingIssues[0]!, timestamps);
+    data.pendingReviews.push({
+      id: 'org/repo#1', number: 1, repository: 'org/repo', title: 'Review me', url: 'https://github.test/org/repo/pull/1',
+      author: 'human', repoId: 'repo', sourceBranch: 'fix', targetBranch: 'main', ...timestamps,
+    });
+    const state = new AppState({ onInvalidate() {} });
+    state.applyDashboardResponse(data);
+
+    for (const width of [36, 50, 80, 120]) for (const compact of [false, true]) {
+      state.layout = { compact, sidebar: width >= 80 };
+      const expected = timestampLines(timestamps, width, now).map(stripTerminalSequences);
+      for (const workState of ['active', 'done', 'cancelled'] as const) for (const started of [false, true]) {
+        const workItem = { ...data.activeWorkItems[0]!, state: workState, startedAt: started ? timestamps.createdAt : null };
+        state.route = { kind: 'work', id: workItem.id, details: { workItem, attachments: [], launches: [] } };
+        const doc = renderPage(state, width);
+        checkWidth(doc.lines, width);
+        const lines = doc.lines.map(stripTerminalSequences);
+        for (const line of expected) assert.ok(lines.includes(line), line);
+      }
+      state.route = { kind: 'jira', issue: data.pendingIssues[0]!, details: null };
+      for (const line of expected) assert.ok(renderPage(state, width).lines.map(stripTerminalSequences).includes(line));
+      // Loaded Jira details take precedence over the dashboard summary.
+      state.route.details = {
+        ...data.pendingIssues[0]!, project: null, done: false, author: null, description: null,
+        ...timestamps, updatedAt: '2026-10-07T11:00:00Z',
+      };
+      const loadedLines = renderPage(state, width).lines.map(stripTerminalSequences);
+      for (const line of timestampLines(state.route.details, width, now).map(stripTerminalSequences)) assert.ok(loadedLines.includes(line));
+      state.route = { kind: 'review', review: data.pendingReviews[0]! };
+      const review = renderPage(state, width);
+      checkWidth(review.lines, width);
+      for (const line of expected) assert.ok(review.lines.map(stripTerminalSequences).includes(line));
+
+      assert.doesNotMatch(renderSidebar(state, 40).lines.map(stripTerminalSequences).join('\n'), /Created|Updated/);
+      state.route = { kind: 'home' };
+      assert.doesNotMatch(renderDashboard(state, width).lines.map(stripTerminalSequences).join('\n'), /Created|Updated/);
+    }
   });
 });
 

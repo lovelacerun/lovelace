@@ -94,6 +94,9 @@ user's Herdr panes. Use temporary SQLite, the fake Herdr in
   caches; clients never keep their own cache.
 - Prefer `@nkzw/core` helpers and generated provider clients over hand-written
   ones; import types instead of copying them.
+- Detail/start pages show creation and last-change timestamps using native
+  `Intl`: relative through seven days, then local date and time. Keep them
+  out of lists and the sidebar; upstream times are not cache-refresh times.
 - Conventional Commits in English.
 - Keep package READMEs in sync with behaviour; they are the reference for
   their package. Product or architecture changes also update `readme.md`,

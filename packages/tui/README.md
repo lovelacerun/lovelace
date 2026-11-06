@@ -52,6 +52,12 @@ terminal's own default (e.g. a transparent background):
 | `accent`, `key`, `special` | Focus and keys, issue keys, agents and merged PRs |
 | `success`, `warning`, `danger` | Passed/done, needs attention, failed/offline |
 
+Detail/start pages show **Created** and **Updated**, including attached Jira issues
+and pull requests. Times up to seven elapsed days old are relative; older ones
+show the local date and time, using native `Intl` formatters. Jira/PR times
+come from upstream, not cache refreshes; unavailable timestamps show Unknown.
+Home lists and the sidebar do not show timestamps.
+
 Pages have no inline prompt input; every launch starts from the launch dialog
 (`n`), described below.
 

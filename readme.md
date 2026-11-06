@@ -78,7 +78,9 @@ lovelace tui          # the workbench
 lovelace help         # all commands
 ```
 
-Home shows what you worked on yesterday and today. From the TUI you can start
+Home shows what you worked on yesterday and today. Detail/start pages show
+creation and last-change times: relative through seven days, then the local
+date and time. Lists and the sidebar stay timestamp-free. From the TUI you can start
 new work, work on a pending Jira issue or a review, or another session on a
 work item, each from one dialog that picks repositories, a template and an
 agent; open or continue sessions; and mark work done. Commands that need the server start it in the

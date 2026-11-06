@@ -1,4 +1,5 @@
 import type { AppState, Route } from '../state.js';
+import { timestampLines } from './timestamps.js';
 import { accent, bold, faint, heading, icons, keyColor, muted, reset } from '../theme.js';
 import { browserUrl } from '../browser.js';
 import { hyperlink } from '@earendil-works/pi-tui';
@@ -13,6 +14,7 @@ export function renderJira(state: AppState, route: Extract<Route, { kind: 'jira'
   for (const line of wrap(issue.title, width)) b.line(bold + line + reset);
   b.line(muted + meta([accent + icons.active + reset + muted + ' ' + safeText(issue.status ?? 'unknown'),
     'issueType' in issue && issue.issueType && safeText(issue.issueType)]) + reset);
+  for (const line of timestampLines(issue, width)) b.line(line);
   const url = browserUrl(issue.url);
   b.line(url ? hyperlink(faint + safeText(issue.url) + reset, url) : faint + safeText(issue.url) + reset);
   b.line();

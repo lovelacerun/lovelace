@@ -4,6 +4,7 @@ import { Card, columns, columnWidths, COLUMNS_MIN_WIDTH, LinkCard, safeText, typ
 import { warning, bold, accent, muted, success, heading, icons, jiraCardTheme, prCardTheme, danger, reset, special } from '../theme.js';
 import { browserUrl } from '../browser.js';
 import type { DocumentBuilder } from './common.js';
+import { timestampLines } from './timestamps.js';
 
 type Status = [glyph: string, label: string, color: string];
 
@@ -78,6 +79,7 @@ export function renderAttachments(attachments: WorkItemDetails['attachments'], w
       accent + bold + safeText(data.key || issue.externalId) + reset,
       safeText(data.title, true),
       jiraStatus(data.status),
+      ...timestampLines(data, Card.contentWidth(leftWidth)),
     ], leftWidth, jiraCardTheme, data.url, startRow + jira.length, document));
   }
   if (!issues.length) jira.push(muted + '  None attached.' + reset);
@@ -95,6 +97,7 @@ export function renderAttachments(attachments: WorkItemDetails['attachments'], w
       bold + '#' + safeText(String(data.number ?? request.externalId)) + reset + '  ' + lookup(prStatus(), status, status || 'Unknown'),
       muted + safeText(data.repository) + reset,
       ...(visibleWidth(checks) <= Card.contentWidth(rightWidth) ? [checks] : [reviewLabel, buildLabel]),
+      ...timestampLines(data, Card.contentWidth(rightWidth)),
       ...releaseLines('releaseChecks' in data ? data.releaseChecks : undefined),
     ], rightWidth, prCardTheme, data.url, prStartRow + prs.length, document));
   }

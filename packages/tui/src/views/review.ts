@@ -1,4 +1,5 @@
 import type { AppState, Route } from '../state.js';
+import { timestampLines } from './timestamps.js';
 import { accent, bold, faint, icons, keyColor, muted, reset } from '../theme.js';
 import { browserUrl } from '../browser.js';
 import { hyperlink } from '@earendil-works/pi-tui';
@@ -12,6 +13,7 @@ export function renderReview(state: AppState, { review }: Extract<Route, { kind:
   for (const line of wrap(review.title, width)) b.line(bold + line + reset);
   b.line(muted + meta([review.author && safeText(review.author),
     review.sourceBranch && safeText(review.sourceBranch) + (review.targetBranch ? ' → ' + safeText(review.targetBranch) : '')]) + reset);
+  for (const line of timestampLines(review, width)) b.line(line);
   const url = browserUrl(review.url);
   b.line(url ? hyperlink(faint + safeText(review.url) + reset, url) : faint + safeText(review.url) + reset);
   b.line();
