@@ -58,6 +58,8 @@ Agents need isolated, ready-to-run checkouts quickly. Coriol keeps seed
 clones, creates worktrees on fresh branches and reuses `node_modules`
 copy-on-write (`@openclaw/fs-safe`) when the lockfile matches. It knows
 nothing about work items, so it can be published separately or replaced.
+Environment policy (direnv, Volta and PATH) is injected by the server rather
+than discovered inside Coriol; standalone callers choose their own policy.
 
 ## Plugins are executables with a JSON contract
 

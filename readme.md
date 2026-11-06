@@ -114,7 +114,7 @@ add `~/.local/share/lovelace/workspaces/.envrc` containing
 | `client` | tRPC client for the server, typed from its router |
 | `tui` | Terminal workbench |
 | `core` | Shared types and configuration |
-| `coriol` | Seed clones and dependency-warm worktrees |
+| `coriol` | Standalone seed clones and dependency-warm worktrees; environment policy injected by the server |
 | `jira-client`, `github-client` | Provider API clients |
 | `cache`, `secrets`, `model-catalog`, `tui-components`, `adf-converter` | Standalone helpers |
 

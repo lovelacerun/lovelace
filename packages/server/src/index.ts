@@ -17,6 +17,7 @@ import { refreshAttachedTrackerIssues } from './services/tracker-item-service.js
 import { createReleaseCheckPlugin } from './plugins/release-checks.js';
 import { refreshAssignedIssues, refreshReleaseChecks, refreshRepoCache, refreshReviewRequests } from './sync.js';
 import { loadTools } from './tools/tool-loader.js';
+import { createCoriolEnvironmentPolicy } from './tools/coriol-environment.js';
 
 export { resolveMacOSSystemProxy } from './macos-system-proxy.js';
 export { findExecutable } from './tools/executables.js';
@@ -47,7 +48,12 @@ export async function startServer(options: StartServerOptions = {}): Promise<voi
   const codeHost = createCachedCodeHost(cache, createGitHubCodeHost(config));
   const tracker = createCachedTracker(cache, createJiraTracker(config));
   const tools = loadTools(logger);
-  const workspaceManager = new WorkspaceManager({ root: config.dataDir, toolchainsDirectory: join(config.cacheDir, 'toolchains'), logger });
+  const workspaceManager = new WorkspaceManager({
+    root: config.dataDir,
+    toolchainsDirectory: join(config.cacheDir, 'toolchains'),
+    environmentPolicy: createCoriolEnvironmentPolicy(),
+    logger,
+  });
   const herdr = createHerdrClient(config.herdr);
   const releaseChecks = config.plugins?.releaseChecks && createReleaseCheckPlugin(config.plugins.releaseChecks, config.configDir);
   const app = buildServer({ config, tools, listModels: createCachedModels(cache), workspaceManager, herdr, database, cache, codeHost, tracker, releaseChecks }, logger);

@@ -4,6 +4,7 @@ import { probeTreeClone } from '@openclaw/fs-safe/copy';
 import pLimit, { type LimitFunction } from 'p-limit';
 import { createWorktree, ensureClone, refreshSeed, removeWorktree, resolveBaseRef } from './git.js';
 import { npmToolchain } from './npm-toolchain.js';
+import { withEnvironmentPolicy, type CommandEnvironmentPolicy } from './process.js';
 import { assertInside, validatePathSegment, validateRepository, validateRepositoryId } from './paths.js';
 import { ToolchainManager } from './toolchain-manager.js';
 import type {
@@ -24,12 +25,14 @@ export class WorkspaceManager {
   readonly repositoriesDirectory: string;
   readonly workspacesDirectory: string;
   readonly #toolchains: ToolchainManager;
+  readonly #environmentPolicy: CommandEnvironmentPolicy | undefined;
   /** Manager-wide bound on concurrent clone, fetch, worktree and toolchain work. */
   readonly #limit: LimitFunction;
   readonly #repositoryLocks = new Map<string, Promise<unknown>>();
 
   constructor(options: WorkspaceManagerOptions) {
     this.root = resolve(options.root);
+    this.#environmentPolicy = options.environmentPolicy;
     this.repositoriesDirectory = join(this.root, 'repos');
     this.workspacesDirectory = join(this.root, 'workspaces');
     const toolchainStateDirectory = resolve(options.toolchainsDirectory ?? join(this.root, 'toolchains'));
@@ -131,7 +134,7 @@ export class WorkspaceManager {
    */
   async #schedule<T>(repositoryId: string, task: () => Promise<T>): Promise<T> {
     const previous = this.#repositoryLocks.get(repositoryId) ?? Promise.resolve();
-    const next = previous.catch(() => undefined).then(() => this.#limit(task));
+    const next = previous.catch(() => undefined).then(() => this.#limit(() => withEnvironmentPolicy(this.#environmentPolicy, task)));
     this.#repositoryLocks.set(repositoryId, next);
     try {
       return await next;

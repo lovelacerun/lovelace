@@ -1,61 +1,50 @@
 import assert from 'node:assert/strict';
-import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { delimiter, join } from 'node:path';
+import { join } from 'node:path';
 import test from 'node:test';
-import { run, withCommandRunner } from './process.js';
+import { run, withEnvironmentPolicy, type CommandEnvironmentPolicy } from './process.js';
 
-test('runs toolchain commands through direnv when available', async () => {
+test('executes directly with the inherited environment by default', async () => {
+  const output = await run(process.execPath, ['-e', 'process.stdout.write(process.env.PATH ?? "")'], process.cwd());
+  assert.equal(output, process.env.PATH ?? '');
+});
+
+test('uses exactly the injected environment without discovering direnv or Volta', async () => {
   const root = await mkdtemp(join(tmpdir(), 'coriol-process-'));
-  const bin = join(root, 'bin');
-  const direnv = join(bin, 'direnv');
-
   try {
-    await mkdir(bin);
-    await writeFile(direnv, '#!/bin/sh\ntest "$1" = exec || exit 2\nshift\nexport CORIOL_DIRENV_CWD="$1"\nshift\nexport CORIOL_DIRENV_LOADED=yes\nexec "$@"\n');
-    await chmod(direnv, 0o700);
-
-    const output = await run(
-      process.execPath,
-      ['-e', 'process.stdout.write(`${process.env.CORIOL_DIRENV_LOADED}:${process.env.CORIOL_DIRENV_CWD}`)'],
-      root,
-      { PATH: bin },
+    await writeFile(join(root, 'direnv'), '#!/bin/sh\nexit 42\n');
+    await chmod(join(root, 'direnv'), 0o700);
+    const output = await withEnvironmentPolicy(
+      (request) => ({ ...request, env: { PATH: root, POLICY: 'injected' } }),
+      () => run(process.execPath, ['-e', 'process.stdout.write(JSON.stringify({ path: process.env.PATH, home: process.env.HOME, policy: process.env.POLICY }))'], root),
     );
-
-    assert.equal(output, `yes:${root}`);
+    assert.deepEqual(JSON.parse(output), { path: root, policy: 'injected' });
   } finally {
     await rm(root, { recursive: true, force: true });
   }
 });
 
-test('runs toolchain commands directly when direnv is unavailable', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'coriol-process-'));
-
-  try {
-    const output = await run(
-      process.execPath,
-      ['-e', 'process.stdout.write(process.env.CORIOL_DIRENV_LOADED ?? "direct")'],
-      root,
-      { PATH: [root, '/usr/bin', '/bin'].join(delimiter) },
-    );
-
-    assert.equal(output, 'direct');
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
-});
-
-test('command policies remain scoped across concurrent operations and nested calls', async () => {
-  const runner = (value: string) => async () => value;
+test('environment policies remain scoped across concurrent operations and nested calls', async () => {
+  const policy = (value: string): CommandEnvironmentPolicy => (request) => ({
+    ...request,
+    command: process.execPath,
+    args: ['-e', `process.stdout.write(${JSON.stringify(value)})`],
+  });
   const results = await Promise.all([
-    withCommandRunner(runner('first'), async () => {
+    withEnvironmentPolicy(policy('first'), async () => {
       await new Promise(resolve => setTimeout(resolve, 10));
-      assert.equal(await withCommandRunner(runner('nested'), () => run('unused', [], '.')), 'nested');
+      assert.equal(await withEnvironmentPolicy(policy('nested'), () => run('unused', [], '.')), 'nested');
       return run('unused', [], '.');
     }),
-    withCommandRunner(runner('second'), () => run('unused', [], '.')),
+    withEnvironmentPolicy(policy('second'), () => run('unused', [], '.')),
   ]);
   assert.deepEqual(results, ['first', 'second']);
-  const outside = await run(process.execPath, ['-e', "process.stdout.write('outside')"], process.cwd(), process.env, false);
+  const outside = await run(process.execPath, ['-e', "process.stdout.write('outside')"], process.cwd());
   assert.equal(outside, 'outside');
+});
+
+test('reports stderr and non-zero exits', async () => {
+  await assert.rejects(run(process.execPath, ['-e', 'process.stderr.write("broken"); process.exit(1)'], process.cwd()), /broken/);
+  await assert.rejects(run(process.execPath, ['-e', 'process.exit(1)'], process.cwd()), /failed/);
 });

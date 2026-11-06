@@ -66,6 +66,15 @@ polling via `workItems.get`. Disconnects never cancel preparation.
 Orphaned pending/preparing records become retryable failures on server startup;
 worktrees and dependency caches are kept. Cleanup skips active preparations.
 
+## Workspace environment
+
+The server injects `src/tools/coriol-environment.ts` into Coriol. It augments
+PATH with the usual executable locations, prefers Volta's shims when installed
+(`VOLTA_HOME` or `~/.volta`) over inherited tool-image paths, and wraps npm
+preparation in `direnv exec` when available. Git runs directly. The policy
+applies to seeds and worktrees without changing the server's environment;
+Coriol itself has none of these defaults.
+
 ## Providers
 
 Services see one `Tracker` and one `CodeHost` (`src/providers/types.ts`),

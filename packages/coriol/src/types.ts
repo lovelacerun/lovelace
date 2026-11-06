@@ -1,3 +1,5 @@
+import type { CommandEnvironmentPolicy } from './process.js';
+
 export interface RepositoryDescriptor {
   /** Stable identifier used for the managed clone path. */
   id: string;
@@ -86,6 +88,8 @@ export interface WorkspaceToolchain {
 
 export interface WorkspaceManagerOptions {
   root: string;
+  /** Command wrappers and environment for this manager's Git and toolchain commands. Defaults to direct execution. */
+  environmentPolicy?: CommandEnvironmentPolicy;
   /** Warm-toolchain fingerprints; losing them only costs a reinstall. Defaults to `<root>/toolchains`. */
   toolchainsDirectory?: string;
   logger?: WorkspaceManagerLogger;

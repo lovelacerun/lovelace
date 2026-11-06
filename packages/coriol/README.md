@@ -67,9 +67,32 @@ and `package-lock.json`.
 Toolchain preparation is automatic for every workspace; callers cannot disable
 it per workspace.
 
-When `direnv` is available, Coriol runs toolchain commands with `direnv exec`
-so credentials and other project environment variables apply to both managed
-seeds and worktrees. Without `direnv`, it executes commands directly.
+## Environment policy
+
+By default, Coriol executes Git and npm directly with the inherited environment.
+It does not discover direnv or Volta, read application configuration, or rewrite
+PATH. Callers can inject a per-manager `environmentPolicy`:
+
+```ts
+const manager = new WorkspaceManager({
+  root: '/path/to/coriol',
+  environmentPolicy: (request) => ({
+    ...request,
+    ...(request.kind === 'toolchain' ? {
+      command: '/usr/local/bin/direnv',
+      args: ['exec', request.cwd, request.command, ...request.args],
+    } : {}),
+    env: { ...process.env, PATH: '/custom/bin:/usr/bin:/bin' },
+  }),
+});
+```
+
+The policy receives `{ command, args, cwd, kind }` (`git` or `toolchain`) and
+returns the command to execute, synchronously or asynchronously. An explicit
+`env` replaces the inherited environment; omitting it inherits normally.
+Policies cover the manager's built-in Git and npm commands, including seed
+preparation, and stay isolated across concurrent managers without changing
+`process.env`. Custom toolchains own their own command execution.
 
 Additional ecosystems can implement `WorkspaceToolchain` and be supplied in the
 manager options. User-owned ignored files such as `.env` should eventually be

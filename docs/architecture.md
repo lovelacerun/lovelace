@@ -82,7 +82,9 @@ where the task directory is derived from the work item. Coriol keeps a seed
 clone per repository under `repos/`, fetches it to the latest default branch,
 adds a worktree on a fresh branch (or a review request's branch) and prepares
 npm dependencies, copying the seed's `node_modules` copy-on-write when the
-lockfile matches.
+lockfile matches. The server injects command environment policy: executable
+search paths, Volta shim preference and direnv for npm. Coriol's standalone
+default is direct execution with the inherited environment.
 
 Before preparation starts, each selected repository is recorded as a
 `worktree` attachment with status `pending`; it moves through `preparing`

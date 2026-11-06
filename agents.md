@@ -39,7 +39,8 @@ attaches the tarball to a GitHub release. Then update the formula in
   environment variables. Callers inject credentials, transports and storage.
 - **Coriol knows nothing about work.** It manages clones, worktrees and
   toolchains by repository and workspace ID. Work items, sessions and
-  trackers stay in the server.
+  trackers stay in the server. The server injects command environment policy
+  (direnv, Volta, PATH); Coriol defaults to direct, inherited execution.
 - **Lovelace is a guest in Herdr.** It never starts the Herdr server, never
   inherits a caller's pane, and never closes workspaces, tabs or panes.
 - **Leave the agents alone.** Lovelace adds no hooks or extensions to the

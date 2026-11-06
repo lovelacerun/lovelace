@@ -126,19 +126,19 @@ async function safeRealpath(path: string): Promise<string> {
 }
 
 async function git(path: string, args: string[]): Promise<string | null> {
-  try { return (await run('git', ['-C', path, ...args], path, undefined, false)) || null; }
+  try { return (await run('git', ['-C', path, ...args], path, 'git')) || null; }
   catch { return null; }
 }
 
 async function gitSucceeds(path: string, args: string[]): Promise<boolean> {
-  try { await run('git', ['-C', path, ...args], path, undefined, false); return true; }
+  try { await run('git', ['-C', path, ...args], path, 'git'); return true; }
   catch { return false; }
 }
 
 async function gitOrThrow(path: string, args: string[]): Promise<string> {
-  return run('git', ['-C', path, ...args], path, undefined, false);
+  return run('git', ['-C', path, ...args], path, 'git');
 }
 
 async function executeGit(args: string[]): Promise<void> {
-  await run('git', args, process.cwd(), undefined, false);
+  await run('git', args, process.cwd(), 'git');
 }

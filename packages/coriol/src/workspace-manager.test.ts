@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import test from 'node:test';
 import { execa } from 'execa';
 import type { WorkspaceToolchain } from './types.js';
+import type { WorkspaceCommand } from './process.js';
 import { WorkspaceManager } from './workspace-manager.js';
 
 const repository = {
@@ -53,6 +54,49 @@ test('creates direct npm-warm worktrees and removes them', async () => {
       manager.removeRepositoryWorkspace({ repositoryId: repository.id, workspacePath: fixture.authorPath }),
       /must be below/,
     );
+  } finally {
+    await rm(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test('injects isolated manager policies into clone, refresh, npm preparation and removal', async () => {
+  const fixture = await createRemoteFixture();
+  const commands: Record<string, WorkspaceCommand[]> = { first: [], second: [] };
+  const manager = (label: string) => new WorkspaceManager({
+    root: join(fixture.root, label),
+    environmentPolicy(request) {
+      commands[label]!.push(request);
+      if (request.kind === 'git') return request;
+      assert.equal(request.command, 'npm');
+      assert.deepEqual(request.args, ['ci']);
+      return {
+        ...request,
+        command: process.execPath,
+        args: ['-e', 'const fs = require("node:fs"); fs.mkdirSync("node_modules", { recursive: true }); fs.writeFileSync("node_modules/policy", process.env.POLICY)'],
+        env: { POLICY: label },
+      };
+    },
+  });
+  const first = manager('first');
+  const second = manager('second');
+  const request = {
+    workspaceId: 'policy-test',
+    repository: { ...repository, cloneUrl: fixture.originPath },
+    branchName: 'work/policy',
+  };
+  try {
+    const workspaces = await Promise.all([first.createWorkspace(request), second.createWorkspace(request)]);
+    for (const [index, label] of ['first', 'second'].entries()) {
+      assert.equal(await readFile(join(workspaces[index]!.path, 'node_modules/policy'), 'utf8'), label);
+      assert.ok(commands[label]!.some(({ args }) => args[0] === 'clone'));
+      assert.ok(commands[label]!.some(({ kind }) => kind === 'toolchain'));
+    }
+    commands.first!.length = 0;
+    await first.refreshRepository(request.repository);
+    await first.removeRepositoryWorkspace({ repositoryId: repository.id, workspacePath: workspaces[0]!.path });
+    assert.ok(commands.first!.some(({ args }) => args.includes('fetch')));
+    assert.ok(commands.first!.some(({ args }) => args.includes('remove')));
+    assert.ok(commands.first!.every(({ kind }) => kind === 'git'));
   } finally {
     await rm(fixture.root, { recursive: true, force: true });
   }
