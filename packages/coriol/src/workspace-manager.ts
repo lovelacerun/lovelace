@@ -1,8 +1,8 @@
 import { existsSync, mkdirSync } from 'node:fs';
-import { basename, join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { probeTreeClone } from '@openclaw/fs-safe/copy';
 import pLimit, { type LimitFunction } from 'p-limit';
-import { createWorktree, ensureClone, refreshSeed, removeWorktree, resolveBaseRef } from './git.js';
+import { createWorktree, ensureClone, inspectWorktree, refreshSeed, removeWorktree, resolveBaseRef } from './git.js';
 import { npmToolchain } from './npm-toolchain.js';
 import { withEnvironmentPolicy, type CommandEnvironmentPolicy } from './process.js';
 import { assertInside, validatePathSegment, validateRepository, validateRepositoryId } from './paths.js';
@@ -11,6 +11,8 @@ import type {
   CreateWorkspaceRequest,
   ManagedRepository,
   PreparedRepositoryWorkspace,
+  PrepareExistingWorkspaceRequest,
+  ToolchainPreparation,
   RemoveRepositoryWorkspaceRequest,
   RepositoryDescriptor,
   WorkspaceManagerCapabilities,
@@ -89,15 +91,29 @@ export class WorkspaceManager {
       const warmStates = await this.#toolchains.prepareSeed(repository, workspaceId, onEvent);
 
       onEvent?.({ type: 'workspace.creating', repositoryId: repository.id, workspaceId, path });
-      await createWorktree({
+      const creation = await createWorktree({
         repositoryPath: repository.path,
         workspacePath: path,
         branchName: request.branchName,
         targetRef: remoteBranch ? `origin/${remoteBranch}` : await resolveBaseRef(repository.path, baseBranch, repository.defaultBranch),
       });
 
-      const preparations = await this.#toolchains.prepareWorkspace(repository, workspaceId, path, warmStates, onEvent);
+      const preparations = await this.#toolchains.prepareWorkspace(repository, workspaceId, path, creation === 'created' ? warmStates : new Map(), onEvent);
       return { repository, workspaceId, path, branchName: request.branchName, baseBranch, remoteBranch, preparations };
+    });
+  }
+
+  /** Rechecks and prepares the current checkout without fetching, checking out or resetting a branch. */
+  async prepareExistingWorkspace(request: PrepareExistingWorkspaceRequest): Promise<ToolchainPreparation[]> {
+    assertInside(this.workspacesDirectory, request.workspacePath, 'workspace path');
+    const path = resolve(request.workspacePath);
+    const repositoryPath = this.repositoryPath(request.repositoryId);
+    return this.#schedule(request.repositoryId, async () => {
+      if (!(await inspectWorktree(repositoryPath, path))) throw new Error(`Not a worktree of the managed repository: ${path}`);
+      return this.#toolchains.prepareWorkspace(
+        { id: request.repositoryId, cloneUrl: '', path: repositoryPath },
+        basename(dirname(path)), path, new Map(), request.onEvent,
+      );
     });
   }
 

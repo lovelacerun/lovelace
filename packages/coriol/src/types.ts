@@ -29,7 +29,7 @@ export interface CreateWorkspaceRequest {
 export interface ToolchainPreparation {
   toolchain: string;
   command: string;
-  strategy: 'reflink' | 'install';
+  strategy: 'reflink' | 'install' | 'reuse';
   preparedAt: string;
 }
 
@@ -46,6 +46,12 @@ export interface PreparedRepositoryWorkspace {
 export interface RemoveRepositoryWorkspaceRequest {
   repositoryId: string;
   workspacePath: string;
+}
+
+export interface PrepareExistingWorkspaceRequest {
+  repositoryId: string;
+  workspacePath: string;
+  onEvent?: (event: WorkspaceManagerEvent) => void;
 }
 
 export interface WorkspaceManagerCapabilities {
@@ -83,6 +89,8 @@ export interface WorkspaceToolchain {
   detect(path: string): Promise<boolean>;
   fingerprint(path: string): Promise<string | null>;
   prepare(path: string): Promise<void>;
+  /** Checks the actual installation, not just its cache marker. */
+  validate(path: string): Promise<boolean>;
   artifacts(path: string): Promise<string[]>;
 }
 

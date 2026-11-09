@@ -101,7 +101,7 @@ export async function removeWorktree(repositoryPath: string, workspacePath: stri
   }
 }
 
-async function inspectWorktree(repositoryPath: string, workspacePath: string): Promise<{ branchName: string | null } | null> {
+export async function inspectWorktree(repositoryPath: string, workspacePath: string): Promise<{ branchName: string | null } | null> {
   if (!existsSync(workspacePath)) return null;
   const [topLevel, candidateCommonDir, repositoryCommonDir] = await Promise.all([
     git(workspacePath, ['rev-parse', '--show-toplevel']),

@@ -5,6 +5,7 @@ export type {
   CreateWorkspaceRequest,
   ManagedRepository,
   PreparedRepositoryWorkspace,
+  PrepareExistingWorkspaceRequest,
   RemoveRepositoryWorkspaceRequest,
   RepositoryDescriptor,
   ToolchainPreparation,

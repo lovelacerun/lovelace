@@ -17,7 +17,7 @@ const repository = {
 
 test('creates direct npm-warm worktrees and removes them', async () => {
   const fixture = await createRemoteFixture();
-  const manager = new WorkspaceManager({ root: fixture.managerRoot });
+  const manager = new WorkspaceManager({ root: fixture.managerRoot, environmentPolicy: fixture.environmentPolicy });
 
   try {
     const workspace = await manager.createWorkspace({
@@ -66,13 +66,11 @@ test('injects isolated manager policies into clone, refresh, npm preparation and
     root: join(fixture.root, label),
     environmentPolicy(request) {
       commands[label]!.push(request);
-      if (request.kind === 'git') return request;
-      assert.equal(request.command, 'npm');
-      assert.deepEqual(request.args, ['ci']);
+      if (request.command !== 'npm' || request.args[0] !== 'ci') return fixture.environmentPolicy(request);
       return {
         ...request,
         command: process.execPath,
-        args: ['-e', 'const fs = require("node:fs"); fs.mkdirSync("node_modules", { recursive: true }); fs.writeFileSync("node_modules/policy", process.env.POLICY)'],
+        args: ['-e', 'const fs = require("node:fs"); fs.mkdirSync("node_modules", { recursive: true }); fs.symlinkSync("../vendor/local", "node_modules/local"); fs.writeFileSync("node_modules/policy", process.env.POLICY)'],
         env: { POLICY: label },
       };
     },
@@ -104,7 +102,7 @@ test('injects isolated manager policies into clone, refresh, npm preparation and
 
 test('keeps the warm seed on the latest default branch when a workspace uses another base', async () => {
   const fixture = await createRemoteFixture();
-  const manager = new WorkspaceManager({ root: fixture.managerRoot });
+  const manager = new WorkspaceManager({ root: fixture.managerRoot, environmentPolicy: fixture.environmentPolicy });
 
   try {
     await git(fixture.authorPath, ['switch', '-c', 'release/next']);
@@ -115,7 +113,7 @@ test('keeps the warm seed on the latest default branch when a workspace uses ano
 
     await git(fixture.authorPath, ['switch', '-c', 'feature/dependencies']);
     await writeFile(join(fixture.authorPath, 'package.json'), '{"name":"fixture","version":"1.0.0"}\n');
-    await run('npm', ['install', '--package-lock-only', '--ignore-scripts'], fixture.authorPath);
+    await fixture.npm(['install', '--package-lock-only', '--ignore-scripts']);
     await git(fixture.authorPath, ['add', 'package.json', 'package-lock.json']);
     await git(fixture.authorPath, ['commit', '-m', 'change npm inputs']);
     await git(fixture.authorPath, ['push', 'origin', 'feature/dependencies']);
@@ -153,7 +151,7 @@ test('keeps the warm seed on the latest default branch when a workspace uses ano
 
 test('stacks a fresh worktree on an unpushed sibling branch', async () => {
   const fixture = await createRemoteFixture();
-  const manager = new WorkspaceManager({ root: fixture.managerRoot });
+  const manager = new WorkspaceManager({ root: fixture.managerRoot, environmentPolicy: fixture.environmentPolicy });
 
   try {
     const parent = await manager.createWorkspace({
@@ -191,7 +189,7 @@ test('stacks a fresh worktree on an unpushed sibling branch', async () => {
 test('bounds concurrent preparation manager-wide and serializes work per seed clone', async () => {
   const fixture = await createRemoteFixture();
   const probe = concurrencyProbe();
-  const manager = new WorkspaceManager({ root: fixture.managerRoot, toolchains: [probe.toolchain], concurrency: 2 });
+  const manager = new WorkspaceManager({ root: fixture.managerRoot, environmentPolicy: fixture.environmentPolicy, toolchains: [probe.toolchain], concurrency: 2 });
   const create = (id: string, directoryName: string) => manager.createWorkspace({
     workspaceId: 'multi-repo',
     repository: { ...repository, id, cloneUrl: fixture.originPath },
@@ -213,7 +211,7 @@ test('bounds concurrent preparation manager-wide and serializes work per seed cl
 
 test('fails one repository without affecting concurrent workspaces', async () => {
   const fixture = await createRemoteFixture();
-  const manager = new WorkspaceManager({ root: fixture.managerRoot, toolchains: [] });
+  const manager = new WorkspaceManager({ root: fixture.managerRoot, environmentPolicy: fixture.environmentPolicy, toolchains: [] });
 
   try {
     const [available, missing] = await Promise.allSettled([
@@ -241,7 +239,7 @@ test('fails one repository without affecting concurrent workspaces', async () =>
 
 test('refreshes a managed repository to the latest default branch commit', async () => {
   const fixture = await createRemoteFixture();
-  const manager = new WorkspaceManager({ root: fixture.managerRoot, toolchains: [] });
+  const manager = new WorkspaceManager({ root: fixture.managerRoot, environmentPolicy: fixture.environmentPolicy, toolchains: [] });
 
   try {
     const managed = await manager.refreshRepository({ ...repository, cloneUrl: fixture.originPath });
@@ -263,7 +261,7 @@ test('refreshes a managed repository to the latest default branch commit', async
 
 test('repairs the origin URL of an existing managed clone', async () => {
   const fixture = await createRemoteFixture();
-  const manager = new WorkspaceManager({ root: fixture.managerRoot, toolchains: [] });
+  const manager = new WorkspaceManager({ root: fixture.managerRoot, environmentPolicy: fixture.environmentPolicy, toolchains: [] });
 
   try {
     const path = manager.repositoryPath(repository.id);
@@ -281,7 +279,7 @@ test('repairs the origin URL of an existing managed clone', async () => {
 
 test('refuses to adopt a checkout of another repository at the workspace path', async () => {
   const fixture = await createRemoteFixture();
-  const manager = new WorkspaceManager({ root: fixture.managerRoot, toolchains: [] });
+  const manager = new WorkspaceManager({ root: fixture.managerRoot, environmentPolicy: fixture.environmentPolicy, toolchains: [] });
 
   try {
     const path = join(manager.workspacesDirectory, 'task-1234', 'repository');
@@ -303,6 +301,77 @@ test('refuses to adopt a checkout of another repository at the workspace path', 
   }
 });
 
+test('copies non-hoisted workspace dependencies instead of resolving the wrong root version', async () => {
+  const fixture = await createRemoteFixture();
+  const manager = new WorkspaceManager({ root: fixture.managerRoot, environmentPolicy: fixture.environmentPolicy });
+  try {
+    await mkdir(join(fixture.authorPath, 'packages/app'), { recursive: true });
+    await mkdir(join(fixture.authorPath, 'vendor/other'), { recursive: true });
+    await writeFile(join(fixture.authorPath, 'package.json'), JSON.stringify({ name: 'fixture', version: '1.0.0', private: true, workspaces: ['packages/app'], dependencies: { local: 'file:vendor/local' } }));
+    await writeFile(join(fixture.authorPath, 'packages/app/package.json'), JSON.stringify({ name: 'app', version: '1.0.0', dependencies: { local: 'file:../../vendor/other' } }));
+    await writeFile(join(fixture.authorPath, 'vendor/other/package.json'), JSON.stringify({ name: 'local', version: '2.0.0' }));
+    await fixture.npm(['install', '--package-lock-only', '--ignore-scripts', '--offline']);
+    await git(fixture.authorPath, ['add', '.']);
+    await git(fixture.authorPath, ['commit', '-m', 'add workspace dependency conflict']);
+    await git(fixture.authorPath, ['push', 'origin', 'main']);
+    const workspace = await manager.createWorkspace({ workspaceId: 'nested', repository: { ...repository, cloneUrl: fixture.originPath }, branchName: 'work/nested' });
+    const version = async (path: string) => JSON.parse(await readFile(join(workspace.path, path, 'package.json'), 'utf8')).version;
+    assert.equal(await version('node_modules/local'), '1.0.0');
+    assert.equal(await version('packages/app/node_modules/local'), '2.0.0');
+    assert.equal(workspace.preparations[0]!.strategy, manager.capabilities().copyOnWrite.available ? 'reflink' : 'install');
+  } finally { await rm(fixture.root, { recursive: true, force: true }); }
+});
+
+test('rechecks existing installations, repairs missing packages and changed lockfiles without touching the checkout', async () => {
+  const fixture = await createRemoteFixture();
+  const manager = new WorkspaceManager({ root: fixture.managerRoot, environmentPolicy: fixture.environmentPolicy });
+  try {
+    const workspace = await manager.createWorkspace({ workspaceId: 'recheck', repository: { ...repository, cloneUrl: fixture.originPath }, branchName: 'work/recheck' });
+    const recheck = () => manager.prepareExistingWorkspace({ repositoryId: repository.id, workspacePath: workspace.path });
+    assert.equal((await recheck())[0]!.strategy, 'reuse');
+    await rm(join(workspace.path, 'node_modules/local'));
+    assert.equal((await recheck())[0]!.strategy, 'install');
+    assert.ok(existsSync(join(workspace.path, 'node_modules/local/package.json')));
+    await writeFile(join(workspace.path, 'untouched.txt'), 'uncommitted work');
+    await mkdir(join(workspace.path, 'vendor/other'), { recursive: true });
+    await writeFile(join(workspace.path, 'vendor/other/package.json'), JSON.stringify({ name: 'local', version: '2.0.0' }));
+    const manifest = JSON.stringify({ name: 'fixture', version: '1.0.0', dependencies: { local: 'file:vendor/other' } });
+    await writeFile(join(workspace.path, 'package.json'), manifest);
+    await fixture.npm(['install', '--package-lock-only', '--ignore-scripts', '--offline'], workspace.path);
+    const head = await git(workspace.path, ['rev-parse', 'HEAD']);
+    await git(workspace.repository.path, ['remote', 'set-url', 'origin', join(fixture.root, 'unreachable')]);
+    assert.equal((await recheck())[0]!.strategy, 'install');
+    assert.equal(JSON.parse(await readFile(join(workspace.path, 'node_modules/local/package.json'), 'utf8')).version, '2.0.0');
+    assert.equal(await readFile(join(workspace.path, 'package.json'), 'utf8'), manifest);
+    assert.equal(await readFile(join(workspace.path, 'untouched.txt'), 'utf8'), 'uncommitted work');
+    assert.equal(await git(workspace.path, ['rev-parse', 'HEAD']), head);
+    assert.equal(await git(workspace.path, ['branch', '--show-current']), 'work/recheck');
+    await assert.rejects(manager.prepareExistingWorkspace({ repositoryId: repository.id, workspacePath: fixture.authorPath }), /must be below/);
+  } finally { await rm(fixture.root, { recursive: true, force: true }); }
+});
+
+test('runs enabled project lifecycle scripts in every worktree instead of copying only node_modules', async () => {
+  const fixture = await createRemoteFixture();
+  const manager = new WorkspaceManager({ root: fixture.managerRoot, environmentPolicy: request => {
+    const resolved = fixture.environmentPolicy(request);
+    return { ...resolved, env: { ...resolved.env, npm_config_ignore_scripts: 'false' } };
+  } });
+  try {
+    await writeFile(join(fixture.authorPath, 'package.json'), JSON.stringify({ name: 'fixture', version: '1.0.0', dependencies: { local: 'file:vendor/local' }, scripts: { prepare: 'node -e \'require("node:fs").writeFileSync("generated.txt", "prepared")\'' } }));
+    await fixture.npm(['install', '--package-lock-only', '--ignore-scripts']);
+    await git(fixture.authorPath, ['add', '.']);
+    await git(fixture.authorPath, ['commit', '-m', 'add lifecycle output']);
+    await git(fixture.authorPath, ['push', 'origin', 'main']);
+    const workspace = await manager.createWorkspace({ workspaceId: 'scripts', repository: { ...repository, cloneUrl: fixture.originPath }, branchName: 'work/scripts' });
+    assert.equal(workspace.preparations[0]!.strategy, 'install');
+    assert.equal(await readFile(join(workspace.path, 'generated.txt'), 'utf8'), 'prepared');
+    await rm(join(workspace.path, 'generated.txt'));
+    const preparations = await manager.prepareExistingWorkspace({ repositoryId: repository.id, workspacePath: workspace.path });
+    assert.equal(preparations[0]!.strategy, 'install');
+    assert.equal(await readFile(join(workspace.path, 'generated.txt'), 'utf8'), 'prepared');
+  } finally { await rm(fixture.root, { recursive: true, force: true }); }
+});
+
 function concurrencyProbe() {
   let active = 0;
   const probe = {
@@ -313,6 +382,7 @@ function concurrencyProbe() {
       detect: async () => true,
       fingerprint: async () => null,
       artifacts: async () => [],
+      validate: async () => true,
       async prepare() {
         active += 1;
         probe.maximum = Math.max(probe.maximum, active);
@@ -329,6 +399,11 @@ async function createRemoteFixture() {
   const originPath = join(root, 'origin.git');
   const authorPath = join(root, 'author');
   const managerRoot = join(root, 'manager');
+  const env = { ...process.env, npm_config_userconfig: join(root, 'npmrc'), npm_config_globalconfig: join(root, 'globalnpmrc'), npm_config_cache: join(root, 'npm-cache'), npm_config_offline: 'true', npm_config_ignore_scripts: 'true', npm_config_audit: 'false', npm_config_fund: 'false' };
+  const environmentPolicy = (request: WorkspaceCommand): WorkspaceCommand => ({ ...request, env });
+  const npm = (args: string[], cwd = authorPath) => run('npm', args, cwd, env);
+  await writeFile(join(root, 'npmrc'), '');
+  await writeFile(join(root, 'globalnpmrc'), '');
 
   await git(root, ['init', '--bare', originPath]);
   await git(root, ['clone', originPath, authorPath]);
@@ -340,20 +415,20 @@ async function createRemoteFixture() {
   await writeFile(join(authorPath, '.gitignore'), 'node_modules/\n');
   await writeFile(join(authorPath, 'package.json'), '{"name":"fixture","version":"1.0.0","dependencies":{"local":"file:vendor/local"}}\n');
   await writeFile(join(authorPath, 'vendor', 'local', 'package.json'), '{"name":"local","version":"1.0.0"}\n');
-  await run('npm', ['install', '--package-lock-only', '--ignore-scripts'], authorPath);
+  await npm(['install', '--package-lock-only', '--ignore-scripts']);
   await git(authorPath, ['add', '.']);
   await git(authorPath, ['commit', '-m', 'initial']);
   await git(authorPath, ['push', '-u', 'origin', 'main']);
   await git(root, ['--git-dir', originPath, 'symbolic-ref', 'HEAD', 'refs/heads/main']);
 
-  return { root, originPath, authorPath, managerRoot };
+  return { root, originPath, authorPath, managerRoot, environmentPolicy, npm };
 }
 
 async function git(path: string, args: string[]): Promise<string> {
   return await run('git', ['-C', path, ...args], path);
 }
 
-async function run(command: string, args: string[], cwd: string): Promise<string> {
-  const result = await execa(command, args, { cwd });
+async function run(command: string, args: string[], cwd: string, env?: NodeJS.ProcessEnv): Promise<string> {
+  const result = await execa(command, args, { cwd, env });
   return result.stdout.trim();
 }
