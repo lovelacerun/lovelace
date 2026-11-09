@@ -1,4 +1,4 @@
-import { isLaunchInProgress, type Launch, type LaunchResponse, type NewSessionRequest, type QuickStartRequest } from '@lovelace/core';
+import { isLaunchInProgress, type Launch, type LaunchResponse, type NewSessionRequest, type QuickStartRequest, type StartWorkRepositoryInput } from '@lovelace/core';
 import { z } from 'zod';
 import { buildDashboard } from '../services/dashboard-service.js';
 import { launchSessions, openSession, SessionRequestError } from '../services/session-service.js';
@@ -31,16 +31,26 @@ function launchRunner(ctx: Context) {
   }
 
   return async (launch: Launch): Promise<void> => {
-    if (launch.repoIds.length) {
+    // Match session selection: an empty repoIds list uses all attached worktrees.
+    // Carry each recorded branch/source so stacked worktrees are checked individually.
+    const existing = database.listAttachmentsOfType('worktree', launch.workItemId)
+      .map(attachment => attachment.payload)
+      .filter(worktree => worktree.status !== 'cleaned' && (!launch.repoIds.length || launch.repoIds.includes(worktree.repoId)));
+    const repositories: StartWorkRepositoryInput[] = existing.map(worktree => ({
+      repoId: worktree.repoId, role: worktree.role, workspaceMode: worktree.workspaceMode,
+      sourceExternalId: worktree.sourceExternalId, branchName: worktree.branchName, baseBranch: worktree.baseBranch,
+    }));
+    for (const [index, repoId] of launch.repoIds.entries()) {
+      if (existing.some(worktree => worktree.repoId === repoId)) continue;
+      const review = reviewSourceFor(launch.workItemId, repoId);
+      repositories.push({ repoId, role: index === 0 ? 'primary' : 'secondary', workspaceMode: review ? 'change-request' : 'fresh', sourceExternalId: review?.externalId ?? null });
+    }
+    if (repositories.length) {
       database.setLaunchState(launch.id, 'preparing');
-      const details = await attachRepositoriesToExistingWorkItem(ctx, launch.workItemId,
-        launch.repoIds.map((repoId, index) => {
-          // A repository with an attached review request is checked out at its branch.
-          const review = reviewSourceFor(launch.workItemId, repoId);
-          return { repoId, role: index === 0 ? 'primary' : 'secondary', workspaceMode: review ? 'change-request' : 'fresh', sourceExternalId: review?.externalId ?? null };
-        }));
+      const details = await attachRepositoriesToExistingWorkItem(ctx, launch.workItemId, repositories);
+      const selectedIds = new Set(repositories.map(repository => repository.repoId));
       const failed = (details?.attachments ?? [])
-        .filter(attachment => attachment.type === 'worktree' && launch.repoIds.includes(attachment.payload.repoId) && attachment.payload.status !== 'ready');
+        .filter(attachment => attachment.type === 'worktree' && selectedIds.has(attachment.payload.repoId) && attachment.payload.status !== 'ready' && attachment.payload.status !== 'cleaned');
       if (failed.length) throw new Error('Repository preparation failed. Retry to prepare the selected repositories again.');
     }
     database.setLaunchState(launch.id, 'starting');

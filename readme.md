@@ -23,8 +23,10 @@ context so you don't have to.
   excluded). Starting a review checks out its branch in a worktree and starts
   an agent with the `review` template.
 - **Worktree**: a git worktree of a repository, prepared for one work item
-  with dependencies installed. Lovelace keeps a seed clone per repository and
-  reuses its `node_modules` when the lockfile matches.
+  with dependencies installed. Lovelace reuses root and nested workspace
+  dependencies only when manifests, runtime and npm settings match, and validates
+  them before reuse. Explicit preparation repairs stale dependencies in place
+  without changing the branch; npm's `ignore-scripts` policy is respected.
 - **Session**: an agent running in a tab of the work item's Herdr workspace.
   Lovelace records the agent's native conversation, so opening an ended
   session resumes exactly that conversation.

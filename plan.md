@@ -29,6 +29,10 @@ In order:
    publishing.~~ Done. Server-owned policy, isolated per manager; clean
    standalone tarball with declarations, sources and license. Publication
    remains undecided.
+11. ~~Validate dependency preparation and reuse.~~ Done. Copy nested npm
+   workspace installs; fingerprint effective runtime/install settings; validate
+   installed packages; recheck existing worktrees in place on explicit
+   preparation. Honor lifecycle-script policy.
 
 Naming throughout: Herdr workspace, worktree, task directory; one word for
 harness/tool/agent.

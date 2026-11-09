@@ -41,6 +41,9 @@ attaches the tarball to a GitHub release. Then update the formula in
   toolchains by repository and workspace ID. Work items, sessions and
   trackers stay in the server. The server injects command environment policy
   (direnv, Volta, PATH); Coriol defaults to direct, inherited execution.
+  Explicit preparation validates dependencies before reusing a worktree and
+  repairs them in place without fetching or resetting its branch. Respect npm's
+  `ignore-scripts` policy; a dependency-prepared worktree need not be built.
 - **Lovelace is a guest in Herdr.** It never starts the Herdr server, never
   inherits a caller's pane, and never closes workspaces, tabs or panes.
 - **Leave the agents alone.** Lovelace adds no hooks or extensions to the

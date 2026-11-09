@@ -156,18 +156,15 @@ function attachRepositoriesToWorkItem(
     const existing = existingWorkspaces.find(entry => matchesRepositorySelection(repository, entry.payload));
     const current = existing ? pending.get(existing.id) : undefined;
     if (current) return current;
-    if (existing?.payload.status === 'ready' && existsSync(existing.payload.worktreePath)) {
-      deps.logger.info({ workItemId, repoId: repo.id, worktreePath: existing.payload.worktreePath }, 'Reusing prepared repository workspace');
-      emitActivity({ type: 'workspace.reused', workItemId, repoName: repo.name, message: `Reusing prepared workspace for ${repo.name}` });
-      return Promise.resolve({ outcome: 'reused' as const, payload: existing.payload });
-    }
-
     const workspaceMode = resolveWorkspaceMode(repository, sources);
     const worktreePath = existing?.payload.worktreePath ?? buildUniqueWorktreePath(taskDir, repo.name, repository, reservedNames);
-    const initialPayload = repositoryWorkspacePayload(repo, repository, workspaceMode, {
-      worktreePath, status: 'pending',
-      branchName: repository.branchName?.trim() || (workspaceMode === 'fresh' ? deriveFreshBranchName(workItemId, sources, repo.name) : null),
-    });
+    const existingOnDisk = existing && existsSync(worktreePath) ? existing.payload : null;
+    const initialPayload: Worktree = existingOnDisk
+      ? { ...existingOnDisk, status: 'pending', errorMessage: null, preparationStep: 'Checking dependencies' }
+      : repositoryWorkspacePayload(repo, repository, workspaceMode, {
+        worktreePath, status: 'pending',
+        branchName: repository.branchName?.trim() || (workspaceMode === 'fresh' ? deriveFreshBranchName(workItemId, sources, repo.name) : null),
+      });
     const worktreeId = existing?.id ?? addAttachments(deps.database, workItemId, [{ type: 'worktree', payload: initialPayload }])[0]!.id;
     if (existing) deps.database.updateAttachment('worktree', worktreeId, initialPayload);
 
@@ -177,12 +174,26 @@ function attachRepositoriesToWorkItem(
       deps.logger.info({ workItemId, repoId: repo.id, repoPath: repo.path, workspaceMode, worktreePath }, 'Preparing repository workspace');
       emitActivity({ type: 'workspace.preparing', workItemId, repoName: repo.name, message: `Preparing workspace for ${repo.name}` });
       let payload: Worktree;
-      let outcome: 'prepared' | 'failed';
+      let outcome: PreparationResult['outcome'];
       try {
-        payload = await prepareRepositoryWorkspace({
-          deps, repo, worktreePath, workItemId, workspaceMode, repository, sources, workspaceId, worktreeId,
-        });
-        outcome = 'prepared';
+        if (existingOnDisk) {
+          const preparations = await deps.workspaceManager.prepareExistingWorkspace({
+            repositoryId: repo.managerId, workspacePath: worktreePath,
+            onEvent: workspaceProgress(deps, workItemId, worktreeId, repo),
+          });
+          const npm = preparations.find(preparation => preparation.toolchain === 'npm');
+          payload = {
+            ...existingOnDisk, status: 'ready', errorMessage: null, preparationStep: undefined,
+            installCommand: npm?.command ?? null, installedAt: npm?.preparedAt ?? null,
+            dependenciesReused: npm ? npm.strategy !== 'install' : false,
+          };
+          outcome = preparations.every(preparation => preparation.strategy === 'reuse') ? 'reused' : 'prepared';
+        } else {
+          payload = await prepareRepositoryWorkspace({
+            deps, repo, worktreePath, workItemId, workspaceMode, repository, sources, workspaceId, worktreeId,
+          });
+          outcome = 'prepared';
+        }
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         deps.logger.error({ err: error, workItemId, repoId: repo.id, worktreePath }, 'Failed to prepare repository workspace');
@@ -192,9 +203,9 @@ function attachRepositoriesToWorkItem(
       // Commit each result independently: a slow sibling must not hide it.
       deps.database.updateAttachment('worktree', worktreeId, payload);
       emitActivity({
-        type: outcome === 'prepared' ? 'workspace.ready' : 'workspace.failed',
+        type: outcome === 'failed' ? 'workspace.failed' : outcome === 'reused' ? 'workspace.reused' : 'workspace.ready',
         workItemId, repoName: repo.name,
-        message: outcome === 'prepared' ? `Workspace ready for ${repo.name}` : `Workspace failed for ${repo.name}: ${payload.errorMessage}`,
+        message: outcome === 'failed' ? `Workspace failed for ${repo.name}: ${payload.errorMessage}` : `Workspace ready for ${repo.name}`,
       });
       return { outcome, payload };
     }).finally(() => { if (pending!.get(worktreeId) === task) pending!.delete(worktreeId); });
@@ -202,8 +213,8 @@ function attachRepositoriesToWorkItem(
     return task;
   });
 
-  // Coriol still bounds concurrency and serializes each seed; cache reuse is
-  // unchanged. Coalescing here prevents repeat preparation of the same worktree.
+  // Coriol bounds concurrency and serializes each seed. Coalescing here also
+  // covers revalidation so overlapping requests never reinstall the same worktree twice.
   return Promise.all(tasks).then(results => {
     const failed = results.filter(result => result.outcome === 'failed');
     emitActivity({
@@ -262,10 +273,7 @@ async function prepareRepositoryWorkspace(input: {
     branchName,
     remoteBranch,
     baseBranch,
-    onEvent: (event) => {
-      updateProgress(event.command ? `${event.type}: ${event.command}` : event.type);
-      reportWorkspaceManagerEvent(deps, input.workItemId, repo.id, repo.name, event);
-    },
+    onEvent: workspaceProgress(deps, input.workItemId, input.worktreeId, repo),
   });
 
   const npmPreparation = workspace.preparations.find((preparation) => preparation.toolchain === 'npm') ?? null;
@@ -277,10 +285,20 @@ async function prepareRepositoryWorkspace(input: {
     sourceExternalId: reviewSource?.source.externalId ?? repository.sourceExternalId ?? null,
     installCommand: npmPreparation?.command ?? null,
     installedAt: npmPreparation?.preparedAt ?? null,
-    dependenciesReused: npmPreparation?.strategy === 'reflink',
+    dependenciesReused: npmPreparation ? npmPreparation.strategy !== 'install' : false,
     status: 'ready',
     preparedAt,
   });
+}
+
+function workspaceProgress(deps: WorkStartDeps, workItemId: string, worktreeId: string, repo: { id: string; name: string }) {
+  return (event: WorkspaceManagerEvent) => {
+    const { payload } = deps.database.getAttachment('worktree', worktreeId)!;
+    deps.database.updateAttachment('worktree', worktreeId, {
+      ...payload, status: 'preparing', preparationStep: event.command ? `${event.type}: ${event.command}` : event.type,
+    });
+    reportWorkspaceManagerEvent(deps, workItemId, repo.id, repo.name, event);
+  };
 }
 
 function reportWorkspaceManagerEvent(

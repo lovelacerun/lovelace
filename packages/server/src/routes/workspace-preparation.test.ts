@@ -3,7 +3,7 @@ import { mkdtemp, mkdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import test, { type TestContext } from 'node:test';
-import type { CreateWorkspaceRequest, PreparedRepositoryWorkspace } from '@lovelace/coriol';
+import type { CreateWorkspaceRequest, PrepareExistingWorkspaceRequest, PreparedRepositoryWorkspace } from '@lovelace/coriol';
 import { attachmentsOfType, type ServerConfig, type StartWorkRepositoryInput } from '@lovelace/core';
 import { createTRPCClient, httpLink, TRPCClientError } from '@trpc/client';
 import { buildServer } from '../app.js';
@@ -34,11 +34,18 @@ async function fixture(t: TestContext) {
   }));
   database.replaceRepos(records);
   const calls: CreateWorkspaceRequest[] = [];
+  const rechecks: PrepareExistingWorkspaceRequest[] = [];
   const pending = new Map<CreateWorkspaceRequest, { resolve: (value: PreparedRepositoryWorkspace) => void; reject: (error: Error) => void }>();
   const workspacesDirectory = join(config.dataDir, 'workspaces');
   const workspaceManager = {
     workspacesDirectory,
     repositoryPath: (id: string) => join(config.dataDir, 'repos', id),
+    async prepareExistingWorkspace(request: PrepareExistingWorkspaceRequest) {
+      rechecks.push(request);
+      const payload = database.listAttachmentsOfType('worktree', work.id).find(entry => entry.payload.worktreePath === request.workspacePath)!.payload;
+      assert.equal(payload.status, 'pending');
+      return [{ toolchain: 'npm', command: 'npm ci', strategy: 'reuse', preparedAt: payload.installedAt! }];
+    },
     createWorkspace(request: CreateWorkspaceRequest): Promise<PreparedRepositoryWorkspace> {
       calls.push(request);
       assert.equal(database.listAttachmentsOfType('worktree', work.id).find(entry => basename(entry.payload.worktreePath) === request.directoryName)?.payload.status, 'pending');
@@ -85,7 +92,7 @@ async function fixture(t: TestContext) {
     await new Promise(resolve => setImmediate(resolve));
     await app.close(); database.db.close(); await rm(root, { recursive: true, force: true });
   });
-  return { api, app, database, work, config, herdr, calls, payloads, start, finish, add, submit, httpClient };
+  return { api, app, database, work, config, herdr, calls, rechecks, workspaceManager, payloads, start, finish, add, submit, httpClient };
 }
 
 test('slow preparation is accepted immediately with durable pending/preparing state and per-repository progress', async t => {
@@ -110,6 +117,7 @@ test('slow preparation is accepted immediately with durable pending/preparing st
   const waited = await f.submit(['a', 'b'], true);
   assert.deepEqual(attachmentsOfType(waited.attachments, 'worktree').map(entry => entry.payload.status), ['ready', 'ready'], 'waiting callers get finished details');
   assert.equal(f.calls.length, 2, 'ready worktrees are reused without fetching/installing again');
+  assert.equal(f.rechecks.length, 2, 'ready worktrees are validated before reuse');
   assert.deepEqual(f.database.listAttachments(f.work.id).map(meta => meta.id), ids);
   assert.equal(f.herdr.calls.length, 0);
 });
@@ -219,6 +227,35 @@ test('invalid batches do not start preparation or leave repository records', asy
   assert.equal(f.calls.length, 0);
 });
 
+test('revalidation of ready worktrees coalesces; failure and retry retain paths and branch metadata', async t => {
+  const f = await fixture(t);
+  await f.submit(['a']); await f.finish('a');
+  const original = f.database.listAttachmentsOfType('worktree', f.work.id)[0]!;
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  let checks = 0;
+  f.workspaceManager.prepareExistingWorkspace = async () => {
+    checks++;
+    await gate;
+    throw new Error('fixture stale installation failed');
+  };
+  await Promise.all([f.submit(['a']), f.submit(['a'])]);
+  assert.equal(checks, 1);
+  assert.equal(f.payloads()[0]!.status, 'pending');
+  release();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(f.payloads()[0]!.status, 'failed');
+  assert.match(f.payloads()[0]!.errorMessage!, /stale installation/);
+  assert.equal(f.payloads()[0]!.branchName, original.payload.branchName);
+  f.workspaceManager.prepareExistingWorkspace = async () => [{ toolchain: 'npm', command: 'npm ci', strategy: 'install', preparedAt: '2026-11-06T10:00:00.000Z' }];
+  await f.submit(['a'], true);
+  assert.equal(f.calls.length, 1, 'retry never fetches or recreates an existing checkout');
+  assert.equal(f.payloads()[0]!.status, 'ready');
+  assert.equal(f.payloads()[0]!.worktreePath, original.payload.worktreePath);
+  assert.equal(f.payloads()[0]!.installedAt, '2026-11-06T10:00:00.000Z');
+  assert.equal(f.payloads()[0]!.dependenciesReused, false);
+});
+
 test('orphaned preparation after restart becomes an explicit retryable failure without deleting worktrees', async t => {
   const f = await fixture(t);
   await f.submit(['a']);
@@ -235,8 +272,9 @@ test('orphaned preparation after restart becomes an explicit retryable failure w
     assert.equal(separate.getWorkItem(f.work.id)!.state, 'active');
   } finally { separate.db.close(); }
   await f.submit(['a']);
-  assert.equal(f.calls.length, 2, 'orphaned preparation is explicitly retryable');
-  await f.finish('a');
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(f.calls.length, 1, 'an existing checkout is never recreated');
+  assert.equal(f.rechecks.length, 1, 'orphaned preparation is explicitly retryable in place');
   assert.equal(f.payloads()[0]!.worktreePath, original.payload.worktreePath);
   assert.equal(f.payloads()[0]!.status, 'ready');
 });

@@ -44,10 +44,11 @@ came after Herdr may have started the agent.
 Quick-start accepts `reviewRequestId` from the cached review requests: the
 work item gets the pull request as its `change-request`, and the pull request's
 repository, which must be among `repoIds`, is checked out at its branch.
-Explicit `repoIds` are prepared with Coriol before launching; preparation
+The repositories a launch uses are prepared with Coriol before launching,
+including every attached/stacked worktree when `repoIds` is empty; preparation
 failures preserve the work, exact prompt and template/repository selection.
 `launches.retry` runs a `failed` launch again in place: ready
-worktrees are reused and failed ones prepared again.
+worktrees are validated before reuse and failed ones prepared again.
 The GitHub catalog includes authenticated repositories across organizations.
 
 Quick-start/new-session optionally accept `wait:false`: return durable
@@ -63,6 +64,13 @@ saved independently. Overlapping requests coalesce per work item/repository
 (and review source). `workItems.addRepositories` retains its synchronous
 details response by default; `wait:false` returns recorded details for
 polling via `workItems.get`. Disconnects never cancel preparation.
+Every explicit preparation rechecks even a previously ready worktree through
+Coriol. Missing packages, changed lockfiles/runtime/install settings, and old
+records without a validated marker cause an in-place install, preserving the
+branch and uncommitted source changes. A failed recheck marks the worktree
+failed and prevents agent startup. Reads and server startup do not reinstall
+dependencies; `ready` records the last preparation, not continuous monitoring.
+
 Orphaned pending/preparing records become retryable failures on server startup;
 worktrees and dependency caches are kept. Cleanup skips active preparations.
 
@@ -72,8 +80,10 @@ The server injects `src/tools/coriol-environment.ts` into Coriol. It augments
 PATH with the usual executable locations, prefers Volta's shims when installed
 (`VOLTA_HOME` or `~/.volta`) over inherited tool-image paths, and wraps npm
 preparation in `direnv exec` when available. Git runs directly. The policy
-applies to seeds and worktrees without changing the server's environment;
-Coriol itself has none of these defaults.
+applies to seeds, worktrees and runtime/config probes without changing the
+server's environment; Coriol itself has none of these defaults. npm's
+`ignore-scripts` setting is respected; enabled project install/prepare hooks
+run in each worktree instead of relying on copied dependency directories.
 
 ## Providers
 

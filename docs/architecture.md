@@ -81,15 +81,21 @@ A work item's worktrees live under `<dataDir>/workspaces/<task-dir>/`,
 where the task directory is derived from the work item. Coriol keeps a seed
 clone per repository under `repos/`, fetches it to the latest default branch,
 adds a worktree on a fresh branch (or a review request's branch) and prepares
-npm dependencies, copying the seed's `node_modules` copy-on-write when the
-lockfile matches. The server injects command environment policy: executable
+npm dependencies, copying the seed's root and nested workspace `node_modules`
+copy-on-write when dependency manifests, effective runtime and npm install
+configuration match. Installed package versions and workspace links are
+validated before successful preparation is recorded. The server injects command environment policy: executable
 search paths, Volta shim preference and direnv for npm. Coriol's standalone
 default is direct execution with the inherited environment.
 
 Before preparation starts, each selected repository is recorded as a
 `worktree` attachment with status `pending`; it moves through `preparing`
 to `ready` or `failed`, each result saved on its own. Overlapping requests for
-the same work item and repository join the one in flight. On startup,
+the same work item and repository join the one in flight. Previously ready worktrees
+are rechecked on explicit preparation, installing stale dependencies in place
+without fetching or changing the checkout. Reading state does not reinstall.
+Seed/worktree preparation markers live in Coriol's toolchain cache; old or
+missing markers cause a fresh install on the next preparation. On startup,
 preparations interrupted by a restart become `failed` and can be retried at
 the same path. Worktrees of work done or cancelled for a week are removed
 only by an explicit `lovelace cleanup`.

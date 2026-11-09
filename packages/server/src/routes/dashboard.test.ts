@@ -258,6 +258,7 @@ function repositoryFixture(deps: RouteDeps) {
   deps.workspaceManager = {
     workspacesDirectory,
     repositoryPath: (id: string) => join(deps.config.dataDir, 'repos', id),
+    async prepareExistingWorkspace() { return []; },
     async createWorkspace(request: CreateWorkspaceRequest) {
       calls.push(request);
       assert.ok(deps.database.listLaunches().length > 0, 'prompt persisted before preparation');
@@ -337,6 +338,36 @@ test('partial workspace failure keeps the launch and its retry prepares only fai
   assert.equal(database.getWorkItemCount(), 1);
   assert.equal(calls.length, 3, 'ready repository reused; failed repository retried');
   assert.equal(starts().length, 1);
+});
+
+test('a new session validates existing worktrees and retains its prompt when preparation fails', async t => {
+  const { api, deps, starts } = await fixture(t);
+  const { calls, records } = repositoryFixture(deps);
+  const first = await api.launches.quickStart({ prompt: 'First', repoIds: [records[0]!.id] });
+  deps.workspaceManager.prepareExistingWorkspace = async () => { throw new Error('stale dependency install failed'); };
+  const prompt = '  Keep this exact retry prompt\n';
+  const next = await api.launches.newSession({ workItemId: first.details.workItem.id, prompt });
+  assert.equal(next.launch.state, 'failed');
+  assert.equal(next.launch.prompt, prompt);
+  assert.equal(starts().length, 1, 'no second agent starts with invalid dependencies');
+  assert.equal(calls.length, 1, 'the existing checkout is not recreated');
+  assert.match(attachmentsOfType(next.details.attachments, 'worktree')[0]!.payload.errorMessage!, /stale dependency/);
+});
+
+test('a launch rechecks every selected stacked worktree, including the default attached selection', async t => {
+  const { api, deps } = await fixture(t);
+  const { records } = repositoryFixture(deps);
+  const first = await api.launches.quickStart({ prompt: 'First', repoIds: [records[0]!.id] });
+  await api.workItems.addRepositories({ id: first.details.workItem.id, repositories: [{ repoId: records[0]!.id, branchName: 'stack/child' }] });
+  const paths: string[] = [];
+  deps.workspaceManager.prepareExistingWorkspace = async request => { paths.push(request.workspacePath); return []; };
+  const second = await api.launches.newSession({ workItemId: first.details.workItem.id, prompt: 'Continue' });
+  assert.equal(second.launch.state, 'started');
+  assert.equal(new Set(paths).size, 2);
+  paths.length = 0;
+  const third = await api.launches.newSession({ workItemId: first.details.workItem.id, prompt: 'Continue selected', repoIds: [records[0]!.id] });
+  assert.equal(third.launch.state, 'started');
+  assert.equal(new Set(paths).size, 2);
 });
 
 test('new-session rejects inactive work and malformed options without recording a launch', async (t) => {
